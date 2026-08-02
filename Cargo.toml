@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/vim-buffer",
     "crates/vim-formatter",
+    "crates/vim-input",
     "crates/vim-regex",
     "crates/vim-script",
 ]
