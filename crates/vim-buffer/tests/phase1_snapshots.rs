@@ -71,15 +71,25 @@ fn validates_ranges_and_streams_chunks_without_flattening() {
     let snapshot = manager.get(id).unwrap().snapshot();
     let range = TextRange::new(ByteOffset(6), ByteOffset(11)).unwrap();
 
-    let selected = snapshot.text_for_range(range).unwrap().collect::<String>();
+    let complete = snapshot.chunks().collect::<String>();
+    assert_eq!(complete, "alpha βeta");
+
+    let selected = snapshot
+        .chunks_for_range(range)
+        .unwrap()
+        .collect::<String>();
     assert_eq!(selected, "βeta");
+
+    let selected_via_compatibility_alias =
+        snapshot.text_for_range(range).unwrap().collect::<String>();
+    assert_eq!(selected_via_compatibility_alias, "βeta");
 
     let invalid = TextRange {
         start: ByteOffset(7),
         end: ByteOffset(11),
     };
     assert!(matches!(
-        snapshot.text_for_range(invalid),
+        snapshot.chunks_for_range(invalid),
         Err(BufferError::NotCharBoundary(7))
     ));
 }

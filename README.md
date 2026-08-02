@@ -710,7 +710,12 @@ Remaining:
 
 ### Phase 6 — Consumer integration
 
-- Expose snapshot/chunk APIs needed by `vim-regex`.
+Completed in the first consumer-integration increment:
+
+- Expose immutable, thread-safe snapshots and backend-neutral zero-copy `TextChunks` iterators over complete snapshots or checked byte ranges for `vim-regex`, without exposing rope internals or flattening buffers.
+
+Remaining:
+
 - Expose ID-based mutation APIs needed by `vim-script`.
 - Expose transaction/replacement APIs needed by `vim-formatter`.
 - Add revision checks for asynchronous `dzd` parsing and diagnostics.

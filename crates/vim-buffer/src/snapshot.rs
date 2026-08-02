@@ -4,6 +4,24 @@ use crate::{
 };
 use std::ops::Range;
 
+/// A zero-copy iterator over contiguous UTF-8 slices of a buffer snapshot.
+///
+/// Chunk boundaries are storage details and may occur at any character boundary.
+/// Concatenating the yielded slices reproduces the requested snapshot range.
+pub struct TextChunks<'a> {
+    inner: text::Chunks<'a>,
+}
+
+impl<'a> Iterator for TextChunks<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+impl std::iter::FusedIterator for TextChunks<'_> {}
+
 #[derive(Clone)]
 pub struct BufferSnapshot {
     pub(crate) id: BufferId,
@@ -117,8 +135,23 @@ impl BufferSnapshot {
         Ok(ByteOffset(self.inner.point_utf16_to_offset(point)))
     }
 
-    pub fn text_for_range(&self, range: TextRange) -> Result<text::Chunks<'_>, BufferError> {
-        Ok(self.inner.text_for_range(self.validate_range(range)?))
+    /// Streams the complete snapshot as zero-copy UTF-8 chunks.
+    pub fn chunks(&self) -> TextChunks<'_> {
+        TextChunks {
+            inner: self.inner.text_for_range(0..self.len_bytes()),
+        }
+    }
+
+    /// Streams a checked byte range as zero-copy UTF-8 chunks.
+    pub fn chunks_for_range(&self, range: TextRange) -> Result<TextChunks<'_>, BufferError> {
+        Ok(TextChunks {
+            inner: self.inner.text_for_range(self.validate_range(range)?),
+        })
+    }
+
+    /// Compatibility alias for [`BufferSnapshot::chunks_for_range`].
+    pub fn text_for_range(&self, range: TextRange) -> Result<TextChunks<'_>, BufferError> {
+        self.chunks_for_range(range)
     }
 
     pub fn as_inner(&self) -> &text::BufferSnapshot {
