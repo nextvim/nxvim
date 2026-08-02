@@ -1,0 +1,10 @@
+[package]
+name = "vim-input"
+version = "0.1.0"
+edition = "2024"
+license = "Vim"
+description = "Editor-agnostic Vim key-sequence resolver"
+publish = false
+
+[dependencies]
+smallvec = "1.13"

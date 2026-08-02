@@ -2521,6 +2521,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vim-input"
+version = "0.1.0"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
 name = "vim-regex"
 version = "0.1.0"
 dependencies = [
