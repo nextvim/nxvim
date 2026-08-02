@@ -675,21 +675,19 @@ Uppercase file marks and numbered viminfo marks are intentionally manager/sessio
 
 **Exit criteria met:** tests cover anchor adjustment after insertion, whole-line mark deletion, mark restoration through undo/redo, special changed-area marks, changelist coalescing/retention, linear undo/redo, and deterministic joined transaction grouping. Full branch navigation is not claimed.
 
-### Phase 4 — Buffer manager lifecycle (in progress)
+### Phase 4 — Buffer manager lifecycle (complete for MVP)
 
 Completed in the first manager increment:
 
 - Add canonical named-buffer creation and lookup with duplicate-name reuse, deterministic buffer-number listing, and non-reused IDs after wipeout.
 - Implement current/alternate tracking, loaded/hidden transitions, and most-recently-used traversal.
 - Implement unload, delete, and wipe transitions with listed-state changes and modified-buffer abandonment checks (including explicit force behavior).
-- Return typed manager outcomes and cover the initial lifecycle scenarios in `tests/phase4_manager.rs`.
+- Return typed manager outcomes and cover lifecycle scenarios in `tests/phase4_manager.rs`.
+- Orchestrate create, load, switch, unload, delete, and wipe actions through the synchronous `Mutator`, retaining callback-triggered work in a FIFO action queue.
+- Dispatch `BufNew`/`BufAdd`/`BufReadPre`/`BufReadPost`, `BufLeave`/`BufHidden`/`BufEnter`, and `BufUnload`/`BufDelete`/`BufWipeout` in order verified against Vim `v9.2.0843`, with pre-wipe snapshots retained for callback contexts.
+- Cover callback ordering, unloaded-buffer deletion, current-buffer replacement, and queued lifecycle actions in `tests/phase4_callbacks.rs`.
 
-Remaining:
-
-- Add file-backed load orchestration once the Phase 5 decoding boundary is available.
-- Dispatch Vim-compatible buffer lifecycle callbacks from the executor in oracle-verified order.
-
-**Exit criteria:** scenario tests derived from `editing.txt` and `windows.txt` cover `:buffer`, `:bdelete`, `:bwipeout`, hidden buffers, alternate buffer, and duplicate/canonical names.
+**Exit criteria met:** scenario tests derived from `editing.txt` and `windows.txt` cover `:buffer`, `:bdelete`, `:bwipeout`, hidden buffers, alternate buffer, duplicate/canonical names, MRU traversal, modified-buffer abandonment, and lifecycle callback order.
 
 ### Phase 5 — File I/O and options (in progress)
 
