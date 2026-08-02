@@ -9,6 +9,14 @@ pub enum SelectionKind {
     Blockwise,
 }
 
+/// Text shaped for a Vim register by an operator selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OperationText {
+    Characterwise(String),
+    Linewise(String),
+    Blockwise(Vec<String>),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct VimSelection {
     inner: Selection<Anchor>,
@@ -101,6 +109,32 @@ impl VimSelection {
                 }
                 Ok(ranges)
             }
+        }
+    }
+
+    /// Resolves this selection into the payload Vim would place in a register.
+    ///
+    /// Linewise payloads always end in a newline, including the final line of a
+    /// buffer without an existing final newline. Blockwise payloads retain one
+    /// fragment per selected buffer row, including empty fragments on short rows.
+    pub fn operation_text(&self, snapshot: &BufferSnapshot) -> Result<OperationText, BufferError> {
+        let ranges = self.edit_ranges(snapshot)?;
+        let mut fragments = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            fragments.push(snapshot.chunks_for_range(range)?.collect::<String>());
+        }
+        match self.kind {
+            SelectionKind::Characterwise => Ok(OperationText::Characterwise(
+                fragments.into_iter().next().unwrap_or_default(),
+            )),
+            SelectionKind::Linewise => {
+                let mut text = fragments.into_iter().next().unwrap_or_default();
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                Ok(OperationText::Linewise(text))
+            }
+            SelectionKind::Blockwise => Ok(OperationText::Blockwise(fragments)),
         }
     }
 }
