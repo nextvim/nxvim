@@ -70,10 +70,10 @@ impl<'a> Transaction<'a> {
         mut self,
         selections: Option<SelectionSet>,
     ) -> Result<MutationOutcome, BufferError> {
-        if !self.buffer.options().modifiable {
+        if !self.buffer.options().modifiable && self.origin != EditOrigin::Reload {
             return Err(BufferError::Unmodifiable(self.buffer.id()));
         }
-        if self.buffer.lifecycle() != crate::BufferLifecycle::Loaded {
+        if !self.buffer.is_loaded() {
             return Err(BufferError::InvalidLifecycleTransition);
         }
 

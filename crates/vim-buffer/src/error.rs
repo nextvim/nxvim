@@ -1,5 +1,5 @@
 use crate::{BufferId, Point, TextRange};
-use std::{error::Error, fmt, io};
+use std::{error::Error, fmt, io, path::PathBuf};
 
 #[derive(Debug)]
 pub enum BufferError {
@@ -11,6 +11,9 @@ pub enum BufferError {
     NotCharBoundary(usize),
     OverlappingEdits,
     ModifiedBuffer(BufferId),
+    ReadOnly(BufferId),
+    NoFileName(BufferId),
+    DuplicateBufferName(PathBuf),
     InvalidLifecycleTransition,
     InvalidSelectionSet,
     InvalidMark(char),

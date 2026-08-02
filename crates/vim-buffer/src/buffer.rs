@@ -34,6 +34,7 @@ impl ChangedTick {
 pub enum BufferLifecycle {
     #[default]
     Loaded,
+    Hidden,
     Unloaded,
     Deleted,
     Wiped,
@@ -121,6 +122,29 @@ impl Buffer {
         self.lifecycle
     }
 
+    pub fn is_loaded(&self) -> bool {
+        matches!(
+            self.lifecycle,
+            BufferLifecycle::Loaded | BufferLifecycle::Hidden
+        )
+    }
+
+    pub(crate) fn set_lifecycle(&mut self, lifecycle: BufferLifecycle) {
+        self.lifecycle = lifecycle;
+    }
+
+    pub(crate) fn set_listed(&mut self, listed: bool) {
+        self.listed = listed;
+    }
+
+    pub(crate) fn set_file_metadata(&mut self, file: FileMetadata) {
+        self.file = file;
+    }
+
+    pub fn file_metadata(&self) -> &FileMetadata {
+        &self.file
+    }
+
     pub fn path(&self) -> Option<&Path> {
         self.file.path.as_deref()
     }
@@ -143,9 +167,9 @@ impl Buffer {
         }
         let modified_before = self.is_modified();
         let old = self.options.clone();
-        if options.fileformat != self.options.fileformat {
-            let line_ending = text::LineEnding::try_from(options.fileformat)
-                .map_err(|_| crate::BufferError::UnsupportedFileFormat)?;
+        if options.fileformat != self.options.fileformat
+            && let Ok(line_ending) = text::LineEnding::try_from(options.fileformat)
+        {
             self.text.set_line_ending(line_ending);
         }
         self.options = options.clone();
@@ -209,7 +233,7 @@ impl Buffer {
         &mut self,
         origin: EditOrigin,
     ) -> Result<Option<MutationOutcome>, crate::BufferError> {
-        if self.lifecycle != BufferLifecycle::Loaded {
+        if !self.is_loaded() {
             return Err(crate::BufferError::InvalidLifecycleTransition);
         }
         let before = self.snapshot();

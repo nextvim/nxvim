@@ -675,22 +675,36 @@ Uppercase file marks and numbered viminfo marks are intentionally manager/sessio
 
 **Exit criteria met:** tests cover anchor adjustment after insertion, whole-line mark deletion, mark restoration through undo/redo, special changed-area marks, changelist coalescing/retention, linear undo/redo, and deterministic joined transaction grouping. Full branch navigation is not claimed.
 
-### Phase 4 — Buffer manager lifecycle
+### Phase 4 — Buffer manager lifecycle (in progress)
 
-- Implement create, load, lookup, list, set-current, and alternate-buffer behavior.
-- Model listed, loaded, hidden, deleted, and wiped transitions explicitly.
-- Enforce modified-buffer abandonment rules.
-- Return manager lifecycle outcomes and add MRU traversal.
-- Dispatch Vim-compatible buffer lifecycle callbacks from the executor in verified order.
+Completed in the first manager increment:
+
+- Add canonical named-buffer creation and lookup with duplicate-name reuse, deterministic buffer-number listing, and non-reused IDs after wipeout.
+- Implement current/alternate tracking, loaded/hidden transitions, and most-recently-used traversal.
+- Implement unload, delete, and wipe transitions with listed-state changes and modified-buffer abandonment checks (including explicit force behavior).
+- Return typed manager outcomes and cover the initial lifecycle scenarios in `tests/phase4_manager.rs`.
+
+Remaining:
+
+- Add file-backed load orchestration once the Phase 5 decoding boundary is available.
+- Dispatch Vim-compatible buffer lifecycle callbacks from the executor in oracle-verified order.
 
 **Exit criteria:** scenario tests derived from `editing.txt` and `windows.txt` cover `:buffer`, `:bdelete`, `:bwipeout`, hidden buffers, alternate buffer, and duplicate/canonical names.
 
-### Phase 5 — File I/O and options
+### Phase 5 — File I/O and options (in progress)
 
-- Add load, save, save-as, reload, and external-change metadata.
-- Normalize and preserve Unix/DOS/Mac file formats as specified.
-- Implement `readonly`, `modifiable`, `binary`, `endofline`, and `fixeol` behavior.
-- Make writes atomic where the platform permits.
+Completed in the first file-I/O increment:
+
+- Add strict UTF-8 file load, atomic save/save-as, and forced reload APIs with typed errors and outcomes.
+- Detect and normalize Unix, DOS, and Mac line endings into the LF-based text backend while preserving serialization format metadata.
+- Track final-EOL state and implement `binary`, `endofline`, and `fixeol` write policy; retain the existing transaction-level `modifiable` enforcement.
+- Enforce `readonly` writes with explicit force behavior, reject duplicate save-as names, update save points only after successful writes, retain file modification time/size metadata, and report unchanged/modified/deleted external file state.
+- Select a loaded replacement (or create a fresh empty buffer) when unloading, deleting, or wiping the current buffer.
+- Cover strict decoding, line-format conversion, final-EOL behavior, read-only writes, load/save-as/reload, and current-buffer wipe in `tests/phase5_file_io.rs`.
+
+Remaining:
+
+- Extend fixture coverage for write failures and platform-specific atomic replacement behavior.
 
 **Exit criteria:** fixture tests cover empty files, missing final newline, CRLF, read-only/unmodifiable buffers, write failures, and modified-state reset after save.
 

@@ -1,7 +1,7 @@
 use crate::{
     BufferId, BufferOptions, ChangedTick, EditOrigin, EditSummary, Revision, SelectionSet,
 };
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct MutationOutcome {
@@ -25,8 +25,16 @@ pub struct OptionsOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SaveOutcome {
+    pub buffer: BufferId,
+    pub path: PathBuf,
+    pub bytes_written: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ManagerOutcome {
     Added(BufferId),
+    Existing(BufferId),
     Loaded(BufferId),
     Unloaded(BufferId),
     Deleted(BufferId),
