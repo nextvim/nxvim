@@ -1,0 +1,95 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `matching_controls` parsed from `\\cfoo\\C\\zsbar\\ze\\Z\\%C\\%#=2`"
+---
+Ok(
+    Pattern {
+        source: "\\cfoo\\C\\zsbar\\ze\\Z\\%C\\%#=2",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Concat(
+                [
+                    Spanned {
+                        value: CaseSwitch(
+                            Insensitive,
+                        ),
+                        span: 0..2,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "f",
+                        ),
+                        span: 2..3,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "o",
+                        ),
+                        span: 3..4,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "o",
+                        ),
+                        span: 4..5,
+                    },
+                    Spanned {
+                        value: CaseSwitch(
+                            Sensitive,
+                        ),
+                        span: 5..7,
+                    },
+                    Spanned {
+                        value: MatchBoundary(
+                            Start,
+                        ),
+                        span: 7..10,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "b",
+                        ),
+                        span: 10..11,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "a",
+                        ),
+                        span: 11..12,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "r",
+                        ),
+                        span: 12..13,
+                    },
+                    Spanned {
+                        value: MatchBoundary(
+                            End,
+                        ),
+                        span: 13..16,
+                    },
+                    Spanned {
+                        value: Composing(
+                            IgnoreFollowing,
+                        ),
+                        span: 16..18,
+                    },
+                    Spanned {
+                        value: Composing(
+                            AnyCombiningMark,
+                        ),
+                        span: 18..21,
+                    },
+                    Spanned {
+                        value: EnginePreference(
+                            Nfa,
+                        ),
+                        span: 21..26,
+                    },
+                ],
+            ),
+            span: 0..26,
+        },
+    },
+)

@@ -1,0 +1,74 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `positions` parsed from `\\%23l\\%>4c\\%<9v\\%#\\%V\\%^\\%$`"
+---
+Ok(
+    Pattern {
+        source: "\\%23l\\%>4c\\%<9v\\%#\\%V\\%^\\%$",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Concat(
+                [
+                    Spanned {
+                        value: Position(
+                            Line(
+                                Comparison {
+                                    ordering: Equal,
+                                    value: 23,
+                                },
+                            ),
+                        ),
+                        span: 0..5,
+                    },
+                    Spanned {
+                        value: Position(
+                            ByteColumn(
+                                Comparison {
+                                    ordering: GreaterThan,
+                                    value: 4,
+                                },
+                            ),
+                        ),
+                        span: 5..10,
+                    },
+                    Spanned {
+                        value: Position(
+                            VirtualColumn(
+                                Comparison {
+                                    ordering: LessThan,
+                                    value: 9,
+                                },
+                            ),
+                        ),
+                        span: 10..15,
+                    },
+                    Spanned {
+                        value: Position(
+                            Cursor,
+                        ),
+                        span: 15..18,
+                    },
+                    Spanned {
+                        value: Position(
+                            VisualArea,
+                        ),
+                        span: 18..21,
+                    },
+                    Spanned {
+                        value: Anchor(
+                            StartOfFile,
+                        ),
+                        span: 21..24,
+                    },
+                    Spanned {
+                        value: Anchor(
+                            EndOfFile,
+                        ),
+                        span: 24..27,
+                    },
+                ],
+            ),
+            span: 0..27,
+        },
+    },
+)

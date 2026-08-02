@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "id": "very_magic_capture",
+      "description": "A very-magic capture reports UTF-8 byte ranges.",
+      "pattern": "\\v(word)",
+      "input": "λ word",
+      "options": {
+        "magic": true,
+        "ignore_case": false,
+        "smart_case": false,
+        "is_keyword": "@,48-57,_,192-255"
+      },
+      "editor": {
+        "cursor": 3,
+        "visual": {
+          "range": {
+            "start": 3,
+            "end": 7
+          },
+          "mode": "character"
+        },
+        "tab_stop": 8,
+        "ambiguous_width_is_double": false
+      },
+      "expected": {
+        "result": "match",
+        "range": {
+          "start": 3,
+          "end": 7
+        },
+        "captures": [
+          {
+            "start": 3,
+            "end": 7
+          },
+          {
+            "start": 3,
+            "end": 7
+          }
+        ]
+      },
+      "tier": "a",
+      "features": [
+        "capture",
+        "utf8",
+        "very-magic"
+      ],
+      "source": {
+        "file": "fixtures/schema-v1.example.json",
+        "test": "schema example"
+      }
+    }
+  ]
+}

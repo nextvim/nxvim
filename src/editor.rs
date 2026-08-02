@@ -13,7 +13,7 @@ use vim_script::{
     compiler::Compiler,
     host::{
         Arity, Capability, CapabilitySet, CommandDefinition, CommandRequest, Host, HostContext,
-        HostFuture, HostRequest, HostRuntime,
+        HostFuture, HostRequest, HostRuntime, OptionRequest, OptionRequestOperation,
     },
     integration::{Event, EventAction},
     lexer::Lexer,
@@ -454,6 +454,43 @@ impl Host for EditorHost {
         })
     }
 
+    fn option(&self, request: OptionRequest) -> HostFuture {
+        let state = Arc::clone(&self.state);
+        Box::pin(async move {
+            let mut state = state
+                .lock()
+                .map_err(|_| host_error("editor state lock is poisoned"))?;
+            let buffer = request
+                .context
+                .current_buffer
+                .and_then(BufferId::new)
+                .or_else(|| state.buffers.current())
+                .ok_or_else(|| host_error("editor has no current buffer"))?;
+            match request.operation {
+                OptionRequestOperation::Get => option_value(
+                    state.buffers.get(buffer).map_err(buffer_error)?.options(),
+                    &request.name,
+                ),
+                OptionRequestOperation::Set(value) => {
+                    let old = state
+                        .buffers
+                        .get(buffer)
+                        .map_err(buffer_error)?
+                        .options()
+                        .clone();
+                    let options = set_option_value(old, &request.name, value)?;
+                    let EditorState {
+                        buffers, mutator, ..
+                    } = &mut *state;
+                    mutator
+                        .execute(buffers, Action::SetOptions { buffer, options })
+                        .map_err(buffer_error)?;
+                    Ok(Value::Null)
+                }
+            }
+        })
+    }
+
     fn execute_command(&self, request: CommandRequest) -> HostFuture {
         let state = Arc::clone(&self.state);
         Box::pin(async move {
@@ -810,6 +847,38 @@ fn option_value(options: &BufferOptions, name: &str) -> Result<Value, RuntimeErr
     })
 }
 
+fn set_option_value(
+    mut options: BufferOptions,
+    name: &str,
+    value: Value,
+) -> Result<BufferOptions, RuntimeError> {
+    let canonical = canonical_option(name)?;
+    match (canonical, value) {
+        ("modifiable", Value::Bool(value)) => options.modifiable = value,
+        ("readonly", Value::Bool(value)) => options.readonly = value,
+        ("binary", Value::Bool(value)) => options.binary = value,
+        ("endofline", Value::Bool(value)) => options.endofline = value,
+        ("fixeol", Value::Bool(value)) => options.fixeol = value,
+        ("fileformat", Value::String(value)) => {
+            options.fileformat = match value.as_ref() {
+                "unix" => FileFormat::Unix,
+                "dos" => FileFormat::Dos,
+                "mac" => FileFormat::Mac,
+                _ => return Err(option_argument_error(value.as_ref())),
+            }
+        }
+        ("fileencoding", Value::String(value)) => options.fileencoding = value.to_string(),
+        (name, value) => {
+            return Err(RuntimeError::coded(
+                "E474",
+                RuntimeErrorKind::TypeError,
+                format!("invalid value type {} for option {name}", value.type_name()),
+            ));
+        }
+    }
+    Ok(options)
+}
+
 fn option_argument_error(token: &str) -> RuntimeError {
     RuntimeError::coded(
         "E474",
@@ -1130,6 +1199,32 @@ mod tests {
             editor.option_value("ff").unwrap(),
             Value::String(Arc::from("unix"))
         );
+    }
+
+    #[test]
+    fn option_expressions_assignments_and_resets_use_the_typed_host_boundary() {
+        let mut editor = HeadlessEditor::new().unwrap();
+        editor
+            .eval(
+                "option-expressions.vim",
+                "let g:before = &ro\nlet &l:ro = true\nlet g:after = &g:ro\n:set ro&",
+            )
+            .unwrap();
+
+        assert_eq!(editor.global("g:before"), Some(&Value::Bool(false)));
+        assert_eq!(editor.global("g:after"), Some(&Value::Bool(true)));
+        assert_eq!(editor.option_value("ro").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn delcommand_removes_runtime_owned_user_commands() {
+        let mut editor = HeadlessEditor::new().unwrap();
+        editor
+            .eval("define-delete.vim", ":command Demo enew\n:delcommand Demo")
+            .unwrap();
+
+        let error = editor.eval("invoke.vim", ":Demo").unwrap_err();
+        assert!(matches!(error, EditorError::Runtime(_)));
     }
 
     #[test]

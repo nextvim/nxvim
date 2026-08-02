@@ -389,6 +389,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fe5f465a4f6fee88fad41b85d990f84c835335e85b5d9e6e63e0d06d28cba7c"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -527,6 +538,12 @@ name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "equivalent"
@@ -995,6 +1012,18 @@ dependencies = [
  "hashbrown",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "insta"
+version = "1.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86f0f8fee8c926415c58d6ae43a08523a26faccb2323f5e6b644fe7dd4ef6b82"
+dependencies = [
+ "console",
+ "once_cell",
+ "similar",
+ "tempfile",
 ]
 
 [[package]]
@@ -1873,6 +1902,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2359,7 +2394,6 @@ dependencies = [
 [[package]]
 name = "vim-formatter"
 version = "0.1.0"
-source = "git+ssh://git@github.com/nextvim/vim-formatter.git?rev=be3801a4f00820d3fde13d3b84446a6413832fc4#be3801a4f00820d3fde13d3b84446a6413832fc4"
 dependencies = [
  "unicode-width",
 ]
@@ -2367,9 +2401,10 @@ dependencies = [
 [[package]]
 name = "vim-regex"
 version = "0.1.0"
-source = "git+ssh://git@github.com/nextvim/vim-regex.git?rev=aa574ecbff0f5cf1f76fbf7078ed5e96b21ef3fb#aa574ecbff0f5cf1f76fbf7078ed5e96b21ef3fb"
 dependencies = [
+ "insta",
  "onig",
+ "proptest",
  "serde",
  "serde_json",
  "unicode-width",
@@ -2379,7 +2414,6 @@ dependencies = [
 [[package]]
 name = "vim-script"
 version = "0.1.0"
-source = "git+ssh://git@github.com/nextvim/vim-script.git?rev=e6fccd181906e0935174868a8381656a33b0c6c8#e6fccd181906e0935174868a8381656a33b0c6c8"
 
 [[package]]
 name = "wait-timeout"

@@ -1,0 +1,127 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `classes` parsed from `\\a\\D\\x\\O\\h\\L\\u\\W\\k\\F\\p`"
+---
+Ok(
+    Pattern {
+        source: "\\a\\D\\x\\O\\h\\L\\u\\W\\k\\F\\p",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Concat(
+                [
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Alphabetic,
+                                negated: false,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 0..2,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Digit,
+                                negated: true,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 2..4,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: HexDigit,
+                                negated: false,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 4..6,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: OctalDigit,
+                                negated: true,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 6..8,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: HeadOfWord,
+                                negated: false,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 8..10,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Lowercase,
+                                negated: true,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 10..12,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Uppercase,
+                                negated: false,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 12..14,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Word,
+                                negated: true,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 14..16,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Keyword,
+                                negated: false,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 16..18,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: FileName,
+                                negated: true,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 18..20,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Printable,
+                                negated: false,
+                                include_newline: false,
+                            },
+                        ),
+                        span: 20..22,
+                    },
+                ],
+            ),
+            span: 0..22,
+        },
+    },
+)

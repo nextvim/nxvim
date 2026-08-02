@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "id": "equivalence_class_utf8",
+      "description": "Vim expands an equivalence class to accented forms of its base character.",
+      "pattern": "[[=a=]]\\+",
+      "input": "ddaãâbcd",
+      "expected": {
+        "result": "diagnostics",
+        "diagnostics": [
+          {
+            "kind": "unsupported",
+            "phase": "lower",
+            "span": { "start": 0, "end": 7 },
+            "message_contains": "equivalence classes"
+          }
+        ]
+      },
+      "tier": "d",
+      "features": ["collection", "equivalence-class", "unicode", "unsupported"],
+      "source": {
+        "file": "src/testdir/test_regexp_utf8.vim",
+        "test": "Test_multibyte_chars: equivalence classes",
+        "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim"
+      }
+    },
+    {
+      "id": "equivalence_class_mixed_collection",
+      "description": "Vim permits POSIX and equivalence classes in the same collection.",
+      "pattern": "[[:alpha:][=a=]]\\+",
+      "input": "879 aiaãâaiuvna ",
+      "expected": {
+        "result": "diagnostics",
+        "diagnostics": [
+          {
+            "kind": "unsupported",
+            "phase": "lower",
+            "span": { "start": 0, "end": 16 },
+            "message_contains": "equivalence classes"
+          }
+        ]
+      },
+      "tier": "d",
+      "features": ["collection", "equivalence-class", "posix-class", "unicode", "unsupported"],
+      "source": {
+        "file": "src/testdir/test_regexp_utf8.vim",
+        "test": "Test_multibyte_chars: mixed equivalence collection",
+        "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim"
+      }
+    },
+
+    {
+      "id": "force_backtracking_engine",
+      "description": "Vim's \\%#=1 atom selects its old backtracking engine.",
+      "pattern": "\\%#=1\\(e\\)\\1",
+      "input": "three",
+      "expected": {
+        "result": "diagnostics",
+        "diagnostics": [
+          {
+            "kind": "unsupported",
+            "phase": "lower",
+            "span": { "start": 0, "end": 5 },
+            "message_contains": "engine-selection"
+          }
+        ]
+      },
+      "tier": "d",
+      "features": ["engine-selection", "old-engine", "unsupported"],
+      "source": {
+        "file": "src/testdir/test_regexp_latin.vim",
+        "test": "Test_backref",
+        "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim"
+      }
+    },
+    {
+      "id": "force_nfa_engine",
+      "description": "Vim's \\%#=2 atom selects its NFA engine.",
+      "pattern": "\\%#=2\\(e\\)\\1",
+      "input": "three",
+      "expected": {
+        "result": "diagnostics",
+        "diagnostics": [
+          {
+            "kind": "unsupported",
+            "phase": "lower",
+            "span": { "start": 0, "end": 5 },
+            "message_contains": "engine-selection"
+          }
+        ]
+      },
+      "tier": "d",
+      "features": ["engine-selection", "nfa-engine", "unsupported"],
+      "source": {
+        "file": "src/testdir/test_regexp_latin.vim",
+        "test": "Test_backref",
+        "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim"
+      }
+    }
+  ]
+}
