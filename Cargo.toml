@@ -5,7 +5,7 @@ members = [
     "crates/vim-formatter",
     "crates/vim-input",
     "crates/vim-regex",
-    "crates/vim-script",
+    "crates/vim-script", "crates/vim-ui",
 ]
 exclude = ["crates/zed"]
 
