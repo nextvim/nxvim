@@ -1,0 +1,11 @@
+[package]
+name = "vim-buffer"
+version = "0.1.0"
+edition = "2024"
+license = "Vim"
+description = "Editor-agnostic Vim-compatible buffer, selection, and mutation engine"
+publish = false
+
+[dependencies]
+clock = { path = "../zed/crates/clock" }
+text = { path = "../zed/crates/text" }

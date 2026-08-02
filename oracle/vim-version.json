@@ -1,0 +1,18 @@
+{
+  "repository": "https://github.com/vim/vim",
+  "tag": "v9.2.0843",
+  "tag_object": "9eaad4c543570e40b0d9069f004699571c9db76c",
+  "commit": "975e191dc817d8d00abca7197c4529a417c2f805",
+  "vim_version": 902,
+  "required_patch": 843,
+  "forbidden_next_patch": 844,
+  "description": "Vim 9.2 with patches 1-843",
+  "build": {
+    "platform": "linux",
+    "features": "huge",
+    "multibyte": true,
+    "gui": false,
+    "x11": false,
+    "encoding": "utf-8"
+  }
+}

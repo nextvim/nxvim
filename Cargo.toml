@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/vim-buffer"]
+exclude = ["crates/zed"]
+
+[package]
+name = "nxvim"
+version = "0.1.0"
+edition = "2024"
+license = "Vim"
+publish = false
+
+[dependencies]
+vim-buffer = { path = "crates/vim-buffer" }
