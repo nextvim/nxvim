@@ -329,7 +329,7 @@ impl BufferManager {
             return Err(BufferError::InvalidLifecycleTransition);
         }
         buffer.set_lifecycle(BufferLifecycle::Unloaded);
-        self.remove_navigation_reference(id);
+        self.remove_mru_reference(id);
         Ok(ManagerOutcome::Unloaded(id))
     }
 
@@ -347,7 +347,7 @@ impl BufferManager {
         }
         buffer.set_listed(false);
         buffer.set_lifecycle(BufferLifecycle::Deleted);
-        self.remove_navigation_reference(id);
+        self.remove_mru_reference(id);
         Ok(ManagerOutcome::Deleted(id))
     }
 
@@ -399,8 +399,12 @@ impl BufferManager {
         self.mru.insert(0, id);
     }
 
-    fn remove_navigation_reference(&mut self, id: BufferId) {
+    fn remove_mru_reference(&mut self, id: BufferId) {
         self.mru.retain(|candidate| *candidate != id);
+    }
+
+    fn remove_navigation_reference(&mut self, id: BufferId) {
+        self.remove_mru_reference(id);
         if self.alternate == Some(id) {
             self.alternate = None;
         }

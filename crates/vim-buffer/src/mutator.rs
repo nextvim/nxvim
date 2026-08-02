@@ -42,12 +42,18 @@ pub enum Action {
         buffer: BufferId,
         count: u32,
     },
+    Save {
+        buffer: BufferId,
+        path: Option<PathBuf>,
+        force: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
 pub enum ActionOutcome {
     Manager(ManagerOutcome),
     Mutation(Option<MutationOutcome>),
+    Save(crate::SaveOutcome),
 }
 
 #[derive(Default)]
@@ -119,6 +125,19 @@ impl Mutator {
                     last = Some(outcome);
                 }
                 Ok(ActionOutcome::Mutation(last))
+            }
+            Action::Save {
+                buffer,
+                path,
+                force,
+            } => {
+                self.dispatch(manager, VimEvent::BufWritePre, buffer, None)?;
+                let outcome = match path {
+                    Some(path) => manager.save_as(buffer, path, force)?,
+                    None => manager.save(buffer, force)?,
+                };
+                self.dispatch(manager, VimEvent::BufWritePost, buffer, None)?;
+                Ok(ActionOutcome::Save(outcome))
             }
             Action::ApplyEdits {
                 buffer,

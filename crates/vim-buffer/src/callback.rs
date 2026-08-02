@@ -27,13 +27,13 @@ pub struct CallbackContext<'a> {
     pub matched: Option<&'a str>,
 }
 
-pub trait Callback {
+pub trait Callback: Send {
     fn call(&mut self, event: VimEvent, context: &CallbackContext<'_>);
 }
 
 #[derive(Default)]
 pub struct CallbackRegistry {
-    callbacks: Vec<Box<dyn Callback>>,
+    callbacks: Vec<Box<dyn Callback + Send>>,
     dispatching: bool,
 }
 

@@ -77,6 +77,66 @@ fn create_and_load_follow_oracle_event_order() {
 }
 
 #[test]
+fn save_dispatches_write_events_around_success_only() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "nxvim-phase4-write-{}-{nonce}.txt",
+        std::process::id()
+    ));
+    let mut manager = BufferManager::new();
+    let buffer = manager.create("written").id();
+    let (mut mutator, events) = mutator_with_events();
+
+    let outcome = mutator
+        .execute(
+            &mut manager,
+            Action::Save {
+                buffer,
+                path: Some(path.clone()),
+                force: false,
+            },
+        )
+        .unwrap();
+    assert!(matches!(outcome, ActionOutcome::Save(_)));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            (VimEvent::BufWritePre, buffer.get()),
+            (VimEvent::BufWritePost, buffer.get()),
+        ]
+    );
+
+    events.lock().unwrap().clear();
+    let mut options = manager.get(buffer).unwrap().options().clone();
+    options.readonly = true;
+    manager
+        .get_mut(buffer)
+        .unwrap()
+        .set_options(options)
+        .unwrap();
+    assert!(
+        mutator
+            .execute(
+                &mut manager,
+                Action::Save {
+                    buffer,
+                    path: None,
+                    force: false,
+                },
+            )
+            .is_err()
+    );
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![(VimEvent::BufWritePre, buffer.get())]
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn switching_dispatches_leave_hidden_enter_in_order() {
     let mut manager = BufferManager::new();
     let first = manager.create("one").id();
