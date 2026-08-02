@@ -1,0 +1,37 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `collections` parsed from `[^]a-z[:digit:][=e=][.ch.]]`"
+---
+Ok(
+    Pattern {
+        source: "[^]a-z[:digit:][=e=][.ch.]]",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Collection(
+                Collection {
+                    negated: true,
+                    include_newline: false,
+                    items: [
+                        Character(
+                            ']',
+                        ),
+                        Range(
+                            'a',
+                            'z',
+                        ),
+                        Posix(
+                            Digit,
+                        ),
+                        Equivalence(
+                            'e',
+                        ),
+                        CollatingElement(
+                            "ch",
+                        ),
+                    ],
+                },
+            ),
+            span: 0..27,
+        },
+    },
+)

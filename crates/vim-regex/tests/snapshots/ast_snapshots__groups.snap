@@ -1,0 +1,17 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `groups` parsed from `\\(a\\|b\\)\\%(cd\\)\\%[ef]\\z(g\\)\\z1`"
+---
+Err(
+    CompileError {
+        diagnostics: [
+            Diagnostic {
+                kind: Unsupported,
+                phase: Parse,
+                span: 15..17,
+                message: "escaped atom `\\%` is not parsed yet",
+                help: None,
+            },
+        ],
+    },
+)

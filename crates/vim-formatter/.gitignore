@@ -1,0 +1,14 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Local editor configuration
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db

@@ -1,0 +1,92 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `multiline` parsed from `one\\ntwo\\_.\\_s\\_[ab]`"
+---
+Ok(
+    Pattern {
+        source: "one\\ntwo\\_.\\_s\\_[ab]",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Concat(
+                [
+                    Spanned {
+                        value: Literal(
+                            "o",
+                        ),
+                        span: 0..1,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "n",
+                        ),
+                        span: 1..2,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "e",
+                        ),
+                        span: 2..3,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "\n",
+                        ),
+                        span: 3..5,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "t",
+                        ),
+                        span: 5..6,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "w",
+                        ),
+                        span: 6..7,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "o",
+                        ),
+                        span: 7..8,
+                    },
+                    Spanned {
+                        value: Dot {
+                            include_newline: true,
+                        },
+                        span: 8..11,
+                    },
+                    Spanned {
+                        value: Class(
+                            CharacterClass {
+                                kind: Whitespace,
+                                negated: false,
+                                include_newline: true,
+                            },
+                        ),
+                        span: 11..14,
+                    },
+                    Spanned {
+                        value: Collection(
+                            Collection {
+                                negated: false,
+                                include_newline: true,
+                                items: [
+                                    Character(
+                                        'a',
+                                    ),
+                                    Character(
+                                        'b',
+                                    ),
+                                ],
+                            },
+                        ),
+                        span: 14..20,
+                    },
+                ],
+            ),
+            span: 0..20,
+        },
+    },
+)

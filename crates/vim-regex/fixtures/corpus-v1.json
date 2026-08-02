@@ -1,0 +1,280 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "id": "magic_escaped_dot",
+      "pattern": "a\\.b",
+      "input": "x a.b aXb",
+      "expected": { "result": "match", "range": { "start": 2, "end": 5 }, "captures": [{ "start": 2, "end": 5 }] },
+      "tier": "a",
+      "features": ["escaping", "literal", "magic"],
+      "source": { "file": "runtime/doc/pattern.txt", "test": "/magic examples" }
+    },
+    {
+      "id": "very_magic_capture",
+      "pattern": "\\v(word)",
+      "input": "λ word",
+      "expected": { "result": "match", "range": { "start": 3, "end": 7 }, "captures": [{ "start": 3, "end": 7 }, { "start": 3, "end": 7 }] },
+      "tier": "a",
+      "features": ["capture", "utf8", "very-magic"],
+      "source": { "file": "runtime/doc/pattern.txt", "test": "/\\v" }
+    },
+    {
+      "id": "nomagic_dot_and_star",
+      "pattern": "\\Mfo\\.\\*",
+      "input": "x fooooo y",
+      "expected": { "result": "match", "range": { "start": 2, "end": 10 }, "captures": [{ "start": 2, "end": 10 }] },
+            "tier": "a",
+            "features": ["nomagic", "quantifier"],
+      "source": { "file": "src/testdir/test_regexp_utf8.vim", "test": "Run_regexp_multibyte_magic", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim" }
+    },
+    {
+      "id": "very_nomagic_punctuation",
+      "pattern": "\\V^aa$",
+      "input": "x ^aa$ x",
+      "expected": { "result": "match", "range": { "start": 2, "end": 6 }, "captures": [{ "start": 2, "end": 6 }] },
+      "tier": "a",
+      "features": ["literal", "very-nomagic"],
+      "source": { "file": "src/testdir/test_regexp_utf8.vim", "test": "Run_regexp_multibyte_magic", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim" }
+    },
+    {
+      "id": "alternation_is_ordered",
+      "pattern": "a\\|ab",
+      "input": "cabd",
+      "expected": { "result": "match", "range": { "start": 1, "end": 2 }, "captures": [{ "start": 1, "end": 2 }] },
+      "tier": "a",
+      "features": ["alternation", "precedence"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "operator \\|", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "very_magic_noncapture",
+      "pattern": "\\v%(ab(xyz)c)",
+      "input": "   abxyzc ",
+      "expected": { "result": "match", "range": { "start": 3, "end": 9 }, "captures": [{ "start": 3, "end": 9 }, { "start": 5, "end": 8 }] },
+      "tier": "a",
+      "features": ["capture", "noncapturing-group", "very-magic"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "Combining different tests and features", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "nested_captures",
+      "pattern": "\\v((a)(b))",
+      "input": "ab",
+      "expected": { "result": "match", "range": { "start": 0, "end": 2 }, "captures": [{ "start": 0, "end": 2 }, { "start": 0, "end": 2 }, { "start": 0, "end": 1 }, { "start": 1, "end": 2 }] },
+      "tier": "a",
+      "features": ["capture", "nested-group"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "submatches", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "backreference_order",
+      "pattern": "\\v(a)(b)\\2\\1\\1",
+      "input": "xabbaa",
+      "expected": { "result": "match", "range": { "start": 1, "end": 6 }, "captures": [{ "start": 1, "end": 6 }, { "start": 1, "end": 2 }, { "start": 2, "end": 3 }] },
+      "tier": "a",
+      "features": ["backreference", "capture", "very-magic"],
+      "source": { "file": "src/testdir/test_regexp_utf8.vim", "test": "Run_regexp_multibyte_magic", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim" }
+    },
+    {
+      "id": "bounded_greedy_quantifier",
+      "pattern": "\\va{2,3}",
+      "input": "baaaac",
+      "expected": { "result": "match", "range": { "start": 1, "end": 4 }, "captures": [{ "start": 1, "end": 4 }] },
+      "tier": "a",
+      "features": ["bounded-quantifier", "greedy"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "multi items", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "minimal_quantifier",
+      "pattern": "a\\{-2,7}",
+      "input": "aaaaaaaaaaaaa",
+      "expected": { "result": "match", "range": { "start": 0, "end": 2 }, "captures": [{ "start": 0, "end": 2 }] },
+      "tier": "a",
+      "features": ["bounded-quantifier", "minimal"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "greedy-ness and lazy-ness", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "invalid_quantifier_body",
+      "pattern": "a\\{a}",
+      "input": "aaa",
+      "expected": { "result": "diagnostics", "diagnostics": [{ "kind": "invalid_syntax", "phase": "parse", "span": { "start": 1, "end": 5 }, "message_contains": "E554" }] },
+      "tier": "a",
+      "features": ["diagnostic", "invalid-quantifier"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "Test_multi_failure", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "collection_ranges",
+      "pattern": "[a-d][e-f][x-x]d",
+      "input": "cexdxx",
+      "expected": { "result": "match", "range": { "start": 0, "end": 4 }, "captures": [{ "start": 0, "end": 4 }] },
+      "tier": "a",
+      "features": ["collection", "range"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "collections and character range", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "posix_print_utf8",
+      "pattern": "[[:print:]]\\+",
+      "input": "Motörhead",
+      "expected": { "result": "match", "range": { "start": 0, "end": 10 }, "captures": [{ "start": 0, "end": 10 }] },
+      "tier": "b",
+      "features": ["collection", "posix-class", "utf8"],
+      "source": { "file": "src/testdir/test_regexp_utf8.vim", "test": "s:classes_test", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim" }
+    },
+    {
+      "id": "reversed_collection_range",
+      "pattern": "[c-a]",
+      "input": "abc def",
+      "expected": { "result": "diagnostics", "diagnostics": [{ "kind": "invalid_syntax", "phase": "parse", "span": { "start": 0, "end": 5 }, "message_contains": "E944" }] },
+      "tier": "a",
+      "features": ["collection", "diagnostic", "invalid-range"],
+      "source": { "file": "src/testdir/test_regexp_utf8.vim", "test": "Test_reversed_range", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim" }
+    },
+    {
+      "id": "ignorecase_option",
+      "pattern": "b\\+",
+      "input": "aAbBbBcC",
+      "options": { "ignore_case": true },
+      "expected": { "result": "match", "range": { "start": 2, "end": 6 }, "captures": [{ "start": 2, "end": 6 }] },
+      "tier": "b",
+      "features": ["ignorecase", "option"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "ignoring case and repeated characters", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "smartcase_uppercase",
+      "pattern": "B\\+",
+      "input": "aAbBbBcC",
+      "options": { "ignore_case": true, "smart_case": true },
+      "expected": { "result": "match", "range": { "start": 3, "end": 4 }, "captures": [{ "start": 3, "end": 4 }] },
+      "tier": "b",
+      "features": ["ignorecase", "smartcase"],
+      "source": { "file": "runtime/doc/options.txt", "test": "'smartcase'" }
+    },
+    {
+      "id": "case_override_insensitive",
+      "pattern": "\\cB\\+",
+      "input": "aAbBbBcC",
+      "expected": { "result": "match", "range": { "start": 2, "end": 6 }, "captures": [{ "start": 2, "end": 6 }] },
+      "tier": "b",
+      "features": ["case-override", "ignorecase"],
+      "source": { "file": "runtime/doc/pattern.txt", "test": "/\\c" }
+    },
+    {
+      "id": "custom_iskeyword",
+      "pattern": "\\k\\+",
+      "input": "--foo-bar!",
+      "options": { "is_keyword": "@,48-57,_,-" },
+      "expected": { "result": "match", "range": { "start": 0, "end": 9 }, "captures": [{ "start": 0, "end": 9 }] },
+      "tier": "b",
+      "features": ["iskeyword", "option-class"],
+      "source": { "file": "runtime/doc/options.txt", "test": "'iskeyword'" }
+    },
+    {
+      "id": "newline_atom",
+      "pattern": "o\\nb",
+      "input": "foo\nbar",
+      "expected": { "result": "match", "range": { "start": 2, "end": 5 }, "captures": [{ "start": 2, "end": 5 }] },
+      "tier": "b",
+      "features": ["multiline", "newline"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "match newline character in a string", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "underscore_collection_newline",
+      "pattern": "\\_[0-9]\\+",
+      "input": "asfi\n9888u",
+      "expected": { "result": "match", "range": { "start": 4, "end": 9 }, "captures": [{ "start": 4, "end": 9 }] },
+      "tier": "b",
+      "features": ["collection", "multiline", "underscore-class"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "collections and character range", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "utf8_dot_byte_range",
+      "pattern": ".",
+      "input": "אבגד",
+      "expected": { "result": "match", "range": { "start": 0, "end": 2 }, "captures": [{ "start": 0, "end": 2 }] },
+      "tier": "a",
+      "features": ["dot", "utf8"],
+      "source": { "file": "src/testdir/test_regexp_utf8.vim", "test": "Test_matchstr_multibyte", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_utf8.vim" }
+    },
+    {
+      "id": "ignore_composing_differences",
+      "pattern": "cat\\Z",
+      "input": "càt",
+      "expected": { "result": "match", "range": { "start": 0, "end": 5 }, "captures": [{ "start": 0, "end": 5 }] },
+      "tier": "c",
+      "features": ["composing", "unicode", "z-ignore-composing"],
+      "source": { "file": "runtime/doc/pattern.txt", "test": "/\\Z" }
+    },
+    {
+      "id": "consume_composing_characters",
+      "pattern": "a\\%C",
+      "input": "càt",
+      "expected": { "result": "match", "range": { "start": 1, "end": 4 }, "captures": [{ "start": 1, "end": 4 }] },
+      "tier": "c",
+      "features": ["composing", "percent-c", "unicode"],
+      "source": { "file": "runtime/doc/pattern.txt", "test": "/\\%C" }
+    },
+    {
+      "id": "match_start_boundary",
+      "pattern": "abc\\zsdd",
+      "input": "ddabcddxyzt",
+      "expected": { "result": "match", "range": { "start": 5, "end": 7 }, "captures": [{ "start": 5, "end": 7 }] },
+      "tier": "c",
+      "features": ["match-boundary", "zs"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "match starts at \\zs", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "match_end_boundary",
+      "pattern": "abc\\zeend",
+      "input": "oij abcend",
+      "expected": { "result": "match", "range": { "start": 4, "end": 7 }, "captures": [{ "start": 4, "end": 7 }] },
+      "tier": "c",
+      "features": ["match-boundary", "ze"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "match ends at \\ze", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "virtual_column_assertion",
+      "pattern": ".*\\%<5v",
+      "input": "aaaaaaaaaaaaaaaaaaaa",
+      "expected": { "result": "match", "range": { "start": 0, "end": 3 }, "captures": [{ "start": 0, "end": 3 }] },
+      "tier": "c",
+      "features": ["position", "virtual-column"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "Test_compare_column_matchstr", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "line_position_assertion",
+      "pattern": "\\%2lword",
+      "input": "word\nword",
+      "expected": { "result": "match", "range": { "start": 5, "end": 9 }, "captures": [{ "start": 5, "end": 9 }] },
+      "tier": "c",
+      "features": ["line", "position"],
+      "source": { "file": "runtime/doc/pattern.txt", "test": "/\\%l" }
+    },
+    {
+      "id": "byte_column_assertion",
+      "pattern": "\\%3c.",
+      "input": "abcd",
+      "expected": { "result": "match", "range": { "start": 2, "end": 3 }, "captures": [{ "start": 2, "end": 3 }] },
+      "tier": "c",
+      "features": ["byte-column", "position"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "Test_column_success_failure", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "cursor_assertion",
+      "pattern": "\\%#x",
+      "input": "a x",
+      "editor": { "cursor": 2, "tab_stop": 8, "ambiguous_width_is_double": false },
+      "expected": { "result": "match", "range": { "start": 2, "end": 3 }, "captures": [{ "start": 2, "end": 3 }] },
+      "tier": "c",
+      "features": ["cursor", "position"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "Test_matching_curpos", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    },
+    {
+      "id": "visual_area_assertion",
+      "pattern": "\\%Vx",
+      "input": "a x",
+      "editor": { "visual": { "range": { "start": 2, "end": 3 }, "mode": "character" }, "tab_stop": 8, "ambiguous_width_is_double": false },
+      "expected": { "result": "match", "range": { "start": 2, "end": 3 }, "captures": [{ "start": 2, "end": 3 }] },
+      "tier": "c",
+      "features": ["position", "visual-area"],
+      "source": { "file": "src/testdir/test_regexp_latin.vim", "test": "Test_matching_visual_area", "url": "https://github.com/vim/vim/blob/v9.2.0843/src/testdir/test_regexp_latin.vim" }
+    }
+  ]
+}

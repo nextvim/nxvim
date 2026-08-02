@@ -1,0 +1,29 @@
+{
+  "snapshot_schema_version": 1,
+  "fixture_schema_version": 1,
+  "vim_version": 902,
+  "vim_patch": 843,
+  "results": {
+    "very_magic_capture": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "very_magic_capture",
+      "range": {
+        "start": 3,
+        "end": 7
+      },
+      "capture_texts": [
+        "word",
+        "word",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    }
+  }
+}

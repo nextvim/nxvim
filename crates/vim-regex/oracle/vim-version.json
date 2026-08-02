@@ -1,0 +1,6 @@
+{
+  "vim_version": 902,
+  "required_patch": 843,
+  "forbidden_next_patch": 844,
+  "description": "Vim 9.2 with patches 1-843"
+}

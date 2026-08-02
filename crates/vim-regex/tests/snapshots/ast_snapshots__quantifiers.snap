@@ -1,0 +1,121 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `quantifiers` parsed from `a*b\\+c\\=d\\?e\\{2,4}f\\{-1,3}`"
+---
+Ok(
+    Pattern {
+        source: "a*b\\+c\\=d\\?e\\{2,4}f\\{-1,3}",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Concat(
+                [
+                    Spanned {
+                        value: Repeat {
+                            expression: Spanned {
+                                value: Literal(
+                                    "a",
+                                ),
+                                span: 0..1,
+                            },
+                            quantifier: Quantifier {
+                                min: 0,
+                                max: None,
+                                preference: Greedy,
+                            },
+                        },
+                        span: 0..2,
+                    },
+                    Spanned {
+                        value: Repeat {
+                            expression: Spanned {
+                                value: Literal(
+                                    "b",
+                                ),
+                                span: 2..3,
+                            },
+                            quantifier: Quantifier {
+                                min: 1,
+                                max: None,
+                                preference: Greedy,
+                            },
+                        },
+                        span: 2..5,
+                    },
+                    Spanned {
+                        value: Repeat {
+                            expression: Spanned {
+                                value: Literal(
+                                    "c",
+                                ),
+                                span: 5..6,
+                            },
+                            quantifier: Quantifier {
+                                min: 0,
+                                max: Some(
+                                    1,
+                                ),
+                                preference: Greedy,
+                            },
+                        },
+                        span: 5..8,
+                    },
+                    Spanned {
+                        value: Repeat {
+                            expression: Spanned {
+                                value: Literal(
+                                    "d",
+                                ),
+                                span: 8..9,
+                            },
+                            quantifier: Quantifier {
+                                min: 0,
+                                max: Some(
+                                    1,
+                                ),
+                                preference: Greedy,
+                            },
+                        },
+                        span: 8..11,
+                    },
+                    Spanned {
+                        value: Repeat {
+                            expression: Spanned {
+                                value: Literal(
+                                    "e",
+                                ),
+                                span: 11..12,
+                            },
+                            quantifier: Quantifier {
+                                min: 2,
+                                max: Some(
+                                    4,
+                                ),
+                                preference: Greedy,
+                            },
+                        },
+                        span: 11..18,
+                    },
+                    Spanned {
+                        value: Repeat {
+                            expression: Spanned {
+                                value: Literal(
+                                    "f",
+                                ),
+                                span: 18..19,
+                            },
+                            quantifier: Quantifier {
+                                min: 1,
+                                max: Some(
+                                    3,
+                                ),
+                                preference: Minimal,
+                            },
+                        },
+                        span: 18..26,
+                    },
+                ],
+            ),
+            span: 0..26,
+        },
+    },
+)

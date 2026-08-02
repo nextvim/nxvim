@@ -1,0 +1,548 @@
+{
+  "snapshot_schema_version": 1,
+  "fixture_schema_version": 1,
+  "vim_version": 902,
+  "vim_patch": 843,
+  "results": {
+    "alternation_is_ordered": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "alternation_is_ordered",
+      "range": {
+        "start": 1,
+        "end": 2
+      },
+      "capture_texts": [
+        "a",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "backreference_order": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "backreference_order",
+      "range": {
+        "start": 1,
+        "end": 6
+      },
+      "capture_texts": [
+        "abbaa",
+        "a",
+        "b",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "bounded_greedy_quantifier": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "bounded_greedy_quantifier",
+      "range": {
+        "start": 1,
+        "end": 4
+      },
+      "capture_texts": [
+        "aaa",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "byte_column_assertion": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "byte_column_assertion",
+      "range": {
+        "start": 2,
+        "end": 3
+      },
+      "capture_texts": [
+        "c",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "case_override_insensitive": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "case_override_insensitive",
+      "range": {
+        "start": 2,
+        "end": 6
+      },
+      "capture_texts": [
+        "bBbB",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "collection_ranges": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "collection_ranges",
+      "range": {
+        "start": 0,
+        "end": 4
+      },
+      "capture_texts": [
+        "cexd",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "consume_composing_characters": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "consume_composing_characters",
+      "range": {
+        "start": 1,
+        "end": 4
+      },
+      "capture_texts": [
+        "à",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "cursor_assertion": {
+      "status": "unsupported",
+      "vim_version": 902,
+      "fixture_id": "cursor_assertion",
+      "reason": "line and cursor atoms require a dedicated buffer-search oracle"
+    },
+    "custom_iskeyword": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "custom_iskeyword",
+      "range": {
+        "start": 0,
+        "end": 9
+      },
+      "capture_texts": [
+        "--foo-bar",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "ignore_composing_differences": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "ignore_composing_differences",
+      "range": {
+        "start": 0,
+        "end": 5
+      },
+      "capture_texts": [
+        "càt",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "ignorecase_option": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "ignorecase_option",
+      "range": {
+        "start": 2,
+        "end": 6
+      },
+      "capture_texts": [
+        "bBbB",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "invalid_quantifier_body": {
+      "status": "diagnostic",
+      "vim_version": 902,
+      "fixture_id": "invalid_quantifier_body",
+      "code": "E554"
+    },
+    "line_position_assertion": {
+      "status": "unsupported",
+      "vim_version": 902,
+      "fixture_id": "line_position_assertion",
+      "reason": "line and cursor atoms require a dedicated buffer-search oracle"
+    },
+    "magic_escaped_dot": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "magic_escaped_dot",
+      "range": {
+        "start": 2,
+        "end": 5
+      },
+      "capture_texts": [
+        "a.b",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "match_end_boundary": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "match_end_boundary",
+      "range": {
+        "start": 4,
+        "end": 7
+      },
+      "capture_texts": [
+        "abc",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "match_start_boundary": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "match_start_boundary",
+      "range": {
+        "start": 5,
+        "end": 7
+      },
+      "capture_texts": [
+        "dd",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "minimal_quantifier": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "minimal_quantifier",
+      "range": {
+        "start": 0,
+        "end": 2
+      },
+      "capture_texts": [
+        "aa",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "nested_captures": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "nested_captures",
+      "range": {
+        "start": 0,
+        "end": 2
+      },
+      "capture_texts": [
+        "ab",
+        "ab",
+        "a",
+        "b",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "newline_atom": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "newline_atom",
+      "range": {
+        "start": 2,
+        "end": 5
+      },
+      "capture_texts": [
+        "o\nb",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "nomagic_dot_and_star": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "nomagic_dot_and_star",
+      "range": {
+        "start": 2,
+        "end": 10
+      },
+      "capture_texts": [
+        "fooooo y",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "posix_print_utf8": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "posix_print_utf8",
+      "range": {
+        "start": 0,
+        "end": 10
+      },
+      "capture_texts": [
+        "Motörhead",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "reversed_collection_range": {
+      "status": "diagnostic",
+      "vim_version": 902,
+      "fixture_id": "reversed_collection_range",
+      "code": "E944"
+    },
+    "smartcase_uppercase": {
+      "status": "unsupported",
+      "vim_version": 902,
+      "fixture_id": "smartcase_uppercase",
+      "reason": "matchstrpos() does not apply the smartcase search heuristic"
+    },
+    "underscore_collection_newline": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "underscore_collection_newline",
+      "range": {
+        "start": 4,
+        "end": 9
+      },
+      "capture_texts": [
+        "\n9888",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "utf8_dot_byte_range": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "utf8_dot_byte_range",
+      "range": {
+        "start": 0,
+        "end": 2
+      },
+      "capture_texts": [
+        "א",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "very_magic_capture": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "very_magic_capture",
+      "range": {
+        "start": 3,
+        "end": 7
+      },
+      "capture_texts": [
+        "word",
+        "word",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "very_magic_noncapture": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "very_magic_noncapture",
+      "range": {
+        "start": 3,
+        "end": 9
+      },
+      "capture_texts": [
+        "abxyzc",
+        "xyz",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "very_nomagic_punctuation": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "very_nomagic_punctuation",
+      "range": {
+        "start": 2,
+        "end": 6
+      },
+      "capture_texts": [
+        "^aa$",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "virtual_column_assertion": {
+      "status": "match",
+      "vim_version": 902,
+      "fixture_id": "virtual_column_assertion",
+      "range": {
+        "start": 0,
+        "end": 3
+      },
+      "capture_texts": [
+        "aaa",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "visual_area_assertion": {
+      "status": "unsupported",
+      "vim_version": 902,
+      "fixture_id": "visual_area_assertion",
+      "reason": "visual selection modes require a dedicated buffer oracle"
+    }
+  }
+}

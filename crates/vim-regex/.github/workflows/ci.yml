@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out vim-regex
+        uses: actions/checkout@v4
+
+      - name: Check out pinned Vim oracle
+        uses: actions/checkout@v4
+        with:
+          repository: vim/vim
+          ref: v9.2.0843
+          path: vendor-vim
+
+      - name: Build pinned Vim oracle
+        run: |
+          cd vendor-vim
+          ./configure \
+            --prefix="$RUNNER_TEMP/vim-oracle" \
+            --with-features=huge \
+            --enable-multibyte \
+            --disable-gui \
+            --without-x
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/vim-oracle/bin" >> "$GITHUB_PATH"
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run tests against pinned Vim
+        run: cargo test --all-targets
+
+      - name: Verify checked-in oracle snapshots
+        run: |
+          cargo run --quiet --bin fixture-oracle -- \
+            verify fixtures/schema-v1.example.json fixtures/oracle-v1.snap.json
+          cargo run --quiet --bin fixture-oracle -- \
+            verify fixtures/corpus-v1.json fixtures/corpus-v1.oracle.snap.json
+
+      - name: Report fixture expectation coverage
+        run: >-
+          cargo run --quiet --bin fixture-report --
+          fixtures/corpus-v1.json fixtures/corpus-v1.oracle.snap.json
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings

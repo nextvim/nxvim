@@ -1,0 +1,16 @@
+[package]
+name = "vim-regex"
+version = "0.1.0"
+edition = "2024"
+default-run = "vim-regex"
+
+[dependencies]
+onig = "6.5.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+unicode-width = "0.2.2"
+wait-timeout = "0.2.1"
+
+[dev-dependencies]
+insta = "1.43.2"
+proptest = "1.9.0"

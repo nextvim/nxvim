@@ -1,0 +1,41 @@
+---
+source: tests/ast_snapshots.rs
+description: "Vim syntax family `encoding` parsed from `λ🙂é`"
+---
+Ok(
+    Pattern {
+        source: "λ🙂e\u{301}",
+        initial_magic: Magic,
+        expression: Spanned {
+            value: Concat(
+                [
+                    Spanned {
+                        value: Literal(
+                            "λ",
+                        ),
+                        span: 0..2,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "🙂",
+                        ),
+                        span: 2..6,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "e",
+                        ),
+                        span: 6..7,
+                    },
+                    Spanned {
+                        value: Literal(
+                            "\u{301}",
+                        ),
+                        span: 7..9,
+                    },
+                ],
+            ),
+            span: 0..9,
+        },
+    },
+)
