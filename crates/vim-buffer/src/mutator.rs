@@ -47,6 +47,10 @@ pub enum Action {
         path: Option<PathBuf>,
         force: bool,
     },
+    SetOptions {
+        buffer: BufferId,
+        options: crate::BufferOptions,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +58,7 @@ pub enum ActionOutcome {
     Manager(ManagerOutcome),
     Mutation(Option<MutationOutcome>),
     Save(crate::SaveOutcome),
+    Options(Option<crate::OptionsOutcome>),
 }
 
 #[derive(Default)]
@@ -138,6 +143,13 @@ impl Mutator {
                 };
                 self.dispatch(manager, VimEvent::BufWritePost, buffer, None)?;
                 Ok(ActionOutcome::Save(outcome))
+            }
+            Action::SetOptions { buffer, options } => {
+                let outcome = manager.get_mut(buffer)?.set_options(options)?;
+                if outcome.is_some() {
+                    self.dispatch(manager, VimEvent::OptionSet, buffer, None)?;
+                }
+                Ok(ActionOutcome::Options(outcome))
             }
             Action::ApplyEdits {
                 buffer,

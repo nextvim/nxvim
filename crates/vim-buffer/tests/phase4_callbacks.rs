@@ -77,6 +77,37 @@ fn create_and_load_follow_oracle_event_order() {
 }
 
 #[test]
+fn option_changes_dispatch_only_when_state_changes() {
+    let mut manager = BufferManager::new();
+    let buffer = manager.create("").id();
+    let (mut mutator, events) = mutator_with_events();
+    let mut options = manager.get(buffer).unwrap().options().clone();
+    options.readonly = true;
+
+    let changed = mutator
+        .execute(
+            &mut manager,
+            Action::SetOptions {
+                buffer,
+                options: options.clone(),
+            },
+        )
+        .unwrap();
+    assert!(matches!(changed, ActionOutcome::Options(Some(_))));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![(VimEvent::OptionSet, buffer.get())]
+    );
+
+    events.lock().unwrap().clear();
+    let unchanged = mutator
+        .execute(&mut manager, Action::SetOptions { buffer, options })
+        .unwrap();
+    assert!(matches!(unchanged, ActionOutcome::Options(None)));
+    assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
 fn save_dispatches_write_events_around_success_only() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
