@@ -13,6 +13,7 @@ pub enum BufferError {
     ModifiedBuffer(BufferId),
     InvalidLifecycleTransition,
     InvalidSelectionSet,
+    InvalidMark(char),
     DecodeUtf8(std::str::Utf8Error),
     UnsupportedEncoding(String),
     UnsupportedFileFormat,

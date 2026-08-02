@@ -1,6 +1,7 @@
 use crate::{
-    BufferOptions, ChangeList, EditOrigin, FileMetadata, MarkSet, MutationOutcome, OptionsOutcome,
-    Revision, SelectionSet, UndoTree, edit::summaries_for_patch, snapshot::BufferSnapshot,
+    BufferOptions, ByteOffset, ChangeEntry, ChangeList, EditOrigin, EditSummary, FileMetadata,
+    MarkSet, MutationOutcome, OptionsOutcome, Revision, SelectionSet, UndoTree,
+    edit::summaries_for_patch, snapshot::BufferSnapshot,
 };
 use clock::ReplicaId;
 use std::{num::NonZeroU64, path::Path, sync::Arc, time::Duration};
@@ -160,6 +161,22 @@ impl Buffer {
         &self.marks
     }
 
+    pub fn set_mark(&mut self, name: char, offset: ByteOffset) -> Result<(), crate::BufferError> {
+        let snapshot = self.snapshot();
+        let offset = snapshot.validate_offset(offset)?;
+        let anchor = self.text.anchor_before(offset);
+        self.marks.set(name, anchor)?;
+        Ok(())
+    }
+
+    pub fn delete_mark(&mut self, name: char) -> Result<bool, crate::BufferError> {
+        Ok(self.marks.remove(name)?.is_some())
+    }
+
+    pub fn resolve_mark(&self, name: char) -> Option<ByteOffset> {
+        self.marks.resolve(name, &self.snapshot())
+    }
+
     pub fn change_list(&self) -> &ChangeList {
         &self.changes
     }
@@ -209,11 +226,17 @@ impl Buffer {
         let patch = subscription.consume();
         let after = self.text.snapshot().clone();
         self.increment_changedtick();
-        let selections = match origin {
-            EditOrigin::Undo => self.undo_metadata.undo_selections(transaction),
-            EditOrigin::Redo => self.undo_metadata.redo_selections(transaction),
+        let state = match origin {
+            EditOrigin::Undo => self.undo_metadata.undo_state(transaction),
+            EditOrigin::Redo => self.undo_metadata.redo_state(transaction),
             _ => None,
         };
+        let selections = state
+            .as_ref()
+            .and_then(|(selections, _)| selections.clone());
+        if let Some((_, marks)) = state {
+            self.marks = marks;
+        }
         let edits = summaries_for_patch(before.as_inner(), &after, &patch);
         Ok(Some(MutationOutcome {
             buffer: self.id,
@@ -226,6 +249,20 @@ impl Buffer {
             selections,
             modified_changed: modified_before != self.is_modified(),
         }))
+    }
+
+    pub(crate) fn last_transaction_id(&self) -> Option<text::TransactionId> {
+        self.text
+            .peek_undo_stack()
+            .map(text::HistoryEntry::transaction_id)
+    }
+
+    pub(crate) fn merge_transaction(
+        &mut self,
+        source: text::TransactionId,
+        destination: text::TransactionId,
+    ) {
+        self.text.merge_transactions(source, destination);
     }
 
     pub(crate) fn apply_text_edits(
@@ -242,12 +279,50 @@ impl Buffer {
         self.changedtick.0 = self.changedtick.0.wrapping_add(1);
     }
 
-    pub(crate) fn record_undo_metadata(
+    pub(crate) fn finish_change_metadata(
         &mut self,
         transaction: text::TransactionId,
         selections: Option<SelectionSet>,
+        before_marks: MarkSet,
+        before: &BufferSnapshot,
+        edits: &[EditSummary],
     ) {
-        self.undo_metadata
-            .record(transaction, selections, self.changedtick);
+        let deleted = edits.iter().map(|edit| edit.old_range).collect::<Vec<_>>();
+        self.marks.remove_marks_on_deleted_lines(before, &deleted);
+
+        let after = self.snapshot();
+        if let (Some(first), Some(last)) = (edits.first(), edits.last()) {
+            let start = first.new_range.start.0.min(after.len_bytes());
+            let last_offset = if last.new_range.end.0 > last.new_range.start.0 {
+                after
+                    .as_inner()
+                    .as_rope()
+                    .floor_char_boundary(last.new_range.end.0.saturating_sub(1))
+            } else {
+                last.new_range.start.0.min(after.len_bytes())
+            };
+            let start_anchor = self.text.anchor_before(start);
+            let end_anchor = self.text.anchor_after(last_offset);
+            let _ = self.marks.set('[', start_anchor);
+            let _ = self.marks.set(']', end_anchor);
+            let _ = self.marks.set('.', self.text.anchor_before(start));
+            self.changes.record(
+                ChangeEntry {
+                    transaction: Some(transaction),
+                    revision: after.revision().clone(),
+                    position: self.text.anchor_before(start),
+                },
+                &after,
+            );
+        }
+
+        let after_marks = self.marks.clone();
+        self.undo_metadata.record(
+            transaction,
+            selections,
+            self.changedtick,
+            before_marks,
+            after_marks,
+        );
     }
 }

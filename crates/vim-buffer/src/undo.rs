@@ -1,4 +1,4 @@
-use crate::{ChangedTick, SelectionSet};
+use crate::{ChangedTick, MarkSet, SelectionSet};
 
 /// Vim navigation metadata for a transaction owned by `text::Buffer`.
 ///
@@ -12,6 +12,8 @@ pub struct UndoNode {
     pub before_selections: Option<SelectionSet>,
     pub after_selections: Option<SelectionSet>,
     pub changedtick: ChangedTick,
+    pub before_marks: MarkSet,
+    pub after_marks: MarkSet,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -30,7 +32,20 @@ impl UndoTree {
         transaction: text::TransactionId,
         selections: Option<SelectionSet>,
         changedtick: ChangedTick,
+        before_marks: MarkSet,
+        after_marks: MarkSet,
     ) {
+        if let Some(index) = self
+            .nodes
+            .iter()
+            .position(|node| node.transaction == transaction)
+        {
+            self.nodes[index].after_selections = selections;
+            self.nodes[index].after_marks = after_marks;
+            self.nodes[index].changedtick = changedtick;
+            self.current = Some(index);
+            return;
+        }
         let parent = self.current;
         let index = self.nodes.len();
         if let Some(parent) = parent {
@@ -43,33 +58,41 @@ impl UndoTree {
             before_selections: selections.clone(),
             after_selections: selections,
             changedtick,
+            before_marks,
+            after_marks,
         });
         self.current = Some(index);
     }
 
-    pub(crate) fn undo_selections(
+    pub(crate) fn undo_state(
         &mut self,
         transaction: text::TransactionId,
-    ) -> Option<SelectionSet> {
+    ) -> Option<(Option<SelectionSet>, MarkSet)> {
         let index = self
             .nodes
             .iter()
             .position(|node| node.transaction == transaction)?;
-        let selections = self.nodes[index].before_selections.clone();
+        let state = (
+            self.nodes[index].before_selections.clone(),
+            self.nodes[index].before_marks.clone(),
+        );
         self.current = self.nodes[index].parent;
-        selections
+        Some(state)
     }
 
-    pub(crate) fn redo_selections(
+    pub(crate) fn redo_state(
         &mut self,
         transaction: text::TransactionId,
-    ) -> Option<SelectionSet> {
+    ) -> Option<(Option<SelectionSet>, MarkSet)> {
         let index = self
             .nodes
             .iter()
             .position(|node| node.transaction == transaction)?;
-        let selections = self.nodes[index].after_selections.clone();
+        let state = (
+            self.nodes[index].after_selections.clone(),
+            self.nodes[index].after_marks.clone(),
+        );
         self.current = Some(index);
-        selections
+        Some(state)
     }
 }

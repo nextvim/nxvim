@@ -582,7 +582,7 @@ The module and type skeleton now exists under `crates/vim-buffer/src`:
 | Results | `MutationOutcome` | Includes authoritative Zed transaction identity |
 | Callbacks | `VimEvent`, `CallbackContext`, `CallbackRegistry` | Synchronous registry scaffolded; ordering pending |
 | Mutation | `Action`, `Mutator` | Queue/executor boundary scaffolded; execution pending |
-| Vim state | `BufferOptions`, `MarkSet`, `ChangeList`, `UndoTree` | Vim metadata only; undo text remains Zed-owned |
+| Vim state | `BufferOptions`, `MarkSet`, `ChangeList`, `UndoTree` | Local/special marks, bounded changelist, and transaction metadata; undo text remains Zed-owned |
 | File boundary | `FileMetadata`, `FileFormat`, `LoadSource` | Metadata scaffolded; I/O pending |
 | Errors | `BufferError` | Typed initial error surface |
 
@@ -659,15 +659,21 @@ Completed in the final Phase 2 increment:
 
 **Exit criteria:** insert/delete/replace, multiline edits, EOF handling, rollback-on-error, outcome contents, and atomic multi-cursor insertion/deletion are covered by unit and property tests. One multi-cursor command produces one revision and one undo node regardless of cursor count.
 
-### Phase 3 — Marks and undo
+### Phase 3 — Marks, changelist, and undo metadata (complete for MVP)
 
-- Implement edit mappings and biased anchors.
-- Build local/global mark policy over anchors.
-- Add change-list entries.
-- Delegate linear text undo/redo and transaction grouping to Zed; record only Vim selection and navigation metadata around `text::TransactionId`.
-- Preserve/restore caller-provided cursor metadata.
+Completed:
 
-**Exit criteria:** compatibility tests cover marks across insertion/deletion/replacement, linear undo/redo, selection restoration, deterministic grouping, and saved-state/modified transitions. Full branch navigation is not claimed.
+- Store buffer-local and special Vim marks as Zed anchors; callers never choose anchor bias through the Vim API.
+- Validate mark names and positions, support local mark deletion, and erase marks when their complete line is deleted, matching pinned `motion.txt`.
+- Snapshot mark state around authoritative Zed transactions so undo/redo restores lowercase marks without storing inverse text edits.
+- Maintain `'[`, `']`, and `'.` from normalized committed edit geometry.
+- Record a bounded changelist for undoable changes, coalesce nearby byte-column changes on one line using Vim's documented default distance, retain entries after undo, and support older/newer navigation.
+- Delegate linear text undo/redo and explicit `join_previous`/`:undojoin` grouping to Zed transaction APIs.
+- Preserve and return caller-provided selection metadata through edit, undo, and redo outcomes.
+
+Uppercase file marks and numbered viminfo marks are intentionally manager/session-owned, not `Buffer`-owned; they are added with persistence/session integration rather than duplicated in each buffer.
+
+**Exit criteria met:** tests cover anchor adjustment after insertion, whole-line mark deletion, mark restoration through undo/redo, special changed-area marks, changelist coalescing/retention, linear undo/redo, and deterministic joined transaction grouping. Full branch navigation is not claimed.
 
 ### Phase 4 — Buffer manager lifecycle
 

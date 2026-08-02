@@ -8,6 +8,7 @@ pub struct Transaction<'a> {
     buffer: &'a mut Buffer,
     origin: EditOrigin,
     edits: Vec<PlannedEdit>,
+    join_previous: bool,
 }
 
 impl<'a> Transaction<'a> {
@@ -16,6 +17,7 @@ impl<'a> Transaction<'a> {
             buffer,
             origin,
             edits: Vec::new(),
+            join_previous: false,
         }
     }
 
@@ -58,6 +60,12 @@ impl<'a> Transaction<'a> {
         &self.edits
     }
 
+    /// Merge this transaction into the preceding Zed transaction, matching the
+    /// primitive behavior required by Vim's `:undojoin`.
+    pub fn join_previous(&mut self) {
+        self.join_previous = true;
+    }
+
     pub fn commit(
         mut self,
         selections: Option<SelectionSet>,
@@ -69,7 +77,9 @@ impl<'a> Transaction<'a> {
             return Err(BufferError::InvalidLifecycleTransition);
         }
 
+        let previous_transaction = self.buffer.last_transaction_id();
         let before = self.buffer.snapshot();
+        let before_marks = self.buffer.marks().clone();
         let old_revision = before.revision().clone();
         let modified_before = self.buffer.is_modified();
 
@@ -130,11 +140,22 @@ impl<'a> Transaction<'a> {
             });
         }
 
-        let transaction = self.buffer.apply_text_edits(backend_edits);
+        let mut transaction = self.buffer.apply_text_edits(backend_edits);
+        if self.join_previous
+            && let (Some(source), Some(destination)) = (transaction, previous_transaction)
+        {
+            self.buffer.merge_transaction(source, destination);
+            transaction = Some(destination);
+        }
         self.buffer.increment_changedtick();
         if let Some(transaction) = transaction {
-            self.buffer
-                .record_undo_metadata(transaction, selections.clone());
+            self.buffer.finish_change_metadata(
+                transaction,
+                selections.clone(),
+                before_marks,
+                &before,
+                &summaries,
+            );
         }
         let new_revision = self.buffer.revision();
         let modified_changed = modified_before != self.buffer.is_modified();
