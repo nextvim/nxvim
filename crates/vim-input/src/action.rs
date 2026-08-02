@@ -306,12 +306,6 @@ pub enum Action {
     SearchBackward {
         count: u32,
     },
-    // SearchNext {
-    //     count: u32,
-    // },
-    // SearchPrevious {
-    //     count: u32,
-    // },
 
     // OPT+MOTION
     DeleteMotion {
@@ -1031,8 +1025,6 @@ impl Action {
             Action::MoveToColumn { count } => *count,
             Action::SearchForward { count } => *count,
             Action::SearchBackward { count } => *count,
-            // Action::SearchNext { count } => *count,
-            // Action::SearchPrevious { count } => *count,
             Action::MoveLeft { count, .. } => *count,
             Action::MoveRight { count, .. } => *count,
             Action::MoveUp { count, .. } => *count,
