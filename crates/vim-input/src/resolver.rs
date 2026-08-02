@@ -206,15 +206,26 @@ impl Resolver {
         if self.pending_operator.is_some() && !self.pending_operator_keys.is_empty() {
             let mut combined = self.pending_operator_keys.clone();
             combined.extend_from_slice(&self.keys);
-            let matched = self.resolve_sequence(&combined, keymap, false);
+            let matched = self.resolve_sequence(&combined, keymap, false, true);
             if matched != Match::None {
                 return matched;
             }
         }
-        self.resolve_sequence(&self.keys, keymap, self.pending_operator.is_none())
+        self.resolve_sequence(
+            &self.keys,
+            keymap,
+            self.pending_operator.is_none(),
+            self.pending_operator.is_none(),
+        )
     }
 
-    fn resolve_sequence(&self, keys: &[Key], keymap: &Keymap, allow_operator: bool) -> Match {
+    fn resolve_sequence(
+        &self,
+        keys: &[Key],
+        keymap: &Keymap,
+        allow_operator: bool,
+        allow_normal: bool,
+    ) -> Match {
         if self.mode.is_visual() {
             let matched = match_map(keys, keymap.bindings(BindingContext::Visual));
             if matched != Match::None {
@@ -248,10 +259,12 @@ impl Resolver {
                 Match::Operator(_) => unreachable!(),
             }
         }
-        for context in [BindingContext::Normal, BindingContext::Mode] {
-            let matched = match_map(keys, keymap.bindings(context));
-            if matched != Match::None {
-                return matched;
+        if allow_normal {
+            for context in [BindingContext::Normal, BindingContext::Mode] {
+                let matched = match_map(keys, keymap.bindings(context));
+                if matched != Match::None {
+                    return matched;
+                }
             }
         }
         Match::None
@@ -264,11 +277,14 @@ impl Resolver {
             action = action.with_select(true);
         }
 
-        if let Some(operator) = self.pending_operator.take()
-            && !is_doubled_operator_action(&action)
-        {
-            // A doubled operator such as `dd` resolves directly from its combined mapping.
-            action = compose_operator(operator, action);
+        if let Some(operator) = self.pending_operator.take() {
+            if is_doubled_operator_action(&action) {
+                // For a doubled operator such as `dd`, multiply the counts
+                let new_count = action.count().saturating_mul(operator.count());
+                action = action.with_count(new_count);
+            } else {
+                action = compose_operator(operator, action);
+            }
         }
 
         match action {
