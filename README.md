@@ -573,11 +573,11 @@ The module and type skeleton now exists under `crates/vim-buffer/src`:
 | Area | Initial types | Status |
 | --- | --- | --- |
 | Identity/text | `BufferId`, `Revision = clock::Global`, `ChangedTick`, `Buffer` | Compiling scaffold; revision comes from `text::Buffer::version()` |
-| Snapshots | `BufferSnapshot` | Wraps `text::BufferSnapshot`; exposes its version directly |
+| Snapshots | `BufferSnapshot` | Wraps `text::BufferSnapshot`; delegates metrics, checked coordinates, ranges, chunks, line endings, and version |
 | Positions | `ByteOffset`, re-exported `text::Point`, `TextRange`, `TextExtent` | Zed coordinates are authoritative; wrappers are boundary DTOs |
 | Selections | `SelectionId`, `SelectionKind`, `VimSelection`, `SelectionSet` | Wrapper and set validation scaffolded |
 | Editing | `Edit`, `PlannedEdit`, `EditSummary`, `EditOrigin` | Data model scaffolded |
-| Transactions | `Transaction` | Planning API exists; commit intentionally returns `NotImplemented` |
+| Transactions | `Transaction` | Validates and normalizes one batch, delegates one Zed edit, and returns `MutationOutcome` |
 | Buffer lifecycle | `BufferManager`, `BufferLifecycle`, `ManagerOutcome` | Creation/lookup scaffolded; transitions pending |
 | Results | `MutationOutcome` | Includes authoritative Zed transaction identity |
 | Callbacks | `VimEvent`, `CallbackContext`, `CallbackRegistry` | Synchronous registry scaffolded; ordering pending |
@@ -616,25 +616,46 @@ Regex and formatter integrations should consume chunk iterators/snapshots rather
 
 **Exit criteria:** `cargo check --workspace` builds the internal library and root consumer; the text-store choice is documented, public conventions for offsets/lines are fixed, and each MVP behavior has a Vim reference and test case.
 
-### Phase 1 — Text storage and snapshots (in progress)
+### Phase 1 — Text storage and snapshots (complete for MVP)
 
-- Use the integrated Zed Rope + SumTree-backed `text::Buffer`.
-- Wrap Zed snapshots without copying text and preserve explicit revision metadata.
-- Add checked byte/character/UTF-16/line metrics and conversions to the `vim-buffer` API.
-- Add property tests comparing random edit sequences with `String`.
-- Benchmark large inserts, deletes, line lookup, snapshot cloning, and memory use.
+Completed in the first increment:
 
-**Exit criteria:** random tests preserve text and metric invariants; no core operation requires flattening the rope.
+- Use the integrated Zed Rope + SumTree-backed `text::Buffer` without direct Rope/SumTree dependencies in `vim-buffer`.
+- Wrap Zed snapshots without copying text; revision comes directly from `text::BufferSnapshot::version`.
+- Delegate byte, Unicode-scalar, UTF-16, row, line-length, and line-ending metrics.
+- Add checked byte-offset, byte-point, UTF-16 point, and half-open range conversions that reject bounds and UTF-8 errors before invoking Zed's clipping APIs.
+- Expose chunked range reads without flattening the buffer.
+- Cover Unicode, multibyte boundaries, CRLF normalization/detection, invalid coordinates, and chunked reads in `tests/phase1_snapshots.rs`.
 
-### Phase 2 — Buffer and transactions
+Completed in the final Phase 1 increment:
 
-- Implement identifiers, metadata, options, positions, edits, and typed errors.
-- Add batch validation and atomic transaction commit.
-- Implement `VimSelection` as a compatibility wrapper over `text::Selection<text::Anchor>` and adapt the `dzed` stable selection-ID model.
-- Normalize multi-cursor edit plans against a single snapshot, including duplicate and overlap handling.
-- Map post-edit selections through the committed batch and preserve the primary cursor and per-selection goals.
-- Use old/new `text::BufferSnapshot::version` values for revision identity; track `changedtick`, saved Zed version, and modified state without a duplicate counter.
-- Return a complete `MutationOutcome` after every successful commit.
+- Add property tests for byte/point round trips over generated Unicode text.
+- Compare randomized transaction edit sequences with a `String` reference model.
+- Add the dependency-free `phase1_text` benchmark target for large snapshot cloning, line lookup, and repeated batched insert/delete.
+
+Run performance checks with `cargo bench -p vim-buffer --bench phase1_text`. Performance numbers are observational and are not brittle pass/fail CI assertions.
+
+**Exit criteria met:** generated/random tests preserve text and metric invariants; normal read and edit operations do not require flattening the rope.
+
+### Phase 2 — Buffer and transactions (complete for MVP)
+
+Completed in the first transaction increment:
+
+- Implement identifiers, initial metadata/options, positions, requested edits, and typed validation errors.
+- Validate every range against one immutable pre-edit snapshot before mutation.
+- Normalize line endings, sort by source range and stable selection ID, deduplicate identical caret edits, reject unresolved overlaps, and delegate exactly one batch to `text::Buffer::edit`.
+- Implement `VimSelection` as a compatibility wrapper over `text::Selection<text::Anchor>` and preserve anchor-backed selections through committed edits.
+- Use old/new `text::BufferSnapshot::version` values for revision identity and advance Vim `changedtick` once per non-empty committed batch.
+- Return `MutationOutcome` with authoritative Zed transaction ID, revisions, normalized edit geometry, mapped selections, and modified-state transition.
+- Guarantee no observable change for empty, invalid, or overlapping transactions.
+
+Completed in the final Phase 2 increment:
+
+- Add checked option replacement with UTF-8/file-format validation and `OptionsOutcome`; non-file options do not spuriously mark text modified.
+- Record save points and use Zed's visible-edit history plus saved file options for modified-state behavior.
+- Implement `Buffer::undo` and `redo` as wrappers over Zed history, with patch-derived outcomes, revisions, `changedtick`, modified transitions, and selection metadata.
+- Resolve `VimSelection` into checked characterwise, linewise, and row-expanded blockwise edit ranges while retaining Zed anchor bias internally.
+- Add generated Unicode and random edit-model property tests plus focused transaction/state tests.
 
 **Exit criteria:** insert/delete/replace, multiline edits, EOF handling, rollback-on-error, outcome contents, and atomic multi-cursor insertion/deletion are covered by unit and property tests. One multi-cursor command produces one revision and one undo node regardless of cursor count.
 

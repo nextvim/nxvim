@@ -9,3 +9,10 @@ publish = false
 [dependencies]
 clock = { path = "../zed/crates/clock" }
 text = { path = "../zed/crates/text" }
+
+[dev-dependencies]
+proptest = "1.9"
+
+[[bench]]
+name = "phase1_text"
+harness = false

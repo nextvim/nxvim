@@ -1,4 +1,6 @@
-use crate::{BufferId, ChangedTick, EditOrigin, EditSummary, Revision, SelectionSet};
+use crate::{
+    BufferId, BufferOptions, ChangedTick, EditOrigin, EditSummary, Revision, SelectionSet,
+};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -11,6 +13,14 @@ pub struct MutationOutcome {
     pub edits: Arc<[EditSummary]>,
     pub origin: EditOrigin,
     pub selections: Option<SelectionSet>,
+    pub modified_changed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OptionsOutcome {
+    pub buffer: BufferId,
+    pub old: BufferOptions,
+    pub new: BufferOptions,
     pub modified_changed: bool,
 }
 

@@ -41,6 +41,16 @@ impl TryFrom<FileFormat> for text::LineEnding {
     }
 }
 
+impl BufferOptions {
+    pub(crate) fn file_state_eq(&self, other: &Self) -> bool {
+        self.binary == other.binary
+            && self.endofline == other.endofline
+            && self.fixeol == other.fixeol
+            && self.fileformat == other.fileformat
+            && self.fileencoding == other.fileencoding
+    }
+}
+
 impl Default for BufferOptions {
     fn default() -> Self {
         Self {

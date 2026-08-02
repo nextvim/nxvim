@@ -37,12 +37,12 @@ pub use manager::BufferManager;
 pub use marks::MarkSet;
 pub use mutator::{Action, Mutator};
 pub use options::{BufferOptions, FileFormat, UnsupportedFileFormat};
-pub use outcome::{ManagerOutcome, MutationOutcome};
+pub use outcome::{ManagerOutcome, MutationOutcome, OptionsOutcome};
 pub use position::{ByteOffset, TextExtent, TextRange};
 pub use selection::{SelectionKind, VimSelection};
 pub use selection_set::SelectionSet;
 pub use snapshot::BufferSnapshot;
-pub use text::Point;
+pub use text::{OffsetUtf16, Point, PointUtf16};
 pub use transaction::Transaction;
 pub use undo::{UndoNode, UndoTree};
 
