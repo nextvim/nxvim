@@ -160,6 +160,30 @@ impl HeadlessEditor {
         self.buffer_text(self.current_buffer()?)
     }
 
+    pub fn current_buffer_name(&self) -> Result<Option<String>, EditorError> {
+        self.with_state(|state| {
+            let buffer = state
+                .buffers
+                .current()
+                .ok_or(EditorError::State("headless editor has no current buffer"))?;
+            Ok(state
+                .buffers
+                .get(buffer)?
+                .path()
+                .map(|path| path.display().to_string()))
+        })
+    }
+
+    pub fn current_buffer_modified(&self) -> Result<bool, EditorError> {
+        self.with_state(|state| {
+            let buffer = state
+                .buffers
+                .current()
+                .ok_or(EditorError::State("headless editor has no current buffer"))?;
+            Ok(state.buffers.get(buffer)?.is_modified())
+        })
+    }
+
     pub fn changedtick(&self, buffer: BufferId) -> Result<u64, EditorError> {
         self.with_state(|state| Ok(state.buffers.get(buffer)?.changedtick().get()))
     }
