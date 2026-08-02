@@ -6,12 +6,17 @@ license = "Vim"
 description = "Editor-agnostic Vim-compatible buffer, selection, and mutation engine"
 publish = false
 
+[features]
+property-tests = ["dep:proptest"]
+
 [dependencies]
 clock = { path = "../zed/crates/clock" }
+proptest = { version = "1.9", optional = true }
 text = { path = "../zed/crates/text" }
 
-[dev-dependencies]
-proptest = "1.9"
+[[test]]
+name = "phase1_properties"
+required-features = ["property-tests"]
 
 [[bench]]
 name = "phase1_text"

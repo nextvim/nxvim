@@ -1,6 +1,6 @@
 use crate::{
     Buffer, BufferError, BufferId, BufferLifecycle, ByteOffset, EditOrigin, ExternalFileStatus,
-    FileMetadata, LoadSource, ManagerOutcome, MutationOutcome, SaveOutcome, TextRange,
+    FileMetadata, LoadSource, ManagerOutcome, MutationOutcome, SaveOutcome, TextRange, Transaction,
     io::{atomic_write, decode_utf8, encode_utf8},
 };
 use clock::ReplicaId;
@@ -215,6 +215,44 @@ impl BufferManager {
         });
         buffer.mark_saved();
         Ok(outcome)
+    }
+
+    /// Starts an atomic edit transaction for the buffer identified by `id`.
+    ///
+    /// All ranges added to the transaction are interpreted against one
+    /// pre-transaction snapshot and committed as one undo step.
+    pub fn transaction(
+        &mut self,
+        id: BufferId,
+        origin: EditOrigin,
+    ) -> Result<Transaction<'_>, BufferError> {
+        Ok(self.get_mut(id)?.transaction(origin))
+    }
+
+    /// Replaces one checked byte range as a single undoable transaction.
+    pub fn replace(
+        &mut self,
+        id: BufferId,
+        origin: EditOrigin,
+        range: TextRange,
+        replacement: impl Into<std::sync::Arc<str>>,
+    ) -> Result<MutationOutcome, BufferError> {
+        let mut transaction = self.transaction(id, origin)?;
+        transaction.replace(None, range, replacement);
+        transaction.commit(None)
+    }
+
+    /// Replaces the complete current contents without replacing the buffer
+    /// object, preserving its identity, anchors, metadata, and undo history.
+    pub fn replace_all(
+        &mut self,
+        id: BufferId,
+        origin: EditOrigin,
+        replacement: impl Into<std::sync::Arc<str>>,
+    ) -> Result<MutationOutcome, BufferError> {
+        let len = self.get(id)?.snapshot().len_bytes();
+        let range = TextRange::new(ByteOffset(0), ByteOffset(len)).expect("ordered full range");
+        self.replace(id, origin, range, replacement)
     }
 
     pub fn get(&self, id: BufferId) -> Result<&Buffer, BufferError> {

@@ -10,5 +10,8 @@ edition = "2024"
 license = "Vim"
 publish = false
 
+[profile.dev]
+debug = 1
+
 [dependencies]
 vim-buffer = { path = "crates/vim-buffer" }

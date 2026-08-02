@@ -711,11 +711,13 @@ Remaining:
 Completed in the first consumer-integration increment:
 
 - Expose immutable, thread-safe snapshots and backend-neutral zero-copy `TextChunks` iterators over complete snapshots or checked byte ranges for `vim-regex`, without exposing rope internals or flattening buffers.
+- Expose atomic ID-based edit batches through `Mutator::apply_edits` and queued `Action::ApplyEdits` for `vim-script`, with typed outcomes, synchronous `TextChanged`/`TextChangedI` callbacks, undo joining, and transaction validation.
+- Cover direct and queued edits, callback selection, unknown IDs, and atomic validation failures in `tests/phase6_vim_script.rs`.
+- Expose ID-addressed transactions, checked range replacement, and whole-buffer replacement through `BufferManager` for `vim-formatter`, preserving buffer identity and undo history.
+- Cover formatter replacement, multi-edit transactions, undo, invalid ranges, and option enforcement in `tests/phase6_formatter.rs`.
 
 Remaining:
 
-- Expose ID-based mutation APIs needed by `vim-script`.
-- Expose transaction/replacement APIs needed by `vim-formatter`.
 - Add revision checks for asynchronous `dzd` parsing and diagnostics.
 - Write integration examples without introducing reverse dependencies.
 

@@ -1,6 +1,6 @@
 use crate::{
     BufferError, BufferId, BufferManager, CallbackContext, CallbackRegistry, EditOrigin,
-    ManagerOutcome, MutationOutcome, SelectionSet, VimEvent,
+    ManagerOutcome, MutationOutcome, PlannedEdit, SelectionSet, VimEvent,
 };
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -30,7 +30,9 @@ pub enum Action {
     ApplyEdits {
         buffer: BufferId,
         origin: EditOrigin,
+        edits: Vec<PlannedEdit>,
         selections: Option<SelectionSet>,
+        join_previous: bool,
     },
     Undo {
         buffer: BufferId,
@@ -118,10 +120,42 @@ impl Mutator {
                 }
                 Ok(ActionOutcome::Mutation(last))
             }
-            Action::ApplyEdits { .. } => Err(BufferError::NotImplemented(
-                "planned edits must be committed through Buffer::transaction",
-            )),
+            Action::ApplyEdits {
+                buffer,
+                origin,
+                edits,
+                selections,
+                join_previous,
+            } => self.apply_edits(manager, buffer, origin, edits, selections, join_previous),
         }
+    }
+
+    /// Commits a batch of edits to the buffer identified by `buffer` and
+    /// synchronously dispatches the corresponding Vim text-change callback.
+    ///
+    /// Every edit is resolved against the same pre-edit snapshot and the batch
+    /// is atomic: validation failure leaves the buffer unchanged.
+    pub fn apply_edits(
+        &mut self,
+        manager: &mut BufferManager,
+        buffer: BufferId,
+        origin: EditOrigin,
+        edits: impl IntoIterator<Item = PlannedEdit>,
+        selections: Option<SelectionSet>,
+        join_previous: bool,
+    ) -> Result<ActionOutcome, BufferError> {
+        let mut transaction = manager.get_mut(buffer)?.transaction(origin);
+        for edit in edits {
+            transaction.push(edit);
+        }
+        if join_previous {
+            transaction.join_previous();
+        }
+        let outcome = transaction.commit(selections)?;
+        if !outcome.edits.is_empty() {
+            self.dispatch(manager, text_changed_event(origin), buffer, Some(&outcome))?;
+        }
+        Ok(ActionOutcome::Mutation(Some(outcome)))
     }
 
     pub fn execute_queued(
@@ -256,6 +290,14 @@ impl Mutator {
 
     pub fn queued_actions(&self) -> usize {
         self.queued.len()
+    }
+}
+
+fn text_changed_event(origin: EditOrigin) -> VimEvent {
+    if origin == EditOrigin::InsertMode {
+        VimEvent::TextChangedI
+    } else {
+        VimEvent::TextChanged
     }
 }
 
