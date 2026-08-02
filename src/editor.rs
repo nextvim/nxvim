@@ -58,7 +58,7 @@ impl Callback for EventCollector {
 struct EditorState {
     buffers: BufferManager,
     mutator: Mutator,
-    exit_requested: bool,
+    exit_code: Option<u8>,
 }
 
 #[derive(Clone)]
@@ -88,7 +88,7 @@ impl HeadlessEditor {
         let mut state = EditorState {
             buffers: BufferManager::new(),
             mutator,
-            exit_requested: false,
+            exit_code: None,
         };
         let created = state.mutator.execute(
             &mut state.buffers,
@@ -191,7 +191,11 @@ impl HeadlessEditor {
     }
 
     pub fn exit_requested(&self) -> Result<bool, EditorError> {
-        self.with_state(|state| Ok(state.exit_requested))
+        self.with_state(|state| Ok(state.exit_code.is_some()))
+    }
+
+    pub fn requested_exit_code(&self) -> Result<Option<u8>, EditorError> {
+        self.with_state(|state| Ok(state.exit_code))
     }
 
     pub fn event_trace(&self) -> Result<Vec<(VimEvent, BufferId)>, EditorError> {
@@ -551,6 +555,7 @@ fn register_commands(host: &mut HostRuntime) {
         ("undo", 1, false, Capability::BufferWrite),
         ("redo", 3, false, Capability::BufferWrite),
         ("quit", 1, true, Capability::Editor),
+        ("cquit", 2, false, Capability::Editor),
         ("set", 2, false, Capability::Settings),
         ("setlocal", 4, false, Capability::Settings),
     ] {
@@ -576,7 +581,7 @@ fn execute_editor_command(
     let EditorState {
         buffers,
         mutator,
-        exit_requested,
+        exit_code,
     } = state;
     match command.name.as_str() {
         "enew" => {
@@ -725,7 +730,21 @@ fn execute_editor_command(
                     current,
                 )));
             }
-            *exit_requested = true;
+            *exit_code = Some(0);
+        }
+        "cquit" => {
+            let code = if command.arguments.trim().is_empty() {
+                1
+            } else {
+                command.arguments.trim().parse::<u8>().map_err(|_| {
+                    RuntimeError::coded(
+                        "E488",
+                        RuntimeErrorKind::InvalidCommand,
+                        "trailing characters",
+                    )
+                })?
+            };
+            *exit_code = Some(code);
         }
         _ => {
             return Err(RuntimeError::coded(

@@ -19,6 +19,7 @@ publish = false
 debug = 1
 
 [dependencies]
+crossterm = "0.29"
 proptest = { version = "1.9", optional = true }
 vim-buffer = { path = "crates/vim-buffer" }
 vim-formatter = { path = "crates/vim-formatter" }

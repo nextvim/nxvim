@@ -39,7 +39,7 @@ pub use mutator::{Action, ActionOutcome, Mutator};
 pub use options::{BufferOptions, FileFormat, UnsupportedFileFormat};
 pub use outcome::{ManagerOutcome, MutationOutcome, OptionsOutcome, SaveOutcome};
 pub use position::{ByteOffset, TextExtent, TextRange};
-pub use selection::{SelectionKind, VimSelection};
+pub use selection::{OperationText, SelectionKind, VimSelection};
 pub use selection_set::SelectionSet;
 pub use snapshot::{BufferSnapshot, TextChunks};
 pub use text::{OffsetUtf16, Point, PointUtf16};
