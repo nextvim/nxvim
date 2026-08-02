@@ -1,5 +1,7 @@
 use std::{
+    borrow::Cow,
     io::{self, IsTerminal, Write},
+    path::Path,
     process::ExitCode,
 };
 
@@ -7,13 +9,19 @@ use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute, queue,
-    style::{Attribute, Print, SetAttribute},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{
         self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
         enable_raw_mode,
     },
 };
 use nxvim::HeadlessEditor;
+use vim_formatter::{
+    CompiledFormat, ExprId, FormatDialect, FormatResolver, RenderItem, StyleId, parse,
+};
+
+const STATUS_FORMAT: &str =
+    "%#Mode# EX %#File#%f %#Modified#%m%#StatusLine#%=%#Message#%{message}%#Metadata# [%n] ";
 
 fn main() -> ExitCode {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
@@ -62,6 +70,7 @@ struct InteractiveEditor {
     message: String,
     history: Vec<String>,
     history_index: Option<usize>,
+    status_format: CompiledFormat,
 }
 
 impl InteractiveEditor {
@@ -73,6 +82,7 @@ impl InteractiveEditor {
             message: "nxvim — type :quit to exit".into(),
             history: Vec::new(),
             history_index: None,
+            status_format: compile_status_format()?,
         };
 
         loop {
@@ -128,7 +138,7 @@ impl InteractiveEditor {
         if self.history.last() != Some(&command) {
             self.history.push(command.clone());
         }
-        match self.editor.eval("<command-line>", &format!(":{command}")) {
+        match self.editor.eval("<command-line>", &command) {
             Ok(_) => self.message.clear(),
             Err(error) => self.message = format!("{error}"),
         }
@@ -174,19 +184,31 @@ impl InteractiveEditor {
         }
 
         if height >= 2 {
-            let buffer = self.editor.current_buffer().map_err(io::Error::other)?;
-            let status = if self.message.is_empty() {
-                format!("[Buffer {}]", buffer.get())
-            } else {
-                format!("[Buffer {}] {}", buffer.get(), self.message)
+            let context = StatusContext {
+                file_name: self
+                    .editor
+                    .current_buffer_name()
+                    .map_err(io::Error::other)?
+                    .unwrap_or_else(|| "[No Name]".into()),
+                message: &self.message,
+                total_lines: text.split('\n').count(),
+                buffer_number: self
+                    .editor
+                    .current_buffer()
+                    .map_err(io::Error::other)?
+                    .get() as usize,
+                modified: self
+                    .editor
+                    .current_buffer_modified()
+                    .map_err(io::Error::other)?,
             };
-            queue!(
-                stdout,
-                MoveTo(0, height - 2),
-                SetAttribute(Attribute::Reverse),
-                Print(padded(&status, width)),
-                SetAttribute(Attribute::Reset)
-            )?;
+            let status = self
+                .status_format
+                .render(&context, width as usize)
+                .map_err(io::Error::other)?;
+            queue!(stdout, MoveTo(0, height - 2))?;
+            render_statusline(&mut stdout, &status)?;
+            queue!(stdout, ResetColor)?;
         }
 
         if height > 0 {
@@ -202,6 +224,84 @@ impl InteractiveEditor {
             )?;
         }
         stdout.flush()
+    }
+}
+
+struct StatusContext<'a> {
+    file_name: String,
+    message: &'a str,
+    total_lines: usize,
+    buffer_number: usize,
+    modified: bool,
+}
+
+impl FormatResolver for StatusContext<'_> {
+    fn file_name(&self) -> Cow<'_, str> {
+        Path::new(&self.file_name)
+            .file_name()
+            .map_or_else(|| Cow::Borrowed("[No Name]"), |name| name.to_string_lossy())
+    }
+
+    fn total_lines(&self) -> usize {
+        self.total_lines
+    }
+
+    fn buffer_number(&self) -> usize {
+        self.buffer_number
+    }
+
+    fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    fn resolve_highlight(&self, name: &str) -> Option<StyleId> {
+        match name {
+            "StatusLine" => Some(StyleId(1)),
+            "Mode" => Some(StyleId(2)),
+            "File" => Some(StyleId(3)),
+            "Modified" => Some(StyleId(4)),
+            "Message" => Some(StyleId(5)),
+            "Metadata" => Some(StyleId(6)),
+            _ => None,
+        }
+    }
+
+    fn eval_expression(&self, _id: ExprId, source: &str) -> Cow<'_, str> {
+        match source {
+            "message" => Cow::Borrowed(self.message),
+            _ => Cow::Borrowed(""),
+        }
+    }
+}
+
+fn compile_status_format() -> Result<CompiledFormat, Box<dyn std::error::Error>> {
+    let ast = parse(STATUS_FORMAT, FormatDialect::StatusLine)?;
+    Ok(CompiledFormat::compile(&ast)?)
+}
+
+fn render_statusline(output: &mut impl Write, items: &[RenderItem<'_>]) -> io::Result<()> {
+    for item in items {
+        if let RenderItem::Text { text, style } = item {
+            let (foreground, background) = status_colors(*style);
+            queue!(
+                output,
+                SetForegroundColor(foreground),
+                SetBackgroundColor(background),
+                Print(text)
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn status_colors(style: Option<StyleId>) -> (Color, Color) {
+    match style {
+        Some(StyleId(2)) => (Color::Black, Color::Cyan),
+        Some(StyleId(3)) => (Color::White, Color::DarkGrey),
+        Some(StyleId(4)) => (Color::Yellow, Color::DarkGrey),
+        Some(StyleId(5)) => (Color::Red, Color::DarkGrey),
+        Some(StyleId(6)) => (Color::Grey, Color::DarkGrey),
+        _ => (Color::White, Color::DarkGrey),
     }
 }
 
@@ -231,5 +331,49 @@ mod tests {
         assert_eq!(clipped("aé🙂z", 3), "aé🙂");
         assert_eq!(clipped_from_end(":abcdef", 4), "cdef");
         assert_eq!(padded("é", 3), "é  ");
+    }
+
+    #[test]
+    fn statusline_is_laid_out_by_vim_formatter() {
+        let format = compile_status_format().unwrap();
+        let context = StatusContext {
+            file_name: "/tmp/example.txt".into(),
+            message: "ready",
+            total_lines: 12,
+            buffer_number: 3,
+            modified: true,
+        };
+        let rendered = format.render(&context, 40).unwrap();
+        let text = rendered
+            .iter()
+            .filter_map(|item| match item {
+                RenderItem::Text { text, .. } => Some(text.as_ref()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(text.chars().count(), 40);
+        assert!(
+            text.contains("EX example.txt [+]"),
+            "rendered statusline: {text:?}"
+        );
+        assert!(text.contains("ready [3]"), "rendered statusline: {text:?}");
+    }
+
+    #[test]
+    fn interactive_command_executes_script_statements_without_forcing_ex_syntax() {
+        let mut application = InteractiveEditor {
+            editor: HeadlessEditor::new().unwrap(),
+            command: "let g:status = await setline(1, 'hello')".into(),
+            message: String::new(),
+            history: Vec::new(),
+            history_index: None,
+            status_format: compile_status_format().unwrap(),
+        };
+
+        application.execute_command();
+
+        assert_eq!(application.editor.current_text().unwrap(), "hello");
+        assert!(application.message.is_empty());
     }
 }
