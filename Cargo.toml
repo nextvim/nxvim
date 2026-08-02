@@ -14,4 +14,8 @@ publish = false
 debug = 1
 
 [dependencies]
+proptest = { version = "1.9", optional = true }
 vim-buffer = { path = "crates/vim-buffer" }
+vim-formatter = { git = "ssh://git@github.com/nextvim/vim-formatter.git", rev = "be3801a4f00820d3fde13d3b84446a6413832fc4" }
+vim-regex = { git = "ssh://git@github.com/nextvim/vim-regex.git", rev = "aa574ecbff0f5cf1f76fbf7078ed5e96b21ef3fb" }
+vim-script = { git = "ssh://git@github.com/nextvim/vim-script.git", rev = "e6fccd181906e0935174868a8381656a33b0c6c8" }

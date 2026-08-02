@@ -1,3 +1,8 @@
+use nxvim::HeadlessEditor;
+
 fn main() {
-    println!("Hello, world!");
+    if let Err(error) = HeadlessEditor::new() {
+        eprintln!("nxvim: {error}");
+        std::process::exit(1);
+    }
 }
