@@ -2,12 +2,12 @@ use crate::controller::ControllerResult;
 use crate::controller::actions;
 use crate::editor::Editor;
 use crate::ui::Ui;
-use crate::ui::layout::Rect;
+use vim_ui::Rect;
 
 use crate::services::background;
 
 pub mod commandline;
-pub mod tabs;
+
 pub mod textview;
 
 pub trait ViewController {

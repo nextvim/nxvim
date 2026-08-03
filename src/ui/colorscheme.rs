@@ -322,17 +322,3 @@ mod tests {
         assert_eq!(kanagawa.metadata.name, "kanagawa");
     }
 }
-
-pub trait ToCrossTerm {
-    fn rgb(&self) -> crossterm::style::Color;
-}
-
-impl ToCrossTerm for syntect::highlighting::Color {
-    fn rgb(&self) -> crossterm::style::Color {
-        crossterm::style::Color::Rgb {
-            r: self.r,
-            g: self.g,
-            b: self.b,
-        }
-    }
-}

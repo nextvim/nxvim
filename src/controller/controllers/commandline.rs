@@ -4,7 +4,7 @@ use crate::controller::actions::Action;
 use crate::editor::Editor;
 use crate::services::background;
 use crate::ui::Ui;
-use crate::ui::layout::Rect;
+use vim_ui::Rect;
 
 pub struct CommandLineController {
     controller: crate::controller::controllers::textview::TextViewController,
@@ -30,7 +30,7 @@ impl CommandLineController {
         ui: &mut crate::ui::Ui,
         window_id: usize,
     ) {
-        if let Some(window) = ui.windows.get_mut(&window_id) {
+        if let Some(window) = ui.window_mut(window_id) {
             if let Some(ref mut document) = window.doc {
                 if let Some(buffer) = buffer_manager.find_mut(document) {
                     let doc_mode = document.mode();
@@ -56,7 +56,7 @@ impl CommandLineController {
         window_id: usize,
     ) -> String {
         let mut command_text = String::new();
-        if let Some(window) = ui.windows.get_mut(&window_id) {
+        if let Some(window) = ui.window_mut(window_id) {
             if let Some(ref mut document) = window.doc {
                 if let Some(buffer) = buffer_manager.find_mut(document) {
                     command_text = buffer.buffer.snapshot().text();
@@ -76,7 +76,7 @@ impl ViewController for CommandLineController {
         window_id: usize,
         rect: Rect,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
-        let window = ui.windows.get_mut(&window_id).unwrap();
+        let window = ui.window_mut(window_id).unwrap();
         let document = window.doc.as_mut().unwrap();
         document.show_pattern_match = false;
         document.show_gutter = false;
@@ -163,7 +163,7 @@ impl ViewController for CommandLineController {
 
         if self.lead == '?' || self.lead == '/' {
             let mut pattern = String::new();
-            if let Some(window) = ui.windows.get(&window_id) {
+            if let Some(window) = ui.window(window_id) {
                 if let Some(ref document) = window.doc {
                     if let Some(buffer) = buffer_manager.find(document) {
                         pattern = buffer.buffer.snapshot().text();

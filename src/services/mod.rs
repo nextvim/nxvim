@@ -42,19 +42,34 @@ pub fn poll(
                 ..
             } => {
                 let mut indexer = editor.services.indexer.borrow_mut();
-                indexer.update_buffer(file_path.clone(), *start_row, *row_count, buffer_keywords.clone());
-                indexer.update_treesitter(file_path.clone(), *start_row, *row_count, treesitter_keywords.clone());
+                indexer.update_buffer(
+                    file_path.clone(),
+                    *start_row,
+                    *row_count,
+                    buffer_keywords.clone(),
+                );
+                indexer.update_treesitter(
+                    file_path.clone(),
+                    *start_row,
+                    *row_count,
+                    treesitter_keywords.clone(),
+                );
                 editor.should_redraw = true;
                 *owner_id
             }
         };
-        let colorscheme = ui.colorscheme.clone();
-        if let Some(win) = ui.windows.get_mut(&owner_id) {
+        let colorscheme = ui.colorscheme().clone();
+        if let Some(win) = ui.window_mut(owner_id) {
             if let Some(ref mut controller) = win.controller {
-                let _ = controller.handle_task(&result, editor, buffer_manager, win.doc.as_mut(), &colorscheme);
+                let _ = controller.handle_task(
+                    &result,
+                    editor,
+                    buffer_manager,
+                    win.doc.as_mut(),
+                    &colorscheme,
+                );
             }
         }
     }
     Ok(())
 }
-

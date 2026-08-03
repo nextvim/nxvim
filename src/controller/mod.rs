@@ -104,7 +104,7 @@ impl Controller {
                 }
                 actions::Action::FocusLeftWindow => {
                     if let Some(nid) =
-                        ui.find_neighbor(crate::ui::layout::NavigationDirection::Left)
+                        ui.find_neighbor(vim_ui::NavigationDirection::Left)
                     {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
@@ -112,14 +112,14 @@ impl Controller {
                 }
                 actions::Action::FocusDownWindow => {
                     if let Some(nid) =
-                        ui.find_neighbor(crate::ui::layout::NavigationDirection::Down)
+                        ui.find_neighbor(vim_ui::NavigationDirection::Down)
                     {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusUpWindow => {
-                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Up)
+                    if let Some(nid) = ui.find_neighbor(vim_ui::NavigationDirection::Up)
                     {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
@@ -127,7 +127,7 @@ impl Controller {
                 }
                 actions::Action::FocusRightWindow => {
                     if let Some(nid) =
-                        ui.find_neighbor(crate::ui::layout::NavigationDirection::Right)
+                        ui.find_neighbor(vim_ui::NavigationDirection::Right)
                     {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
@@ -135,7 +135,7 @@ impl Controller {
                 }
                 actions::Action::SplitHorizontal { file_path } => {
                     ui.split_focused_window(
-                        crate::ui::layout::SplitDirection::Vertical,
+                        vim_ui::SplitAxis::Rows,
                         file_path.clone(),
                         buffer_manager,
                     );
@@ -143,14 +143,14 @@ impl Controller {
                 }
                 actions::Action::SplitVertical { file_path } => {
                     ui.split_focused_window(
-                        crate::ui::layout::SplitDirection::Horizontal,
+                        vim_ui::SplitAxis::Columns,
                         file_path.clone(),
                         buffer_manager,
                     );
                     editor.should_redraw = true;
                 }
                 actions::Action::CloseWindow => {
-                    if let Some(id) = ui.focused_window_id {
+                    if let Some(id) = ui.focused_window_id() {
                         ui.close_window(id);
                         editor.should_redraw = true;
                     }
@@ -161,28 +161,28 @@ impl Controller {
                 }
                 actions::Action::ResizeLeft => {
                     ui.adjust_focused_window_size(
-                        crate::ui::layout::SplitDirection::Horizontal,
+                        vim_ui::SplitAxis::Columns,
                         -0.05,
                     );
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeRight => {
                     ui.adjust_focused_window_size(
-                        crate::ui::layout::SplitDirection::Horizontal,
+                        vim_ui::SplitAxis::Columns,
                         0.05,
                     );
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeUp => {
                     ui.adjust_focused_window_size(
-                        crate::ui::layout::SplitDirection::Vertical,
+                        vim_ui::SplitAxis::Rows,
                         0.05,
                     );
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeDown => {
                     ui.adjust_focused_window_size(
-                        crate::ui::layout::SplitDirection::Vertical,
+                        vim_ui::SplitAxis::Rows,
                         -0.05,
                     );
                     editor.should_redraw = true;
@@ -208,7 +208,7 @@ impl Controller {
                         }
                         actions::Action::SearchForward { .. }
                         | actions::Action::SearchBackward { .. } => {
-                            if let Some(last_focused_window_id) = ui.last_focused_window_id {
+                            if let Some(last_focused_window_id) = ui.last_focused_window_id() {
                                 ui.focus_window(last_focused_window_id);
                                 editor.should_redraw = true;
                                 editor.mode = actions::Mode::Normal;
@@ -218,12 +218,9 @@ impl Controller {
                     };
 
                     let old_mode = editor.mode;
-                    let focused_id = ui.focused_window_id;
+                    let focused_id = ui.focused_window_id();
                     if let Some(window_id) = focused_id {
-                        let mut controller = ui
-                            .windows
-                            .get_mut(&window_id)
-                            .and_then(|w| w.controller.take());
+                        let mut controller = ui.take_window_controller(window_id);
                         if let Some(ref mut c) = controller {
                             if let Some(ch) = self.input.last_register {
                                 if let Some(r_name) =
@@ -236,9 +233,7 @@ impl Controller {
                                 c.handle_action(action, editor, buffer_manager, ui, window_id)?;
                             editor.services.clipboard.borrow_mut().release();
                         }
-                        if let Some(w) = ui.windows.get_mut(&window_id) {
-                            w.controller = controller;
-                        }
+                        ui.restore_window_controller(window_id, controller);
                     }
 
                     if old_mode == actions::Mode::Command && editor.mode != actions::Mode::Command {

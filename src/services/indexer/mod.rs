@@ -21,7 +21,13 @@ pub struct TrieNode {
 }
 
 impl TrieNode {
-    pub fn insert(&mut self, chars: &[char], keyword: &str, source: IndexSource, metadata: HashMap<String, String>) {
+    pub fn insert(
+        &mut self,
+        chars: &[char],
+        keyword: &str,
+        source: IndexSource,
+        metadata: HashMap<String, String>,
+    ) {
         if chars.is_empty() {
             if let Some(entry) = &mut self.entry {
                 entry.sources.insert(source);
@@ -72,7 +78,12 @@ impl Trie {
         }
     }
 
-    pub fn insert(&mut self, keyword: &str, source: IndexSource, metadata: HashMap<String, String>) {
+    pub fn insert(
+        &mut self,
+        keyword: &str,
+        source: IndexSource,
+        metadata: HashMap<String, String>,
+    ) {
         let chars: Vec<char> = keyword.chars().collect();
         self.root.insert(&chars, keyword, source, metadata);
     }
@@ -91,7 +102,7 @@ pub struct Indexer {
     pub buffer_keywords: HashMap<String, HashMap<u32, HashSet<String>>>,
     pub treesitter_keywords: HashMap<String, HashMap<u32, Vec<(String, HashMap<String, String>)>>>,
     pub lsp_keywords: HashMap<String, Vec<(String, HashMap<String, String>)>>,
-    
+
     pub buffer_trie: Trie,
     pub treesitter_trie: Trie,
     pub lsp_trie: Trie,
@@ -109,7 +120,13 @@ impl Indexer {
         }
     }
 
-    pub fn update_buffer(&mut self, file_path: String, start_row: u32, row_count: u32, keywords: HashMap<u32, HashSet<String>>) {
+    pub fn update_buffer(
+        &mut self,
+        file_path: String,
+        start_row: u32,
+        row_count: u32,
+        keywords: HashMap<u32, HashSet<String>>,
+    ) {
         let file_map = self.buffer_keywords.entry(file_path).or_default();
         // Clear old rows in updated range
         for row in start_row..(start_row + row_count) {
@@ -122,7 +139,13 @@ impl Indexer {
         self.rebuild_buffer_trie();
     }
 
-    pub fn update_treesitter(&mut self, file_path: String, start_row: u32, row_count: u32, keywords: HashMap<u32, Vec<(String, HashMap<String, String>)>>) {
+    pub fn update_treesitter(
+        &mut self,
+        file_path: String,
+        start_row: u32,
+        row_count: u32,
+        keywords: HashMap<u32, Vec<(String, HashMap<String, String>)>>,
+    ) {
         let file_map = self.treesitter_keywords.entry(file_path).or_default();
         // Clear old rows in updated range
         for row in start_row..(start_row + row_count) {
@@ -135,7 +158,11 @@ impl Indexer {
         self.rebuild_treesitter_trie();
     }
 
-    pub fn update_lsp(&mut self, source_key: String, keywords: Vec<(String, HashMap<String, String>)>) {
+    pub fn update_lsp(
+        &mut self,
+        source_key: String,
+        keywords: Vec<(String, HashMap<String, String>)>,
+    ) {
         self.lsp_keywords.insert(source_key, keywords);
         self.rebuild_lsp_trie();
     }
@@ -182,7 +209,7 @@ impl Indexer {
 
     pub fn query(&self, prefix: &str, source_filter: Option<IndexSource>) -> Vec<IndexEntry> {
         let mut results = Vec::new();
-        
+
         let query_buffer = source_filter.is_none() || source_filter == Some(IndexSource::Buffer);
         let query_ts = source_filter.is_none() || source_filter == Some(IndexSource::Treesitter);
         let query_lsp = source_filter.is_none() || source_filter == Some(IndexSource::Lsp);
@@ -266,8 +293,14 @@ mod tests {
         assert_eq!(entry.keyword, "foobar");
         assert!(entry.sources.contains(&IndexSource::Buffer));
         assert!(entry.sources.contains(&IndexSource::Treesitter));
-        assert_eq!(entry.metadata.get("file_path").map(|s| s.as_str()), Some("main.rs"));
-        assert_eq!(entry.metadata.get("kind").map(|s| s.as_str()), Some("struct"));
+        assert_eq!(
+            entry.metadata.get("file_path").map(|s| s.as_str()),
+            Some("main.rs")
+        );
+        assert_eq!(
+            entry.metadata.get("kind").map(|s| s.as_str()),
+            Some("struct")
+        );
 
         // Query with filter
         let results_buf = indexer.query("foo", Some(IndexSource::Buffer));

@@ -1,85 +1,47 @@
-use crate::ui::layout::Rect;
-use crate::ui::views::View;
-use crate::{controller::controllers::ViewController, editor::Editor};
+use crate::editor::Editor;
+use vim_ui::Rect;
+use crate::ui::views::{View, vim};
 use std::io::Write;
 
-use crossterm::{
-    cursor::MoveTo,
-    execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-};
-
 pub struct TabsView;
-
-impl TabsView {
-    pub fn new() -> Self {
-        TabsView {}
-    }
-}
-
-impl TabsView {
-    fn draw_tabs<W: Write>(
-        &self,
-        w: &mut W,
-        rect: Rect,
-        editor: &Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
-        _doc: Option<&crate::editor::document::Document>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut bar_content = "TABS".to_string();
-
-        for (_idx, buf) in buffer_manager.file_buffers().enumerate() {
-            let name = if buf.file_path.is_empty() {
-                "[No Name]".to_string()
-            } else {
-                std::path::Path::new(&buf.file_path)
-                    .file_name()
-                    .unwrap_or_else(|| std::ffi::OsStr::new(&buf.file_path))
-                    .to_string_lossy()
-                    .into_owned()
-            };
-
-            let is_active = if let Some(doc) = _doc {
-                buf.id == doc.id
-            } else {
-                false
-            };
-            let tab_text = if is_active {
-                format!(" [{}] ", name)
-            } else {
-                format!("  {}  ", name)
-            };
-
-            bar_content.push_str(&tab_text);
-        }
-
-        let remaining = rect.width.saturating_sub(bar_content.chars().count() as u16);
-        bar_content.push_str(&" ".repeat(remaining as usize));
-
-        execute!(
-            w,
-            MoveTo(rect.x, rect.y),
-            SetForegroundColor(Color::Black),
-            SetBackgroundColor(Color::White),
-            Print(bar_content),
-            ResetColor,
-        )?;
-
-        Ok(())
-    }
-}
 
 impl View for TabsView {
     fn draw(
         &self,
-        mut w: &mut dyn Write,
+        writer: &mut dyn Write,
         rect: Rect,
-        editor: &Editor,
+        _editor: &Editor,
         buffer_manager: &mut crate::editor::buffers::BufferManager,
         _doc: Option<&crate::editor::document::Document>,
-        _ui: &crate::ui::Ui,
-    ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>> {
-        self.draw_tabs(&mut w, rect, editor, buffer_manager, _doc)?;
+        ui: &crate::ui::Ui,
+    ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>>
+    {
+        let active_buffer_id = ui
+            .get_focused_window()
+            .and_then(|window| window.doc.as_ref())
+            .map(|document| document.id);
+        let buffers: Vec<_> = buffer_manager.file_buffers().collect();
+        let active_index = active_buffer_id
+            .and_then(|id| buffers.iter().position(|buffer| buffer.id == id))
+            .unwrap_or(0);
+        let tabs = buffers
+            .iter()
+            .map(|buffer| {
+                if buffer.file_path.is_empty() {
+                    "[No Name]".to_string()
+                } else {
+                    std::path::Path::new(&buffer.file_path)
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new(&buffer.file_path))
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            })
+            .collect();
+
+        let view = vim_ui::TabLineView::new(tabs, active_index);
+        let context = vim::ViewContext::new(ui.colorscheme());
+        vim::draw(&view, writer, rect, &context)?;
         Ok(None)
     }
 }
