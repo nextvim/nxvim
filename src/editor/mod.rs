@@ -4,8 +4,6 @@ pub mod document;
 pub mod selections;
 
 use crate::controller::{self};
-use crate::editor::buffers::BufferManager;
-use crate::editor::document::Document;
 use crate::services::Services;
 use crate::ui::colorscheme::ColorScheme;
 
@@ -42,36 +40,51 @@ impl Editor {
     pub fn set_tree_sitter_enabled(
         &mut self,
         ui: &mut crate::ui::Ui,
-        buffer_manager: &mut BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
         enabled: bool,
     ) {
         self.tree_sitter = enabled;
         if !enabled {
             ui.cancel_document_parse_tasks();
-            for buffer in &mut buffer_manager.buffers {
-                buffer.syntax_tree = None;
+            for id in buffers.list() {
+                if let Some(entry) = buffers.entry_mut(id) {
+                    entry.syntax_tree = None;
+                }
             }
         }
     }
 
-    pub fn apply_active_action(
+    /// Dispatches an action to the active document. Document behavior belongs
+    /// to `VimDocument`; the editor only resolves the active window and buffer.
+    pub fn apply_active_vim_action(
         &mut self,
         ui: &mut crate::ui::Ui,
-        buffer_manager: &mut BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
         action: &Action,
-    ) {
-        let active_win_id = ui.focused_window_id().unwrap();
-        let window = ui.window_mut(active_win_id).unwrap();
-        let doc = window.doc.as_mut().unwrap();
-        let text_buffer = buffer_manager.find_mut(doc).unwrap();
-        doc.apply_action(
-            &mut text_buffer.buffer,
-            action,
-            self,
-            text_buffer.syntax_tree.as_ref(),
-        );
-        self.buffers_to_redraw.push(text_buffer.id);
-        self.mode = doc.mode();
+    ) -> bool {
+        let Some(active_win_id) = ui.focused_window_id() else {
+            return false;
+        };
+        let Some(window) = ui.window_mut(active_win_id) else {
+            return false;
+        };
+        let Some(document) = window.doc.as_mut() else {
+            return false;
+        };
+        let Some(buffer_id) = vim_buffer::BufferId::new(document.id as u64) else {
+            return false;
+        };
+        let Ok(buffer) = buffers.get_mut(buffer_id) else {
+            return false;
+        };
+
+        if document.apply_action(buffer, action).is_err() {
+            return false;
+        }
+        document.should_sync = true;
+        self.buffers_to_redraw.push(document.id);
+        self.mode = document.mode();
+        true
     }
 
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
@@ -109,5 +122,54 @@ impl Editor {
             onig::Regex::new(&pattern).ok()
         };
         self.search_pattern = pattern;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::WindowId;
+
+    #[test]
+    fn vim_action_dispatch_handles_insert_undo_and_redo() {
+        let mut editor = Editor::new().unwrap();
+        let mut ui = crate::ui::Ui::new();
+        let mut buffers = crate::editor::buffers::VimBuffers::new();
+        let buffer_id = buffers.create("one");
+        assert!(ui.set_vim_window_buffer(WindowId::MainWindow as usize, buffer_id, &buffers,));
+
+        editor.apply_active_vim_action(&mut ui, &mut buffers, &Action::SetToInsert);
+        editor.apply_active_vim_action(&mut ui, &mut buffers, &Action::InsertText("X".into()));
+        assert_eq!(
+            buffers
+                .get(buffer_id)
+                .unwrap()
+                .snapshot()
+                .chunks()
+                .collect::<String>(),
+            "Xone"
+        );
+
+        editor.apply_active_vim_action(&mut ui, &mut buffers, &Action::Undo { count: 1 });
+        assert_eq!(
+            buffers
+                .get(buffer_id)
+                .unwrap()
+                .snapshot()
+                .chunks()
+                .collect::<String>(),
+            "one"
+        );
+
+        editor.apply_active_vim_action(&mut ui, &mut buffers, &Action::Redo { count: 1 });
+        assert_eq!(
+            buffers
+                .get(buffer_id)
+                .unwrap()
+                .snapshot()
+                .chunks()
+                .collect::<String>(),
+            "Xone"
+        );
     }
 }

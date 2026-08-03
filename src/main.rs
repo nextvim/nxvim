@@ -4,7 +4,6 @@ mod services;
 mod ui;
 
 use std::{
-    collections::HashMap,
     io::{Write, stdout},
     time::{Duration, Instant},
 };
@@ -26,30 +25,32 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let mut stdout = stdout();
 
-    let mut buffer_manager = editor::buffers::BufferManager::new();
+    let mut vim_buffers = editor::buffers::VimBuffers::new();
     let mut ui = ui::Ui::new();
     let mut editor = editor::Editor::new()?;
     let mut controller = controller::Controller::new();
 
-    for path in file_paths {
-        buffer_manager.add_buffer_for_path(&path)?;
+    for path in &file_paths {
+        vim_buffers.add_buffer_for_path(path)?;
     }
 
-    if buffer_manager.buffers.is_empty() {
-        buffer_manager.add_buffer_for_path("")?;
+    if vim_buffers.list().is_empty() {
+        vim_buffers.add_buffer_for_path("")?;
     }
 
-    let active_buffer_id = buffer_manager.buffers.first().unwrap().id;
-    ui.set_window_buffer(
+    let active_vim_buffer_id = vim_buffers.list().first().copied().unwrap();
+    ui.set_vim_window_buffer(
         ui::WindowId::MainWindow as usize,
-        active_buffer_id,
-        &buffer_manager,
+        active_vim_buffer_id,
+        &vim_buffers,
     );
 
-    let cmd_buf = buffer_manager.add_buffer_for_path("#command")?;
-    let cmd_id = cmd_buf.id;
-
-    ui.set_window_buffer(ui::WindowId::CommandLine as usize, cmd_id, &buffer_manager);
+    let cmd_vim_buffer_id = vim_buffers.add_buffer_for_path("#command")?.id;
+    ui.set_vim_window_buffer(
+        ui::WindowId::CommandLine as usize,
+        cmd_vim_buffer_id,
+        &vim_buffers,
+    );
 
     crossterm::terminal::enable_raw_mode().unwrap();
     execute!(
@@ -70,15 +71,15 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     execute!(stdout, crossterm::cursor::Hide).unwrap();
 
     loop {
-        ui.update(&mut editor, &mut buffer_manager)?;
+        ui.update(&mut editor, &mut vim_buffers)?;
         if editor.should_redraw {
-            ui.draw(&mut stdout, &mut editor, &mut buffer_manager)?;
+            ui.draw(&mut stdout, &mut editor, &mut vim_buffers)?;
             editor.should_redraw = false;
         }
 
         if event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
-            match controller.handle_event(event, &mut editor, &mut buffer_manager)? {
+            match controller.handle_event(event, &mut editor)? {
                 controller::ControllerResult::Exit => {
                     break;
                 }
@@ -86,14 +87,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        match controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)? {
+        match controller.dispatch_actions(&mut editor, &mut vim_buffers, &mut ui)? {
             controller::ControllerResult::Exit => {
                 break;
             }
             _ => {}
         }
 
-        services::poll(&mut editor, &mut buffer_manager, &mut ui)?;
+        services::poll(&mut editor, &mut vim_buffers, &mut ui)?;
     }
 
     crossterm::terminal::disable_raw_mode().unwrap();

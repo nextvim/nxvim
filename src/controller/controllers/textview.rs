@@ -3,8 +3,7 @@ use crate::controller::ViewController;
 use crate::editor::Editor;
 use crate::editor::display::display_map::DisplayPoint;
 use crate::services::background::{self, BackgroundTask, TaskId};
-use crate::ui::Ui;
-use text::ToPoint;
+
 use vim_input::Action;
 use vim_ui::Rect;
 
@@ -20,7 +19,7 @@ impl ViewController for TextViewController {
     fn update(
         &mut self,
         editor: &mut Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
         ui: &mut crate::ui::Ui,
         window_id: usize,
         rect: Rect,
@@ -28,10 +27,20 @@ impl ViewController for TextViewController {
         let colorscheme = ui.colorscheme().clone();
         let window = ui.window_mut(window_id).unwrap();
         let document = window.doc.as_mut().unwrap();
-        let buffer = buffer_manager.find_mut(document).unwrap();
+        let buffer_id = vim_buffer::BufferId::new(document.id as u64).unwrap();
+        let buffer = buffers.get(buffer_id).unwrap();
+        let vim_snapshot = buffer.snapshot();
+        let file_path = buffers
+            .entry(buffer_id)
+            .map(|entry| entry.file_path.clone())
+            .unwrap_or_default();
+        let syntax_tree = buffers
+            .entry(buffer_id)
+            .and_then(|entry| entry.syntax_tree.clone());
+        let grammar = buffers.entry(buffer_id).and_then(|entry| entry.grammar);
 
         // Update layout before wrapping so the wrap width reflects the current gutter.
-        let row_count = buffer.buffer.row_count();
+        let row_count = vim_snapshot.row_count();
         let gutter_width = if editor.show_line_numbers && document.show_gutter {
             2 + if row_count == 0 {
                 0
@@ -53,17 +62,28 @@ impl ViewController for TextViewController {
             .set_wrap_width(editor.wrap.then_some(wrap_cols as u32));
 
         if document.should_sync {
-            let snapshot = buffer.buffer.snapshot().clone();
-            document
-                .display_map
-                .fold(document.folds.clone(), snapshot.clone());
+            let snapshot = vim_snapshot.as_inner().clone();
+            let folds = document
+                .folds
+                .iter()
+                .map(|fold| crate::editor::display::fold_map::Fold {
+                    start: fold.start,
+                    end: fold.end,
+                })
+                .collect();
+            document.display_map.fold(folds, snapshot.clone());
 
             let text_changed = !document.hl.is_sync(&snapshot);
             let wrap_width = editor.wrap.then_some(wrap_cols as u32);
             let wrap_changed = text_changed || document.display_map.wrap_width != wrap_width;
 
             if text_changed {
-                let (start, _) = document.selections().rows_in_selection(&buffer.buffer);
+                let start = document
+                    .selections()
+                    .rows_in_selection(&vim_snapshot)
+                    .ok()
+                    .flatten()
+                    .map_or(0, |(start, _)| start);
                 document.hl.invalidate_state(start);
 
                 // Spawn background highlight task
@@ -79,7 +99,7 @@ impl ViewController for TextViewController {
                 let hl_start = start_buffer_row.saturating_sub(100).min(start);
                 let hl_end = (end_buffer_row + 100)
                     .max(start + 1)
-                    .min(buffer.buffer.row_count());
+                    .min(vim_snapshot.row_count());
 
                 let hl_task_id = document
                     .latest_hl_task_id
@@ -90,12 +110,12 @@ impl ViewController for TextViewController {
                     .background_worker
                     .spawn_task(BackgroundTask::Highlight {
                         owner_id: window_id,
-                        file_path: buffer.file_path.clone(),
+                        file_path: file_path.clone(),
                         snapshot: snapshot.clone(),
                         start_row: hl_start,
                         row_count: hl_end - hl_start,
                         colorscheme: std::sync::Arc::new(colorscheme.clone()),
-                        syntax_tree: buffer.syntax_tree.clone(),
+                        syntax_tree: syntax_tree.clone(),
                         textmate_highlights: editor.textmate_highlights,
                         treesitter_highlights: editor.treesitter_highlights,
                         map_scope_to_scheme: editor.map_scope_to_scheme,
@@ -104,7 +124,7 @@ impl ViewController for TextViewController {
                     });
 
                 if editor.tree_sitter
-                    && let Some(grammar) = buffer.grammar
+                    && let Some(grammar) = grammar
                 {
                     let parse_task_id = document
                         .latest_parse_task_id
@@ -115,7 +135,7 @@ impl ViewController for TextViewController {
                         .background_worker
                         .spawn_task(BackgroundTask::Parse {
                             owner_id: window_id,
-                            file_path: buffer.file_path.clone(),
+                            file_path: file_path.clone(),
                             snapshot: snapshot.clone(),
                             grammar,
                             task_id: TaskId(parse_task_id),
@@ -133,8 +153,12 @@ impl ViewController for TextViewController {
                 let start_row = if is_first_index {
                     0
                 } else {
-                    let (start, _) = document.selections().rows_in_selection(&buffer.buffer);
-                    start
+                    document
+                        .selections()
+                        .rows_in_selection(&vim_snapshot)
+                        .ok()
+                        .flatten()
+                        .map_or(0, |(start, _)| start)
                 };
                 let row_count = if is_first_index {
                     snapshot.row_count()
@@ -151,9 +175,9 @@ impl ViewController for TextViewController {
                     .background_worker
                     .spawn_task(BackgroundTask::Index {
                         owner_id: window_id,
-                        file_path: buffer.file_path.clone(),
+                        file_path: file_path.clone(),
                         snapshot: snapshot.clone(),
-                        grammar: buffer.grammar,
+                        grammar: grammar,
                         start_row,
                         row_count,
                         task_id: TaskId(index_task_id),
@@ -172,17 +196,23 @@ impl ViewController for TextViewController {
                     .background_worker
                     .spawn_task(BackgroundTask::Wrap {
                         owner_id: window_id,
-                        file_path: buffer.file_path.clone(),
+                        file_path: file_path.clone(),
                         snapshot: snapshot.clone(),
-                        folds: document.folds.clone(),
+                        folds: document
+                            .folds
+                            .iter()
+                            .map(|fold| crate::editor::display::fold_map::Fold {
+                                start: fold.start,
+                                end: fold.end,
+                            })
+                            .collect(),
                         wrap_width,
                         task_id: TaskId(wrap_task_id),
                         latest_task_id: document.latest_wrap_task_id.clone(),
                     });
             }
 
-            let cursor = document.selection();
-            let cursor_point = cursor.head().to_point(&buffer.buffer);
+            let cursor_point = document.selections().point;
             let display_cursor = document
                 .display_map
                 .snapshot()
@@ -210,7 +240,7 @@ impl ViewController for TextViewController {
                 let end_buffer_row = end_point.row;
                 let end_buffer_row_exclusive = end_buffer_row + 1;
 
-                let snapshot = buffer.buffer.snapshot().clone();
+                let snapshot = vim_snapshot.as_inner().clone();
                 if !document.hl.is_sync(&snapshot)
                     || !document
                         .hl
@@ -221,7 +251,7 @@ impl ViewController for TextViewController {
                         start_buffer_row,
                         end_buffer_row_exclusive - start_buffer_row,
                         &colorscheme,
-                        buffer.syntax_tree.as_ref(),
+                        syntax_tree.as_ref(),
                         editor.textmate_highlights,
                         editor.treesitter_highlights,
                         editor.map_scope_to_scheme,
@@ -238,16 +268,16 @@ impl ViewController for TextViewController {
         &mut self,
         action: Action,
         editor: &mut Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        vim_buffers: &mut crate::editor::buffers::VimBuffers,
         ui: &mut crate::ui::Ui,
         window_id: usize,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         if action != Action::NoOp {
-            editor.apply_active_action(ui, buffer_manager, &action);
-            if let Some(window) = ui.window_mut(window_id) {
-                if let Some(ref mut document) = window.doc {
-                    document.should_sync = true;
-                }
+            editor.apply_active_vim_action(ui, vim_buffers, &action);
+            if let Some(window) = ui.window_mut(window_id)
+                && let Some(document) = window.doc.as_mut()
+            {
+                document.should_sync = true;
             }
             editor.should_redraw = true;
         }
@@ -258,11 +288,12 @@ impl ViewController for TextViewController {
         &mut self,
         result: &background::BackgroundResult,
         editor: &mut Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
-        document: Option<&mut crate::editor::document::Document>,
+        buffers: &mut crate::editor::buffers::VimBuffers,
+        document: Option<&mut crate::editor::document::VimDocument>,
         colorscheme: &crate::ui::colorscheme::ColorScheme,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
-        let document = document.expect("TextViewController requires a Document view state");
+        let document = document.expect("TextViewController requires a VimDocument view state");
+        let buffer_id = vim_buffer::BufferId::new(document.id as u64).unwrap();
         match result {
             background::BackgroundResult::HighlightComplete {
                 file_path,
@@ -270,18 +301,19 @@ impl ViewController for TextViewController {
                 task_id,
                 ..
             } => {
-                if let Some(buf) = buffer_manager
-                    .buffers
-                    .iter_mut()
-                    .find(|b| &b.file_path == file_path)
+                if buffers
+                    .entry(buffer_id)
+                    .is_some_and(|entry| &entry.file_path == file_path)
                 {
                     if *task_id >= background::TaskId(document.current_hl_task_id) {
                         document.current_hl_task_id = task_id.0;
                         document
                             .hl
                             .merge_caches(style_cache.clone(), std::collections::HashMap::new());
-                        document.hl.last_snapshot_version =
-                            Some(buf.buffer.snapshot().version.clone());
+                        if let Ok(buffer) = buffers.get(buffer_id) {
+                            document.hl.last_snapshot_version =
+                                Some(buffer.snapshot().revision().clone());
+                        }
                         editor.buffers_to_redraw.push(document.id);
                         editor.should_redraw = true;
                     }
@@ -308,16 +340,21 @@ impl ViewController for TextViewController {
                 ..
             } => {
                 if editor.tree_sitter {
-                    if let Some(buf) = buffer_manager
-                        .buffers
-                        .iter_mut()
-                        .find(|b| &b.file_path == file_path)
+                    if buffers
+                        .entry(buffer_id)
+                        .is_some_and(|entry| &entry.file_path == file_path)
                     {
                         if *task_id >= background::TaskId(document.current_parse_task_id) {
                             document.current_parse_task_id = task_id.0;
-                            buf.syntax_tree = Some(syntax_tree.clone());
+                            if let Some(entry) = buffers.entry_mut(buffer_id) {
+                                entry.syntax_tree = Some(syntax_tree.clone());
+                            }
+                            let snapshot = buffers
+                                .get(buffer_id)
+                                .expect("buffer entry exists")
+                                .snapshot();
                             document.hl.update_treesitter_highlights(
-                                &buf.buffer.snapshot(),
+                                snapshot.as_inner(),
                                 Some(&syntax_tree),
                                 colorscheme,
                                 editor.treesitter_highlights,

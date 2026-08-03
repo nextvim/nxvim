@@ -209,17 +209,21 @@ impl Ui {
         self.clear_highlights();
     }
 
-    pub fn set_window_buffer(
+    pub fn set_vim_window_buffer(
         &mut self,
         window_id: usize,
-        buffer_id: usize,
-        buffer_manager: &crate::editor::buffers::BufferManager,
+        buffer_id: vim_buffer::BufferId,
+        buffers: &crate::editor::buffers::VimBuffers,
     ) -> bool {
         let Some(window) = self.windows.get_mut(&window_id) else {
             return false;
         };
-        window.set_buffer(buffer_id, buffer_manager);
-        true
+        window.set_vim_buffer(buffer_id, buffers)
+    }
+
+    pub fn focused_vim_buffer_id(&self) -> Option<vim_buffer::BufferId> {
+        self.get_focused_window()
+            .and_then(|window| window.vim_buffer_id)
     }
 
     pub fn take_window_controller(
@@ -261,7 +265,7 @@ impl Ui {
         &mut self,
         axis: vim_ui::SplitAxis,
         file_path: Option<String>,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
     ) {
         let Some(focused_id) = self.focused_window_id().filter(|id| {
             *id != WindowId::Tabs as usize
@@ -283,14 +287,14 @@ impl Ui {
 
         if let Some(focused_win) = self.windows.get(&focused_id) {
             new_win.title = focused_win.title.clone();
-            if let Some(buf_id) = focused_win.buffer_id {
-                new_win.set_buffer(buf_id, buffer_manager);
+            if let Some(buf_id) = focused_win.vim_buffer_id {
+                new_win.set_vim_buffer(buf_id, buffers);
             }
         }
 
         if let Some(p) = file_path {
-            if let Ok(new_buf) = buffer_manager.add_buffer_for_path(&p) {
-                new_win.set_buffer(new_buf.id, buffer_manager);
+            if let Ok(new_buf) = buffers.add_buffer_for_path(&p) {
+                new_win.set_vim_buffer(new_buf.id, buffers);
             }
         }
 
@@ -422,7 +426,7 @@ impl Ui {
     pub fn update(
         &mut self,
         editor: &mut Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if !editor.buffers_to_redraw.is_empty() {
             for window in self.windows.values_mut() {
@@ -432,7 +436,7 @@ impl Ui {
                     }
                 }
                 for (buf_id, doc) in &mut window.docs {
-                    if editor.buffers_to_redraw.contains(buf_id) {
+                    if editor.buffers_to_redraw.contains(&(buf_id.get() as usize)) {
                         doc.should_sync = true;
                     }
                 }
@@ -479,7 +483,7 @@ impl Ui {
                     } else {
                         rect
                     };
-                    c.update(editor, buffer_manager, self, window_id, adjusted_rect)?;
+                    c.update(editor, buffers, self, window_id, adjusted_rect)?;
                 }
                 if let Some(window) = self.windows.get_mut(&window_id) {
                     window.controller = controller;
@@ -494,7 +498,7 @@ impl Ui {
         &mut self,
         stdout: &mut W,
         editor: &mut Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut buffered_stdout = std::io::BufWriter::with_capacity(128 * 1024, stdout);
         let stdout = &mut buffered_stdout;
@@ -518,7 +522,7 @@ impl Ui {
         let computed = self.cached_layouts.clone();
         for &(win_id, rect) in &computed {
             if let Some(mut win) = self.windows.remove(&win_id) {
-                win.draw(stdout, rect, editor, buffer_manager, self)?;
+                win.draw(stdout, rect, editor, buffers, self)?;
                 self.windows.insert(win_id, win);
             }
         }
@@ -540,7 +544,7 @@ impl Ui {
                         height: rect.height,
                     },
                     editor,
-                    buffer_manager,
+                    buffers,
                     self,
                 )?;
                 self.windows.insert(id, window);
@@ -630,7 +634,8 @@ mod tests {
     #[test]
     fn test_find_neighbor() {
         let mut ui = Ui::new();
-        let mut buffers = crate::editor::buffers::BufferManager::new();
+        let mut buffers = crate::editor::buffers::VimBuffers::new();
+        buffers.create("first");
         ui.layout(100, 30);
         ui.split_focused_window(vim_ui::SplitAxis::Columns, None, &mut buffers);
 

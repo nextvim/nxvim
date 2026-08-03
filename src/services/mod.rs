@@ -24,7 +24,7 @@ impl Services {
 
 pub fn poll(
     editor: &mut crate::editor::Editor,
-    buffer_manager: &mut crate::editor::buffers::BufferManager,
+    buffers: &mut crate::editor::buffers::VimBuffers,
     ui: &mut crate::ui::Ui,
 ) -> Result<(), Box<dyn std::error::Error>> {
     while let Some(result) = editor.services.background_worker.try_recv() {
@@ -64,7 +64,7 @@ pub fn poll(
                 let _ = controller.handle_task(
                     &result,
                     editor,
-                    buffer_manager,
+                    buffers,
                     win.doc.as_mut(),
                     &colorscheme,
                 );

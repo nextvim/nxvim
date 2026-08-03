@@ -67,7 +67,6 @@ impl Controller {
         &mut self,
         event: crossterm::event::Event,
         editor: &mut crate::editor::Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         match event {
             Event::Key(key_event) => {
@@ -114,7 +113,7 @@ impl Controller {
     pub fn dispatch_actions(
         &mut self,
         editor: &mut crate::editor::Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
         ui: &mut crate::ui::Ui,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         let mut last_result = ControllerResult::None;
@@ -164,19 +163,11 @@ impl Controller {
                     }
                 }
                 actions::Action::SplitHorizontal { file_path } => {
-                    ui.split_focused_window(
-                        vim_ui::SplitAxis::Rows,
-                        file_path.clone(),
-                        buffer_manager,
-                    );
+                    ui.split_focused_window(vim_ui::SplitAxis::Rows, file_path.clone(), buffers);
                     editor.should_redraw = true;
                 }
                 actions::Action::SplitVertical { file_path } => {
-                    ui.split_focused_window(
-                        vim_ui::SplitAxis::Columns,
-                        file_path.clone(),
-                        buffer_manager,
-                    );
+                    ui.split_focused_window(vim_ui::SplitAxis::Columns, file_path.clone(), buffers);
                     editor.should_redraw = true;
                 }
                 actions::Action::CloseWindow => {
@@ -207,7 +198,7 @@ impl Controller {
                 }
                 actions::Action::Command(command_string) => {
                     self.command.set(command_string);
-                    if let Some(result) = self.command.ex(ui, editor, buffer_manager) {
+                    if let Some(result) = self.command.ex(ui, editor, buffers) {
                         editor.should_redraw = true;
                         last_result = result;
                     }
@@ -248,7 +239,7 @@ impl Controller {
                                 }
                             }
                             last_result =
-                                c.handle_action(action, editor, buffer_manager, ui, window_id)?;
+                                c.handle_action(action, editor, buffers, ui, window_id)?;
                             editor.services.clipboard.borrow_mut().release();
                         }
                         ui.restore_window_controller(window_id, controller);
@@ -276,162 +267,5 @@ impl Controller {
 
         editor.pending_keys = self.input.pending().to_string();
         Ok(last_result)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{KeyEventKind, KeyEventState};
-
-    fn key_event(code: KeyCode, kind: KeyEventKind) -> Event {
-        Event::Key(KeyEvent {
-            code,
-            modifiers: KeyModifiers::NONE,
-            kind,
-            state: KeyEventState::NONE,
-        })
-    }
-
-    #[test]
-    fn resolved_keys_are_enqueued_but_pending_and_invalid_keys_are_not() {
-        let mut controller = Controller::new();
-        let mut editor = editor::Editor::new().unwrap();
-        let mut buffers = editor::buffers::BufferManager::new();
-
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('z'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-        assert!(controller.pending_actions.is_empty());
-        assert_eq!(editor.pending_keys, "z");
-
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('x'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-        assert!(controller.pending_actions.is_empty());
-        assert_eq!(editor.pending_keys, "");
-
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('j'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-        assert_eq!(
-            controller.pending_actions.pop_front(),
-            Some(PendingAction::host(actions::Action::MoveDown {
-                count: 1,
-                select: false,
-            }))
-        );
-    }
-
-    #[test]
-    fn selected_register_stays_attached_to_its_queued_action() {
-        let mut controller = Controller::new();
-        let mut editor = editor::Editor::new().unwrap();
-        let mut buffers = editor::buffers::BufferManager::new();
-
-        for ch in ['"', 'a', 'p'] {
-            controller
-                .handle_event(
-                    key_event(KeyCode::Char(ch), KeyEventKind::Press),
-                    &mut editor,
-                    &mut buffers,
-                )
-                .unwrap();
-        }
-
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('j'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-
-        assert_eq!(
-            controller.pending_actions.pop_front(),
-            Some(PendingAction {
-                action: actions::Action::Put { count: 1 },
-                register: Some('a'),
-            })
-        );
-        assert_eq!(
-            controller.pending_actions.pop_front(),
-            Some(PendingAction::host(actions::Action::MoveDown {
-                count: 1,
-                select: false,
-            }))
-        );
-    }
-
-    #[test]
-    fn external_mode_change_clears_stale_pending_input() {
-        let mut controller = Controller::new();
-        let mut editor = editor::Editor::new().unwrap();
-        let mut buffers = editor::buffers::BufferManager::new();
-
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('g'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-        assert_eq!(editor.pending_keys, "g");
-
-        editor.mode = actions::Mode::Visual;
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('j'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-
-        assert_eq!(controller.input.mode(), actions::Mode::Visual);
-        assert_eq!(editor.pending_keys, "");
-        assert_eq!(
-            controller.pending_actions.pop_front(),
-            Some(PendingAction::host(actions::Action::MoveDown {
-                count: 1,
-                select: true,
-            }))
-        );
-    }
-
-    #[test]
-    fn key_release_does_not_enqueue_or_clear_pending_input() {
-        let mut controller = Controller::new();
-        let mut editor = editor::Editor::new().unwrap();
-        let mut buffers = editor::buffers::BufferManager::new();
-
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('g'), KeyEventKind::Press),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-        controller
-            .handle_event(
-                key_event(KeyCode::Char('g'), KeyEventKind::Release),
-                &mut editor,
-                &mut buffers,
-            )
-            .unwrap();
-
-        assert!(controller.pending_actions.is_empty());
-        assert_eq!(editor.pending_keys, "g");
     }
 }

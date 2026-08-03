@@ -1,253 +1,257 @@
-use crate::editor::document::Document;
-use crate::services::{self};
-use text::Buffer;
+//! Application wrapper around `vim-buffer`'s buffer manager.
+//!
+//! The legacy `buffers` module remains unchanged while the new document and
+//! selection implementations migrate onto this manager.
 
-pub struct TextBuffer {
-    pub id: usize,
+use crate::{editor::document::VimDocument, services};
+use std::{collections::HashMap, path::Path};
+use vim_buffer::{
+    Buffer, BufferError, BufferId, BufferManager as VimBufferManager, EditOrigin, ManagerOutcome,
+    MutationOutcome, SaveOutcome, TextRange, Transaction,
+};
+
+pub struct VimBufferEntry {
+    pub id: BufferId,
     pub file_path: String,
-    pub buffer: Buffer,
     pub grammar: Option<services::treesitter::grammars::Grammar>,
     pub syntax_tree: Option<services::treesitter::SyntaxTree>,
 }
 
-impl TextBuffer {
-    pub fn new(id: usize, file_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let contents = if file_path.starts_with('#') {
-            "".to_string()
-        } else if std::path::Path::new(file_path).exists() {
-            match std::fs::read_to_string(file_path) {
-                Ok(s) => s,
-                Err(_) => "File not found".to_string(),
-            }
-        } else {
-            "".to_string()
-        };
-        let buffer = Buffer::new(
-            clock::ReplicaId::default(),
-            text::BufferId::new(1).unwrap(),
-            contents,
-        );
-        let grammar = services::treesitter::grammars::Grammar::from_path(file_path);
-        Ok(Self {
-            id,
-            file_path: file_path.to_string(),
-            buffer,
-            grammar,
-            syntax_tree: None,
-        })
-    }
+pub struct VimBuffers {
+    pub manager: VimBufferManager,
+    entries: HashMap<BufferId, VimBufferEntry>,
+}
 
-    pub fn new_with_text(contents: &str) -> Self {
-        let buffer = Buffer::new(
-            clock::ReplicaId::default(),
-            text::BufferId::new(1).unwrap(),
-            contents.to_string(),
-        );
-        Self {
-            id: 0,
-            file_path: "".to_string(),
-            buffer,
-            grammar: None,
-            syntax_tree: None,
-        }
-    }
-
-    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.file_path.is_empty() && !self.file_path.starts_with('#') {
-            let content = self.buffer.snapshot().text();
-            std::fs::write(&self.file_path, content)?;
-        }
-        Ok(())
-    }
-
-    pub fn clear(&mut self) {
-        self.buffer = Buffer::new(
-            clock::ReplicaId::default(),
-            text::BufferId::new(1).unwrap(),
-            "".to_string(),
-        );
-        self.syntax_tree = None;
-    }
-
-    pub fn is_special(&self) -> bool {
-        self.file_path.starts_with('#')
-    }
-
-    pub fn is_file_backed(&self) -> bool {
-        !self.file_path.is_empty() && !self.is_special()
-    }
-
-    pub fn is_unnamed(&self) -> bool {
-        self.file_path.is_empty()
+impl Default for VimBuffers {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-pub struct BufferManager {
-    pub buffers: Vec<TextBuffer>,
-}
-
-impl BufferManager {
+impl VimBuffers {
     pub fn new() -> Self {
         Self {
-            buffers: Vec::new(),
+            manager: VimBufferManager::new(),
+            entries: HashMap::new(),
         }
     }
 
-    pub fn find(&self, doc: &Document) -> Option<&TextBuffer> {
-        self.buffers.iter().find(|b| b.id == doc.id)
+    pub fn get(&self, id: BufferId) -> Result<&Buffer, BufferError> {
+        self.manager.get(id)
+    }
+    pub fn get_mut(&mut self, id: BufferId) -> Result<&mut Buffer, BufferError> {
+        self.manager.get_mut(id)
+    }
+    pub fn entry(&self, id: BufferId) -> Option<&VimBufferEntry> {
+        self.entries.get(&id)
+    }
+    pub fn entry_mut(&mut self, id: BufferId) -> Option<&mut VimBufferEntry> {
+        self.entries.get_mut(&id)
     }
 
-    pub fn find_mut(&mut self, doc: &Document) -> Option<&mut TextBuffer> {
-        self.buffers.iter_mut().find(|b| b.id == doc.id)
+    pub fn create(&mut self, initial_text: impl Into<String>) -> BufferId {
+        let buffer = self.manager.create(initial_text);
+        let id = buffer.id();
+        self.entries.insert(
+            id,
+            VimBufferEntry {
+                id,
+                file_path: String::new(),
+                grammar: None,
+                syntax_tree: None,
+            },
+        );
+        id
     }
 
-    pub fn find_by_path(&self, path: &str) -> Option<&TextBuffer> {
-        self.buffers.iter().find(|b| b.file_path == path)
+    pub fn find_by_path(&self, path: &str) -> Option<&VimBufferEntry> {
+        self.entries.values().find(|entry| entry.file_path == path)
     }
 
-    pub fn find_by_path_mut(&mut self, path: &str) -> Option<&mut TextBuffer> {
-        self.buffers.iter_mut().find(|b| b.file_path == path)
+    pub fn find_by_path_mut(&mut self, path: &str) -> Option<&mut VimBufferEntry> {
+        self.entries
+            .values_mut()
+            .find(|entry| entry.file_path == path)
     }
 
     pub fn add_buffer_for_path(
         &mut self,
         path: &str,
-    ) -> Result<&mut TextBuffer, Box<dyn std::error::Error>> {
-        if let Some(pos) = self.buffers.iter().position(|b| b.file_path == path) {
-            return Ok(&mut self.buffers[pos]);
+    ) -> Result<&mut VimBufferEntry, Box<dyn std::error::Error>> {
+        if self.find_by_path(path).is_some() {
+            return Ok(self.find_by_path_mut(path).expect("entry exists"));
         }
-        let next_id = self
-            .buffers
-            .iter()
-            .map(|b| b.id)
-            .max()
-            .map(|id| id + 1)
-            .unwrap_or(0);
-        let new_buf = TextBuffer::new(next_id, path)?;
-        self.buffers.push(new_buf);
-        Ok(self.buffers.last_mut().unwrap())
+        let id = if path.starts_with('#') || path.is_empty() {
+            let id = self.create(String::new());
+            self.entries.get_mut(&id).expect("created entry").file_path = path.to_owned();
+            id
+        } else if Path::new(path).exists() {
+            self.load(path)?.0
+        } else {
+            self.create_named(path, String::new())?.0
+        };
+        Ok(self.entries.get_mut(&id).expect("created entry"))
     }
 
-    pub fn file_buffers(&self) -> impl Iterator<Item = &TextBuffer> {
-        self.buffers.iter().filter(|b| b.is_file_backed())
-    }
-
-    pub fn special_buffers(&self) -> impl Iterator<Item = &TextBuffer> {
-        self.buffers.iter().filter(|b| b.is_special())
-    }
-
-    pub fn create_scratch_buffer(&mut self) -> Result<&mut TextBuffer, Box<dyn std::error::Error>> {
+    pub fn create_scratch_buffer(
+        &mut self,
+    ) -> Result<&mut VimBufferEntry, Box<dyn std::error::Error>> {
         let mut index = 1;
         loop {
-            let path = format!("#scratch-{}", index);
+            let path = format!("#scratch-{index}");
             if self.find_by_path(&path).is_none() {
                 return self.add_buffer_for_path(&path);
             }
             index += 1;
         }
     }
+
+    pub fn create_named(
+        &mut self,
+        path: &str,
+        initial_text: impl Into<String>,
+    ) -> Result<(BufferId, ManagerOutcome), BufferError> {
+        let (id, outcome) = self.manager.create_named(path, initial_text)?;
+        self.ensure_entry(id, path);
+        Ok((id, outcome))
+    }
+
+    pub fn find_by_name(&self, path: &str) -> Result<Option<BufferId>, BufferError> {
+        self.manager.find_by_name(path)
+    }
+
+    pub fn list(&self) -> Vec<BufferId> {
+        self.manager.list()
+    }
+
+    pub fn listed(&self) -> Vec<BufferId> {
+        self.manager.listed()
+    }
+
+    pub fn current(&self) -> Option<BufferId> {
+        self.manager.current()
+    }
+
+    pub fn alternate(&self) -> Option<BufferId> {
+        self.manager.alternate()
+    }
+
+    pub fn set_current(&mut self, id: BufferId) -> Result<ManagerOutcome, BufferError> {
+        self.manager.set_current(id)
+    }
+
+    pub fn load(&mut self, path: &str) -> Result<(BufferId, ManagerOutcome), BufferError> {
+        let (id, outcome) = self.manager.load(path)?;
+        self.ensure_entry(id, path);
+        Ok((id, outcome))
+    }
+
+    pub fn create_scratch(&mut self) -> BufferId {
+        let id = self.create(String::new());
+        let index = self
+            .entries
+            .values()
+            .filter(|entry| entry.file_path.starts_with("#scratch-"))
+            .count()
+            + 1;
+        self.entries.get_mut(&id).expect("created entry").file_path = format!("#scratch-{index}");
+        id
+    }
+
+    pub fn document(&self, id: BufferId) -> Result<VimDocument, BufferError> {
+        let file_path = self
+            .entry(id)
+            .map(|entry| entry.file_path.as_str())
+            .unwrap_or_default();
+        VimDocument::new_with_file_path(id.get() as usize, self.get(id)?, file_path)
+    }
+
+    pub fn transaction(
+        &mut self,
+        id: BufferId,
+        origin: EditOrigin,
+    ) -> Result<Transaction<'_>, BufferError> {
+        self.manager.transaction(id, origin)
+    }
+
+    pub fn replace(
+        &mut self,
+        id: BufferId,
+        origin: EditOrigin,
+        range: TextRange,
+        replacement: impl Into<std::sync::Arc<str>>,
+    ) -> Result<MutationOutcome, BufferError> {
+        self.manager.replace(id, origin, range, replacement)
+    }
+
+    pub fn save(&mut self, id: BufferId, force: bool) -> Result<SaveOutcome, BufferError> {
+        self.manager.save(id, force)
+    }
+
+    pub fn file_buffers(&self) -> impl Iterator<Item = &VimBufferEntry> {
+        self.entries
+            .values()
+            .filter(|entry| !entry.file_path.is_empty() && !entry.file_path.starts_with('#'))
+    }
+
+    pub fn special_buffers(&self) -> impl Iterator<Item = &VimBufferEntry> {
+        self.entries
+            .values()
+            .filter(|entry| entry.file_path.starts_with('#'))
+    }
+
+    pub fn is_special(&self, id: BufferId) -> bool {
+        self.entry(id)
+            .is_some_and(|entry| entry.file_path.starts_with('#'))
+    }
+
+    pub fn is_file_backed(&self, id: BufferId) -> bool {
+        self.entry(id)
+            .is_some_and(|entry| !entry.file_path.is_empty() && !entry.file_path.starts_with('#'))
+    }
+
+    fn ensure_entry(&mut self, id: BufferId, path: &str) {
+        self.entries.entry(id).or_insert_with(|| VimBufferEntry {
+            id,
+            file_path: path.to_owned(),
+            grammar: services::treesitter::grammars::Grammar::from_path(path),
+            syntax_tree: None,
+        });
+    }
+
+    pub fn path(&self, id: BufferId) -> Option<&Path> {
+        self.entry(id).and_then(|entry| {
+            (!entry.file_path.is_empty() && !entry.file_path.starts_with('#'))
+                .then(|| Path::new(entry.file_path.as_str()))
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::document::Document;
 
     #[test]
-    fn test_add_buffer_for_path() {
-        let mut bm = BufferManager::new();
-        let path = "test_file_path.txt";
-
-        let id1 = {
-            let buf1 = bm.add_buffer_for_path(path).unwrap();
-            assert_eq!(buf1.file_path, path);
-            buf1.id
-        };
-
-        // Try adding the same path again - should return the same buffer (same ID)
-        let id2 = {
-            let buf2 = bm.add_buffer_for_path(path).unwrap();
-            buf2.id
-        };
-        assert_eq!(id2, id1);
-
-        // Try adding a different path - should return a new buffer (new ID)
-        let id3 = {
-            let buf3 = bm.add_buffer_for_path("other_file_path.txt").unwrap();
-            buf3.id
-        };
-        assert_ne!(id3, id1);
-        assert_eq!(bm.buffers.len(), 2);
+    fn creates_vim_buffer_for_new_document() {
+        let mut buffers = VimBuffers::new();
+        let id = buffers.create("hello");
+        assert_eq!(
+            buffers
+                .get(id)
+                .unwrap()
+                .snapshot()
+                .chunks()
+                .collect::<String>(),
+            "hello"
+        );
+        assert!(!buffers.is_file_backed(id));
     }
 
     #[test]
-    fn test_text_buffer_save() {
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("dzd_test_save.txt");
-        let path_str = file_path.to_str().unwrap();
-
-        let mut buf = TextBuffer::new_with_text("Hello, Saving!");
-        buf.file_path = path_str.to_string();
-
-        buf.save().unwrap();
-
-        let read_content = std::fs::read_to_string(path_str).unwrap();
-        assert_eq!(read_content, "Hello, Saving!");
-
-        let _ = std::fs::remove_file(file_path);
-    }
-
-    #[test]
-    fn test_text_buffer_clear() {
-        let mut buf = TextBuffer::new_with_text("Some text here.");
-        assert_eq!(buf.buffer.snapshot().text(), "Some text here.");
-
-        buf.clear();
-        assert_eq!(buf.buffer.snapshot().text(), "");
-    }
-
-    #[test]
-    fn test_text_buffer_hash_prefix() {
-        let path = "#scratchpad";
-        let buf = TextBuffer::new(1, path).unwrap();
-        assert_eq!(buf.file_path, path);
-        assert_eq!(buf.buffer.snapshot().text(), "");
-
-        let _ = std::fs::remove_file(path);
-        buf.save().unwrap();
-        assert!(!std::path::Path::new(path).exists());
-    }
-
-    #[test]
-    fn test_buffer_classification_and_scratchpad() {
-        let mut bm = BufferManager::new();
-
-        let b1 = bm.add_buffer_for_path("").unwrap();
-        assert!(b1.is_unnamed());
-        assert!(!b1.is_file_backed());
-        assert!(!b1.is_special());
-
-        let b2 = bm.add_buffer_for_path("src/main.rs").unwrap();
-        assert!(!b2.is_unnamed());
-        assert!(b2.is_file_backed());
-        assert!(!b2.is_special());
-
-        let b3 = bm.add_buffer_for_path("#scratchpad").unwrap();
-        assert!(!b3.is_unnamed());
-        assert!(!b3.is_file_backed());
-        assert!(b3.is_special());
-
-        assert_eq!(bm.file_buffers().count(), 1);
-        assert_eq!(bm.special_buffers().count(), 1);
-
-        let scratch1 = bm.create_scratch_buffer().unwrap();
-        assert_eq!(scratch1.file_path, "#scratch-1");
-        assert!(scratch1.is_special());
-
-        let scratch2 = bm.create_scratch_buffer().unwrap();
-        assert_eq!(scratch2.file_path, "#scratch-2");
-        assert!(scratch2.is_special());
-
-        assert_eq!(bm.special_buffers().count(), 3);
+    fn scratch_buffers_are_special() {
+        let mut buffers = VimBuffers::new();
+        let id = buffers.create_scratch();
+        assert!(buffers.is_special(id));
+        assert_eq!(buffers.special_buffers().count(), 1);
     }
 }

@@ -1,9 +1,11 @@
 use crate::editor::Editor;
+use crate::editor::buffers::VimBuffers;
 use crate::editor::display::display_map::DisplayPoint;
+use crate::editor::document::VimDocument;
 use crate::services::search::TextSearch;
 use crate::ui::views::{View, vim};
 use std::io::Write;
-use text::ToPoint;
+
 use vim_input::Mode;
 use vim_ui::Rect;
 
@@ -18,11 +20,13 @@ impl TextView {
         &self,
         rect: Rect,
         editor: &Editor,
-        buffer_manager: &crate::editor::buffers::BufferManager,
-        document: &crate::editor::document::Document,
+        buffers: &VimBuffers,
+        document: &VimDocument,
         ui: &crate::ui::Ui,
     ) -> vim_ui::TextViewModel {
-        let buffer = buffer_manager.find(document).unwrap();
+        let buffer_id = vim_buffer::BufferId::new(document.id as u64).unwrap();
+        let buffer = buffers.get(buffer_id).unwrap();
+        let vim_snapshot = buffer.snapshot();
         let display = document.display_map.snapshot();
         let total_rows = display.row_count();
         let end_row = (display.scroll_y + rect.height as u32).min(total_rows);
@@ -43,10 +47,12 @@ impl TextView {
         let selection_style = style(editor_fg, selection_bg, None);
         let gutter_style = style(gutter_fg, gutter_bg, None);
 
-        let cursor_display_row = document.selections().first().map(|selection| {
-            display
-                .point_to_display_point(selection.head().to_point(&buffer.buffer))
-                .row()
+        let cursor_display_row = document.selections().first().and_then(|selection| {
+            selection
+                .head_offset(&vim_snapshot)
+                .ok()
+                .and_then(|offset| vim_snapshot.offset_to_point(offset).ok())
+                .map(|point| display.point_to_display_point(point).row())
         });
         let mut cursor = None;
         let mut rows = Vec::with_capacity(rect.height as usize);
@@ -107,11 +113,10 @@ impl TextView {
                     background = find_bg;
                 }
 
-                let (selected, selected_line, at_cursor) = document.selections().is_selected(
-                    original.row,
-                    original.column,
-                    &buffer.buffer,
-                );
+                let (selected, selected_line, at_cursor) =
+                    document
+                        .selections()
+                        .is_selected(original.row, original.column, &vim_snapshot);
                 if (selected && editor.mode != Mode::Command)
                     || (selected_line && editor.mode == Mode::VisualLine)
                     || at_cursor
@@ -208,13 +213,13 @@ impl View for TextView {
         writer: &mut dyn Write,
         rect: Rect,
         editor: &Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
-        document: Option<&crate::editor::document::Document>,
+        buffers: &mut VimBuffers,
+        document: Option<&VimDocument>,
         ui: &crate::ui::Ui,
     ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>>
     {
         let document = document.expect("TextView requires document view state");
-        let model = self.build_model(rect, editor, buffer_manager, document, ui);
+        let model = self.build_model(rect, editor, buffers, document, ui);
         model.validate()?;
         let cursor = model.cursor;
         let window_id = vim_ui::WindowId::new(1);
@@ -236,11 +241,7 @@ impl View for TextView {
     }
 }
 
-fn pattern_ranges(
-    text: &str,
-    document: &crate::editor::document::Document,
-    editor: &Editor,
-) -> Vec<(usize, usize)> {
+fn pattern_ranges(text: &str, document: &VimDocument, editor: &Editor) -> Vec<(usize, usize)> {
     if !document.show_pattern_match {
         return Vec::new();
     }

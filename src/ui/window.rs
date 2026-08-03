@@ -3,6 +3,9 @@ use vim_ui::Rect;
 use super::views::View;
 use crate::controller::controllers::ViewController;
 use crate::editor::Editor;
+use crate::editor::buffers::VimBuffers;
+use crate::editor::document::VimDocument;
+use vim_buffer::BufferId;
 use vim_ui::Renderer as _;
 
 use std::io::Write;
@@ -23,9 +26,10 @@ pub struct Window {
     pub draw_title: bool,
     pub view: Option<Box<dyn View>>,
     pub controller: Option<Box<dyn ViewController>>,
-    pub buffer_id: Option<usize>,
-    pub doc: Option<crate::editor::document::Document>,
-    pub docs: std::collections::HashMap<usize, crate::editor::document::Document>,
+    /// Canonical Vim-backed window selection and document state.
+    pub vim_buffer_id: Option<BufferId>,
+    pub doc: Option<VimDocument>,
+    pub docs: std::collections::HashMap<BufferId, VimDocument>,
     pub cursor_x: Option<u16>,
     pub cursor_y: Option<u16>,
     pub cursor_shape: Option<crate::ui::CursorShape>,
@@ -41,7 +45,7 @@ impl Window {
             draw_title: true,
             view: None,
             controller: None,
-            buffer_id: None,
+            vim_buffer_id: None,
             doc: None,
             docs: std::collections::HashMap::new(),
             cursor_x: None,
@@ -59,60 +63,55 @@ impl Window {
         self.controller = Some(controller);
     }
 
-    pub fn set_buffer(
-        &mut self,
-        buffer_id: usize,
-        buffer_manager: &crate::editor::buffers::BufferManager,
-    ) {
-        if let Some(current_id) = self.buffer_id {
+    /// Select the active Vim-backed buffer and restore its document state.
+    pub fn set_vim_buffer(&mut self, buffer_id: BufferId, buffers: &VimBuffers) -> bool {
+        if let Some(current_id) = self.vim_buffer_id {
             if let Some(doc) = self.doc.take() {
                 self.docs.insert(current_id, doc);
             }
         }
-        self.buffer_id = Some(buffer_id);
-        if let Some(doc) = self.docs.remove(&buffer_id) {
-            self.doc = Some(doc);
-        } else if let Some(buf) = buffer_manager.buffers.iter().find(|b| b.id == buffer_id) {
-            self.doc = Some(crate::editor::document::Document::new_with_buffer(
-                buf.id,
-                &buf.buffer,
-                &buf.file_path,
-            ));
-        }
+
+        let Some(_buffer) = buffers.get(buffer_id).ok() else {
+            return false;
+        };
+        self.vim_buffer_id = Some(buffer_id);
+        self.doc = self
+            .docs
+            .remove(&buffer_id)
+            .or_else(|| buffers.document(buffer_id).ok());
+        self.doc.is_some()
     }
 
-    pub fn bnext(&mut self, buffer_manager: &crate::editor::buffers::BufferManager) {
-        if let Some(current_id) = self.buffer_id {
-            let files: Vec<&crate::editor::buffers::TextBuffer> =
-                buffer_manager.file_buffers().collect();
-            if !files.is_empty() {
-                if let Some(pos) = files.iter().position(|b| b.id == current_id) {
-                    let next_idx = (pos + 1) % files.len();
-                    let next_buf = files[next_idx];
-                    self.set_buffer(next_buf.id, buffer_manager);
-                } else {
-                    let next_buf = files[0];
-                    self.set_buffer(next_buf.id, buffer_manager);
-                }
-            }
+    pub fn vim_bnext(&mut self, buffers: &VimBuffers) -> bool {
+        let current = self.vim_buffer_id;
+        let files: Vec<_> = buffers.file_buffers().map(|entry| entry.id).collect();
+        if files.is_empty() {
+            return false;
         }
+        let next = current
+            .and_then(|id| files.iter().position(|candidate| *candidate == id))
+            .map(|position| files[(position + 1) % files.len()])
+            .unwrap_or(files[0]);
+        self.set_vim_buffer(next, buffers)
     }
 
-    pub fn bprev(&mut self, buffer_manager: &crate::editor::buffers::BufferManager) {
-        if let Some(current_id) = self.buffer_id {
-            let files: Vec<&crate::editor::buffers::TextBuffer> =
-                buffer_manager.file_buffers().collect();
-            if !files.is_empty() {
-                if let Some(pos) = files.iter().position(|b| b.id == current_id) {
-                    let prev_idx = if pos == 0 { files.len() - 1 } else { pos - 1 };
-                    let prev_buf = files[prev_idx];
-                    self.set_buffer(prev_buf.id, buffer_manager);
-                } else {
-                    let prev_buf = files[files.len() - 1];
-                    self.set_buffer(prev_buf.id, buffer_manager);
-                }
-            }
+    pub fn vim_bprev(&mut self, buffers: &VimBuffers) -> bool {
+        let current = self.vim_buffer_id;
+        let files: Vec<_> = buffers.file_buffers().map(|entry| entry.id).collect();
+        if files.is_empty() {
+            return false;
         }
+        let previous = current
+            .and_then(|id| files.iter().position(|candidate| *candidate == id))
+            .map(|position| {
+                files[if position == 0 {
+                    files.len() - 1
+                } else {
+                    position - 1
+                }]
+            })
+            .unwrap_or(files[files.len() - 1]);
+        self.set_vim_buffer(previous, buffers)
     }
 
     pub fn draw<W: Write>(
@@ -120,7 +119,7 @@ impl Window {
         w: &mut W,
         rect: Rect,
         editor: &Editor,
-        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        buffers: &mut crate::editor::buffers::VimBuffers,
         ui: &crate::ui::Ui,
     ) -> std::io::Result<()> {
         if !self.visible || rect.width == 0 || rect.height == 0 {
@@ -154,9 +153,8 @@ impl Window {
             } else {
                 rect
             };
-            let doc_to_pass = self.doc.as_ref();
             if let Ok(Some((cx, cy, shape))) =
-                view.draw(w, inner_rect, editor, buffer_manager, doc_to_pass, ui)
+                view.draw(w, inner_rect, editor, buffers, self.doc.as_ref(), ui)
             {
                 self.cursor_x = Some(cx);
                 self.cursor_y = Some(cy);
@@ -173,5 +171,33 @@ impl Window {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vim_buffer_selection_uses_canonical_window_document() {
+        let mut buffers = VimBuffers::new();
+        let first = buffers.create("first");
+        let second = buffers.create("second");
+        let mut window = Window::new(WindowId::MainWindow as usize, "Editor".into());
+
+        assert!(window.set_vim_buffer(first, &buffers));
+        assert_eq!(window.vim_buffer_id, Some(first));
+        assert_eq!(
+            window.doc.as_ref().map(|doc| doc.id),
+            Some(first.get() as usize)
+        );
+
+        assert!(window.set_vim_buffer(second, &buffers));
+        assert_eq!(window.vim_buffer_id, Some(second));
+        assert_eq!(
+            window.doc.as_ref().map(|doc| doc.id),
+            Some(second.get() as usize)
+        );
+        assert!(window.docs.contains_key(&first));
     }
 }
