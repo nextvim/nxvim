@@ -1358,8 +1358,10 @@ dependencies = [
  "proptest",
  "vim-buffer",
  "vim-formatter",
+ "vim-input",
  "vim-regex",
  "vim-script",
+ "vim-ui",
 ]
 
 [[package]]
