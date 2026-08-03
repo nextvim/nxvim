@@ -18,7 +18,12 @@ impl StatusLineView {
 }
 
 impl View for StatusLineView {
-    fn draw(&self, area: Rect, context: &dyn UIContext, renderer: &mut dyn Renderer) {
+    fn draw(
+        &self,
+        area: Rect,
+        context: &dyn UIContext,
+        renderer: &mut dyn Renderer,
+    ) -> std::io::Result<()> {
         let mut bg = Color::Grey;
         let mut fg = Color::Black;
 
@@ -33,24 +38,25 @@ impl View for StatusLineView {
             }
         }
 
-        renderer.set_bg(bg);
-        renderer.set_fg(fg);
+        renderer.set_bg(bg)?;
+        renderer.set_fg(fg)?;
 
         // Clear line
-        renderer.move_to(area.x, area.y);
-        renderer.print(&" ".repeat(area.width as usize));
+        renderer.move_to(area.x, area.y)?;
+        renderer.print(&" ".repeat(area.width as usize))?;
 
         // Draw left text
-        renderer.move_to(area.x, area.y);
-        renderer.print(&format!(" {} ", self.left_text));
+        renderer.move_to(area.x, area.y)?;
+        renderer.print(&format!(" {} ", self.left_text))?;
 
         // Draw right text
         let right_len = self.right_text.chars().count() + 2;
         if area.width as usize > right_len + self.left_text.chars().count() + 4 {
-            renderer.move_to(area.x + area.width - right_len as u16, area.y);
-            renderer.print(&format!(" {} ", self.right_text));
+            renderer.move_to(area.x + area.width - right_len as u16, area.y)?;
+            renderer.print(&format!(" {} ", self.right_text))?;
         }
 
-        renderer.reset_colors();
+        renderer.reset_colors()?;
+        Ok(())
     }
 }

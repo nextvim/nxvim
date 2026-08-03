@@ -8,41 +8,42 @@ use crate::rect::Rect;
 use crate::types::Color;
 
 pub trait Renderer {
-    fn move_to(&mut self, x: u16, y: u16);
-    fn print(&mut self, text: &str);
-    fn set_fg(&mut self, color: Color);
-    fn set_bg(&mut self, color: Color);
-    fn reset_colors(&mut self);
+    fn move_to(&mut self, x: u16, y: u16) -> std::io::Result<()>;
+    fn print(&mut self, text: &str) -> std::io::Result<()>;
+    fn set_fg(&mut self, color: Color) -> std::io::Result<()>;
+    fn set_bg(&mut self, color: Color) -> std::io::Result<()>;
+    fn reset_colors(&mut self) -> std::io::Result<()>;
 
-    fn draw_rect(&mut self, rect: Rect) {
-        self.move_to(rect.x, rect.y);
-        self.print("┌");
+    fn draw_rect(&mut self, rect: Rect) -> std::io::Result<()> {
+        self.move_to(rect.x, rect.y)?;
+        self.print("┌")?;
         if rect.width > 2 {
-            self.print(&"─".repeat(rect.width as usize - 2));
+            self.print(&"─".repeat(rect.width as usize - 2))?;
         }
         if rect.width > 1 {
-            self.print("┐");
+            self.print("┐")?;
         }
 
         for y in 1..rect.height.saturating_sub(1) {
-            self.move_to(rect.x, rect.y + y);
-            self.print("│");
+            self.move_to(rect.x, rect.y + y)?;
+            self.print("│")?;
             if rect.width > 1 {
-                self.move_to(rect.x + rect.width - 1, rect.y + y);
-                self.print("│");
+                self.move_to(rect.x + rect.width - 1, rect.y + y)?;
+                self.print("│")?;
             }
         }
 
         if rect.height > 1 {
-            self.move_to(rect.x, rect.y + rect.height - 1);
-            self.print("└");
+            self.move_to(rect.x, rect.y + rect.height - 1)?;
+            self.print("└")?;
             if rect.width > 2 {
-                self.print(&"─".repeat(rect.width as usize - 2));
+                self.print(&"─".repeat(rect.width as usize - 2))?;
             }
             if rect.width > 1 {
-                self.print("┘");
+                self.print("┘")?;
             }
         }
+        Ok(())
     }
 }
 
@@ -131,14 +132,15 @@ impl BufferedRenderer {
 }
 
 impl Renderer for BufferedRenderer {
-    fn move_to(&mut self, x: u16, y: u16) {
+    fn move_to(&mut self, x: u16, y: u16) -> std::io::Result<()> {
         self.cursor_x = x;
         self.cursor_y = y;
         self.final_cursor_x = x;
         self.final_cursor_y = y;
+        Ok(())
     }
 
-    fn print(&mut self, text: &str) {
+    fn print(&mut self, text: &str) -> std::io::Result<()> {
         for c in text.chars() {
             self.current.set_cell(
                 self.cursor_x,
@@ -151,18 +153,22 @@ impl Renderer for BufferedRenderer {
             );
             self.cursor_x += 1;
         }
+        Ok(())
     }
 
-    fn set_fg(&mut self, color: Color) {
+    fn set_fg(&mut self, color: Color) -> std::io::Result<()> {
         self.current_fg = color;
+        Ok(())
     }
 
-    fn set_bg(&mut self, color: Color) {
+    fn set_bg(&mut self, color: Color) -> std::io::Result<()> {
         self.current_bg = color;
+        Ok(())
     }
 
-    fn reset_colors(&mut self) {
+    fn reset_colors(&mut self) -> std::io::Result<()> {
         self.current_fg = Color::Reset;
         self.current_bg = Color::Reset;
+        Ok(())
     }
 }

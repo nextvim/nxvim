@@ -15,7 +15,12 @@ pub trait UIContext {
 }
 
 pub trait View {
-    fn draw(&self, area: Rect, context: &dyn UIContext, renderer: &mut dyn Renderer);
+    fn draw(
+        &self,
+        area: Rect,
+        context: &dyn UIContext,
+        renderer: &mut dyn Renderer,
+    ) -> std::io::Result<()>;
     fn cursor_screen_pos(&self, _area: Rect, _context: &dyn UIContext) -> Option<(u16, u16)> {
         None
     }

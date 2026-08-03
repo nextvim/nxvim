@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
 
     loop {
         // Draw to buffer
-        ui.draw(&context, &mut buffered_renderer);
+        ui.draw(&context, &mut buffered_renderer)?;
 
         // Flush buffer to stdout
         buffered_renderer.flush(&mut stdout)?;

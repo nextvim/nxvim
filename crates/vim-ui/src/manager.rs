@@ -227,10 +227,14 @@ impl Ui {
         self.focus_manager.navigate(direction, &self.cached_layout)
     }
 
-    pub fn draw(&mut self, context: &dyn UIContext, renderer: &mut dyn Renderer) {
+    pub fn draw(
+        &mut self,
+        context: &dyn UIContext,
+        renderer: &mut dyn Renderer,
+    ) -> std::io::Result<()> {
         self.update_layout();
         for &(id, rect) in &self.cached_layout.windows {
-            self.draw_window(id, rect, context, renderer);
+            self.draw_window(id, rect, context, renderer)?;
         }
 
         let floating_windows = self.overlay_manager.sorted_floating_windows();
@@ -260,13 +264,14 @@ impl Ui {
                     &self.cached_layout,
                     cursor_pos,
                 );
-                self.draw_window(id, rect, context, renderer);
+                self.draw_window(id, rect, context, renderer)?;
             }
         }
 
         if let Some((x, y)) = cursor_pos {
-            renderer.move_to(x, y);
+            renderer.move_to(x, y)?;
         }
+        Ok(())
     }
 
     pub fn dispatch_event(&mut self, event: &UiEvent, context: &mut dyn UIContext) -> EventResult {
@@ -415,7 +420,7 @@ impl Ui {
         rect: Rect,
         context: &dyn UIContext,
         renderer: &mut dyn Renderer,
-    ) {
+    ) -> std::io::Result<()> {
         let window = &self.window_store.get(id).unwrap();
         let is_focused = self.focus_manager.focused_id() == id;
         if window.draws_border() {
@@ -438,10 +443,10 @@ impl Ui {
                 }
             }
 
-            renderer.set_fg(border_fg);
-            renderer.set_bg(border_bg);
-            renderer.draw_rect(rect);
-            renderer.reset_colors();
+            renderer.set_fg(border_fg)?;
+            renderer.set_bg(border_bg)?;
+            renderer.draw_rect(rect)?;
+            renderer.reset_colors()?;
 
             if !window.title().is_empty() {
                 let max_width = rect.width.saturating_sub(4) as usize;
@@ -466,11 +471,11 @@ impl Ui {
                         }
                     }
 
-                    renderer.set_fg(title_fg);
-                    renderer.set_bg(title_bg);
-                    renderer.move_to(rect.x + 2, rect.y);
-                    renderer.print(&format!(" {title} "));
-                    renderer.reset_colors();
+                    renderer.set_fg(title_fg)?;
+                    renderer.set_bg(title_bg)?;
+                    renderer.move_to(rect.x + 2, rect.y)?;
+                    renderer.print(&format!(" {title} "))?;
+                    renderer.reset_colors()?;
                 }
             }
         }
@@ -481,8 +486,9 @@ impl Ui {
             } else {
                 rect
             };
-            view.draw(view_rect, context, renderer);
+            view.draw(view_rect, context, renderer)?;
         }
+        Ok(())
     }
 }
 

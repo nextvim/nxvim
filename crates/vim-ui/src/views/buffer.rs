@@ -23,7 +23,12 @@ impl BufferView {
 }
 
 impl View for BufferView {
-    fn draw(&self, area: Rect, context: &dyn UIContext, renderer: &mut dyn Renderer) {
+    fn draw(
+        &self,
+        area: Rect,
+        context: &dyn UIContext,
+        renderer: &mut dyn Renderer,
+    ) -> std::io::Result<()> {
         let margin = if self.show_line_numbers { 4 } else { 0 };
 
         let mut normal_fg = Color::Reset;
@@ -58,52 +63,52 @@ impl View for BufferView {
             }
         }
 
-        renderer.set_bg(normal_bg);
-        renderer.set_fg(normal_fg);
+        renderer.set_bg(normal_bg)?;
+        renderer.set_fg(normal_fg)?;
 
         if let Some(model) = context.get_buffer_model(self.buffer_id) {
             let total_lines = model.lines.len();
             for i in 0..area.height as usize {
-                renderer.move_to(area.x, area.y + i as u16);
+                renderer.move_to(area.x, area.y + i as u16)?;
                 let doc_row = i + self.scroll_row;
 
                 if doc_row < total_lines {
                     if self.show_line_numbers {
-                        renderer.set_fg(line_nr_fg);
-                        renderer.set_bg(line_nr_bg);
-                        renderer.print(&format!("{:3} ", doc_row + 1));
-                        renderer.set_bg(normal_bg);
-                        renderer.set_fg(normal_fg);
+                        renderer.set_fg(line_nr_fg)?;
+                        renderer.set_bg(line_nr_bg)?;
+                        renderer.print(&format!("{:3} ", doc_row + 1))?;
+                        renderer.set_bg(normal_bg)?;
+                        renderer.set_fg(normal_fg)?;
                     }
 
                     if let Some(line) = model.lines.get_line(doc_row) {
                         let max_width = area.width.saturating_sub(margin) as usize;
                         let scrolled_line: String = line.chars().skip(self.scroll_col).collect();
                         let content: String = scrolled_line.chars().take(max_width).collect();
-                        renderer.print(&content);
+                        renderer.print(&content)?;
                         let remaining = (area.width as usize)
                             .saturating_sub(margin as usize)
                             .saturating_sub(content.chars().count());
                         if remaining > 0 {
-                            renderer.print(&" ".repeat(remaining));
+                            renderer.print(&" ".repeat(remaining))?;
                         }
                     }
                 } else {
                     // Empty lines below buffer content (Vim-style '~' symbols)
                     if self.show_line_numbers {
-                        renderer.set_fg(line_nr_fg);
-                        renderer.set_bg(line_nr_bg);
-                        renderer.print("~   ");
-                        renderer.set_bg(normal_bg);
-                        renderer.set_fg(normal_fg);
+                        renderer.set_fg(line_nr_fg)?;
+                        renderer.set_bg(line_nr_bg)?;
+                        renderer.print("~   ")?;
+                        renderer.set_bg(normal_bg)?;
+                        renderer.set_fg(normal_fg)?;
                     } else {
-                        renderer.print("~");
+                        renderer.print("~")?;
                     }
                     let remaining = (area.width as usize)
                         .saturating_sub(margin as usize)
                         .saturating_sub(if self.show_line_numbers { 0 } else { 1 });
                     if remaining > 0 {
-                        renderer.print(&" ".repeat(remaining));
+                        renderer.print(&" ".repeat(remaining))?;
                     }
                 }
             }
@@ -117,10 +122,11 @@ impl View for BufferView {
                 {
                     let x = area.x + margin + (cursor_col - self.scroll_col) as u16;
                     let y = area.y + (cursor_row - self.scroll_row) as u16;
-                    renderer.move_to(x, y);
+                    renderer.move_to(x, y)?;
                 }
             }
         }
+        Ok(())
     }
 
     fn cursor_screen_pos(&self, area: Rect, context: &dyn UIContext) -> Option<(u16, u16)> {
