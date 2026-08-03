@@ -1,5 +1,5 @@
 use crate::{BufferError, BufferSnapshot, ByteOffset, SelectionId, TextRange};
-use text::{Anchor, Selection};
+use text::{Anchor, Selection, SelectionGoal};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SelectionKind {
@@ -25,6 +25,26 @@ pub struct VimSelection {
 }
 
 impl VimSelection {
+    pub fn caret(
+        id: SelectionId,
+        snapshot: &BufferSnapshot,
+        offset: ByteOffset,
+    ) -> Result<Self, BufferError> {
+        let offset = snapshot.validate_offset(offset)?;
+        let anchor = snapshot.as_inner().anchor_before(offset);
+        Ok(Self::new(
+            Selection {
+                id: id.get(),
+                start: anchor,
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            },
+            SelectionKind::Characterwise,
+            false,
+        ))
+    }
+
     pub fn new(inner: Selection<Anchor>, kind: SelectionKind, inclusive: bool) -> Self {
         Self {
             inner,
@@ -43,6 +63,15 @@ impl VimSelection {
 
     pub fn head(&self) -> Anchor {
         self.inner.head()
+    }
+
+    pub fn head_offset(&self, snapshot: &BufferSnapshot) -> Result<ByteOffset, BufferError> {
+        if !snapshot.as_inner().can_resolve(&self.inner.head()) {
+            return Err(BufferError::InvalidSelectionSet);
+        }
+        Ok(ByteOffset(
+            snapshot.as_inner().offset_for_anchor(&self.inner.head()),
+        ))
     }
 
     pub fn kind(&self) -> SelectionKind {

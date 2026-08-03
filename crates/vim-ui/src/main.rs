@@ -5,13 +5,56 @@ use crossterm::{
 };
 use std::collections::HashMap;
 use std::io::{Write, stdout};
-use vim_ui::*;
+use vim_ui::{
+    colorscheme::{ColorScheme, Metadata, Style},
+    *,
+};
+
+fn create_tokyonight_scheme() -> ColorScheme {
+    let metadata = Metadata {
+        name: "tokyonight".to_string(),
+        description: Some("TokyoNight theme".to_string()),
+        author: Some("folke".to_string()),
+        r#type: Some("dark".to_string()),
+        github: Some("https://github.com/folke/tokyonight.nvim".to_string()),
+    };
+
+    let mut cs = ColorScheme::new(metadata);
+
+    let bg = Color::Rgb(26, 27, 38);
+    let fg = Color::Rgb(192, 202, 245);
+    let dark_bg = Color::Rgb(22, 22, 30);
+    let status_bg = Color::Rgb(30, 32, 48);
+    let comment = Color::Rgb(86, 95, 137);
+    let magenta = Color::Rgb(187, 154, 247);
+    let blue = Color::Rgb(122, 162, 247);
+
+    // Set basic colors
+    cs.background = Some(bg);
+    cs.foreground = Some(fg);
+    cs.cursor = Some(Color::Rgb(255, 0, 124));
+    cs.selection = Some(Color::Rgb(47, 51, 76));
+
+    // Populating highlight groups
+    cs.insert_style("Normal", Style::default().fg(fg).bg(bg));
+    cs.insert_style("LineNr", Style::default().fg(comment).bg(bg));
+    cs.insert_style("WinSeparator", Style::default().fg(magenta));
+    cs.insert_style("StatusLine", Style::default().fg(fg).bg(status_bg).bold());
+    cs.insert_style("StatusLineNC", Style::default().fg(comment).bg(status_bg));
+    cs.insert_style("TabLine", Style::default().fg(comment).bg(dark_bg));
+    cs.insert_style("TabLineSel", Style::default().fg(fg).bg(bg).bold());
+    cs.insert_style("TabLineFill", Style::default().bg(dark_bg));
+    cs.insert_style("Title", Style::default().fg(blue).bold());
+
+    cs
+}
 
 struct SimpleContext {
     buffers: HashMap<BufferId, Vec<String>>,
     cursor: BufferPosition,
     selections: Vec<Selection>,
     mode: EditorMode,
+    colorscheme: ColorScheme,
 }
 
 impl UIContext for SimpleContext {
@@ -32,6 +75,10 @@ impl UIContext for SimpleContext {
 
     fn get_active_buffer_id(&self) -> Option<BufferId> {
         Some(BufferId::new(2))
+    }
+
+    fn get_colorscheme(&self) -> Option<&ColorScheme> {
+        Some(&self.colorscheme)
     }
 }
 
@@ -70,6 +117,7 @@ fn main() -> anyhow::Result<()> {
         cursor: BufferPosition { row: 1, col: 4 },
         selections: vec![],
         mode: EditorMode::Normal,
+        colorscheme: create_tokyonight_scheme(),
     };
 
     // Initial setup
