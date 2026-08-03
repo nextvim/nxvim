@@ -1,36 +1,50 @@
-use crate::editor::Editor;
 use crate::editor::display::display_map::DisplayPoint;
+use crate::editor::{Editor, document::BufferText};
 use crate::services::search::TextSearch;
-use crate::ui::views::{View, vim};
-use std::io::Write;
+use crate::ui::colorscheme::ToCrossTerm;
+use crate::ui::layout::Rect;
+use crate::ui::views::View;
 use text::ToPoint;
 use vim_input::Mode;
-use vim_ui::Rect;
 
-pub struct TextView;
+use std::io::Write;
+
+use crossterm::{
+    cursor::MoveTo,
+    execute,
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+};
+
+pub struct TextView {}
 
 impl TextView {
     pub fn new() -> Self {
-        Self
+        TextView {}
     }
+}
 
-    fn build_model(
+impl TextView {
+    fn draw_textview<W: Write>(
         &self,
-        rect: Rect,
+        w: &mut W,
+        inner_rect: Rect,
         editor: &Editor,
-        buffer_manager: &crate::editor::buffers::BufferManager,
-        document: &crate::editor::document::Document,
+        buffer_manager: &mut crate::editor::buffers::BufferManager,
+        document: Option<&crate::editor::document::Document>,
         ui: &crate::ui::Ui,
-    ) -> vim_ui::TextViewModel {
+    ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>>
+    {
+        let mut cursor_pos = None;
+
+        let document = document.expect("TextView requires document view state");
         let buffer = buffer_manager.find(document).unwrap();
-        let display = document.display_map.snapshot();
-        let total_rows = display.row_count();
-        let end_row = (display.scroll_y + rect.height as u32).min(total_rows);
-        let gutter_width = if editor.show_line_numbers && document.show_gutter {
-            document.gutter_width
-        } else {
-            0
-        };
+
+        let display_snapshot = document.display_map.snapshot();
+        let doc_buffer = &buffer.buffer;
+        let row_count = display_snapshot.row_count();
+        let end_line = (display_snapshot.scroll_y + inner_rect.height as u32).min(row_count);
+
+        let gutter_width = document.gutter_width;
 
         let editor_fg = ui.theme_color("foreground", crossterm::style::Color::White);
         let editor_bg = ui.theme_color("background", crossterm::style::Color::Black);
@@ -39,173 +53,249 @@ impl TextView {
         let gutter_bg = ui.theme_color("gutter", editor_bg);
         let find_fg = ui.theme_color("find_highlight_foreground", editor_fg);
         let find_bg = ui.theme_color("find_highlight", selection_bg);
-        let default_style = style(editor_fg, editor_bg, None);
-        let selection_style = style(editor_fg, selection_bg, None);
-        let gutter_style = style(gutter_fg, gutter_bg, None);
 
-        let cursor_display_row = document.selections().first().map(|selection| {
-            display
-                .point_to_display_point(selection.head().to_point(&buffer.buffer))
+        let mut prev_line_number = -1;
+        let mut screen_row = inner_rect.y;
+
+        // Scrollbar metrics
+        let track_bg = gutter_bg;
+        let handle_bg = selection_bg;
+
+        let cursor_row = document.selections().first().map(|sel| {
+            display_snapshot
+                .point_to_display_point(sel.head().to_point(&buffer.buffer))
                 .row()
         });
-        let mut cursor = None;
-        let mut rows = Vec::with_capacity(rect.height as usize);
-        let mut previous_buffer_row = None;
+        let scrollbar = crate::ui::renderer::Scrollbar::new(
+            document.show_scrollbar,
+            inner_rect,
+            row_count,
+            display_snapshot.scroll_y,
+            cursor_row,
+        );
 
-        for display_row in display.scroll_y..end_row {
-            let buffer_row = display.buffer_row_for_display_row(display_row);
-            let kind = if previous_buffer_row == Some(buffer_row) {
-                vim_ui::DisplayRowKind::WrappedContinuation
-            } else {
-                vim_ui::DisplayRowKind::Buffer
-            };
-            let gutter = if gutter_width > 0 {
-                let text = if kind == vim_ui::DisplayRowKind::Buffer {
-                    format!("{:>width$} ", buffer_row + 1, width = gutter_width - 1)
-                } else {
-                    " ".repeat(gutter_width)
-                };
-                Some(vim_ui::GutterCell {
-                    text,
-                    style: gutter_style,
-                })
-            } else {
-                None
-            };
+        for row in display_snapshot.scroll_y..end_line {
+            {
+                execute!(w, MoveTo(inner_rect.x, screen_row)).unwrap();
 
-            let text = display.line_text(display_row) + " ";
-            let match_ranges = pattern_ranges(&text, document, editor);
-            let mut byte_column = 0usize;
-            let mut skipped = display.scroll_x as usize;
-            let content_width = (rect.width as usize).saturating_sub(gutter_width);
-            let mut used = 0usize;
-            let mut spans = Vec::new();
-
-            for (character_column, character) in text.chars().enumerate() {
-                let original = display
-                    .display_point_to_point(DisplayPoint::new(display_row, byte_column as u32));
-                byte_column += character.len_utf8();
-
-                let syntax_style = if editor.syntax {
-                    document.hl.render_row(original.row).and_then(|cache| {
-                        cache.styles.iter().find(|span| {
-                            original.column >= span.start && original.column < span.end
-                        })
-                    })
-                } else {
-                    None
-                };
-                let mut foreground = syntax_style
-                    .map(|span| span.style.color)
-                    .unwrap_or(editor_fg);
-                let mut background = editor_bg;
-                let in_match = match_ranges
-                    .iter()
-                    .any(|(start, end)| character_column >= *start && character_column < *end);
-                if in_match {
-                    foreground = find_fg;
-                    background = find_bg;
-                }
-
-                let (selected, selected_line, at_cursor) = document.selections().is_selected(
-                    original.row,
-                    original.column,
-                    &buffer.buffer,
-                );
-                if (selected && editor.mode != Mode::Command)
-                    || (selected_line && editor.mode == Mode::VisualLine)
-                    || at_cursor
-                {
-                    background = selection_bg;
-                }
-
-                let expanded = if character == '\t' {
-                    "    ".to_string()
-                } else {
-                    character.to_string()
-                };
-                for cell in expanded.chars() {
-                    if skipped > 0 {
-                        skipped -= 1;
-                        continue;
+                // line number
+                if editor.show_line_numbers && document.show_gutter {
+                    let line_number = display_snapshot.buffer_row_for_display_row(row);
+                    execute!(w, crossterm::style::SetForegroundColor(gutter_fg)).unwrap();
+                    execute!(w, crossterm::style::SetBackgroundColor(gutter_bg)).unwrap();
+                    if prev_line_number != line_number as i32 {
+                        print!("{:>width$} ", (line_number + 1), width = gutter_width - 1);
+                    } else {
+                        print!("{}", " ".repeat(gutter_width));
                     }
-                    if used >= content_width {
+                    prev_line_number = line_number as i32;
+                }
+
+                let text = display_snapshot.line_text(row) + " ";
+
+                let mut match_ranges = Vec::<(usize, usize)>::new();
+                let mut match_idx = 0usize;
+                if document.show_pattern_match {
+                    let mut matches = Vec::<(usize, usize, &str)>::new();
+                    if let Some(ref regex) = editor.search_regex {
+                        matches = text.as_str().find_pattern(regex);
+                    }
+
+                    // Convert byte-indexed matches into character-indexed ranges for rendering
+                    match_ranges = matches
+                        .iter()
+                        .map(|(byte_start, byte_len, _)| {
+                            let byte_end = *byte_start + *byte_len;
+                            let start_char = text[..*byte_start].chars().count();
+                            let end_char = text[..byte_end].chars().count();
+                            (start_char, end_char)
+                        })
+                        .collect();
+                }
+
+                let mut x_scroll = display_snapshot.scroll_x;
+                let mut cols_remaining = (inner_rect.width as usize).saturating_sub(gutter_width);
+
+                let mut curr_x = inner_rect.x + gutter_width as u16;
+
+                let mut byte_column = 0;
+                for (column, ch) in text.chars().enumerate() {
+                    let orig_point = display_snapshot
+                        .display_point_to_point(DisplayPoint::new(row, byte_column as u32));
+                    byte_column += ch.len_utf8();
+
+                    // Determine if current column is within a search match range
+                    let mut in_match = false;
+
+                    while match_idx < match_ranges.len() && column >= match_ranges[match_idx].1 {
+                        match_idx += 1;
+                    }
+                    if match_idx < match_ranges.len() {
+                        let (s, e) = match_ranges[match_idx];
+                        if column >= s && column < e {
+                            in_match = true;
+                        }
+                    }
+
+                    let mut fg = editor_fg;
+                    let mut bg = editor_bg;
+
+                    if editor.syntax {
+                        if let Some(style_cache) = document.hl.render_row(orig_point.row) {
+                            if let Some(span) = style_cache.styles.iter().find(|span| {
+                                orig_point.column >= span.start && orig_point.column < span.end
+                            }) {
+                                fg = span.style.color;
+                            }
+                        }
+                    }
+
+                    // Apply search match background if not in a selection
+                    if in_match {
+                        fg = find_fg;
+                        bg = find_bg;
+                    }
+
+                    let (selected, mut selected_line, at_cursor) = document
+                        .selections()
+                        .is_selected(orig_point.row, orig_point.column, &doc_buffer);
+                    if selected && (editor.mode != Mode::Command) {
+                        bg = selection_bg;
+                    }
+                    selected_line = selected_line && editor.mode == Mode::VisualLine;
+                    if selected_line {
+                        bg = selection_bg;
+                    }
+
+                    if at_cursor {
+                        bg = selection_bg;
+                        cursor_pos = Some((curr_x, screen_row));
+                    }
+
+                    if x_scroll > 0 {
+                        x_scroll = x_scroll.saturating_sub(1);
+                    } else {
+                        let is_scrollbar = scrollbar.is_scrollbar(curr_x, screen_row);
+                        let bg_color = if is_scrollbar {
+                            if scrollbar.is_handle(curr_x, screen_row) {
+                                handle_bg
+                            } else {
+                                track_bg
+                            }
+                        } else {
+                            bg
+                        };
+
+                        execute!(w, crossterm::style::SetForegroundColor(fg)).unwrap();
+                        execute!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
+
+                        match ch {
+                            '\t' => {
+                                for _i in 0..4 {
+                                    // Tab size of 4
+                                    let is_scrollbar_tab =
+                                        scrollbar.is_scrollbar(curr_x, screen_row);
+                                    let cell_bg = if is_scrollbar_tab {
+                                        if scrollbar.is_handle(curr_x, screen_row) {
+                                            handle_bg
+                                        } else {
+                                            track_bg
+                                        }
+                                    } else if at_cursor
+                                        && editor.mode != Mode::Insert
+                                        && editor.mode != Mode::Command
+                                    {
+                                        editor_bg
+                                    } else {
+                                        bg
+                                    };
+                                    execute!(w, crossterm::style::SetBackgroundColor(cell_bg))
+                                        .unwrap();
+                                    print!(" ");
+                                    curr_x += 1;
+                                    cols_remaining = cols_remaining.saturating_sub(1);
+                                }
+                            }
+                            _ => {
+                                print!("{}", ch);
+                                curr_x += 1;
+                                cols_remaining = cols_remaining.saturating_sub(1);
+                            }
+                        }
+                    }
+
+                    if cols_remaining <= 0 {
                         break;
                     }
-                    if at_cursor && cursor.is_none() {
-                        cursor = Some(vim_ui::TextCursor {
-                            position: vim_ui::DisplayPosition {
-                                row: display_row - display.scroll_y,
-                                column: (gutter_width + used) as u32,
-                            },
-                            shape: match editor.mode {
-                                Mode::Insert | Mode::Command => vim_ui::CursorShape::Bar,
-                                _ => vim_ui::CursorShape::Block,
-                            },
-                            visible: true,
-                        });
-                    }
-                    let attributes = syntax_style.map(|span| &span.style);
-                    spans.push(vim_ui::TextSpan::new(
-                        cell.to_string(),
-                        style(foreground, background, attributes),
-                    ));
-                    used += 1;
                 }
-                if used >= content_width {
+
+                for x in 0..cols_remaining {
+                    let is_scrollbar = scrollbar.is_scrollbar(curr_x, screen_row);
+                    let bg_color = if is_scrollbar {
+                        if scrollbar.is_handle(curr_x, screen_row) {
+                            handle_bg
+                        } else {
+                            track_bg
+                        }
+                    } else {
+                        editor_bg
+                    };
+                    execute!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
+                    print!(" ");
+                    curr_x += 1;
+                }
+
+                screen_row += 1;
+                if screen_row >= inner_rect.y + inner_rect.height {
                     break;
                 }
             }
-
-            rows.push(vim_ui::DisplayRow {
-                buffer_row: Some(buffer_row),
-                kind,
-                gutter,
-                spans,
-                fill_style: default_style,
-            });
-            previous_buffer_row = Some(buffer_row);
         }
 
-        while rows.len() < rect.height as usize {
-            rows.push(vim_ui::DisplayRow {
-                buffer_row: None,
-                kind: vim_ui::DisplayRowKind::Virtual,
-                gutter: (gutter_width > 0).then(|| vim_ui::GutterCell {
-                    text: " ".repeat(gutter_width),
-                    style: gutter_style,
-                }),
-                spans: Vec::new(),
-                fill_style: default_style,
-            });
+        while screen_row < inner_rect.y + inner_rect.height {
+            execute!(w, MoveTo(inner_rect.x, screen_row)).unwrap();
+
+            // Gutter/line numbers area for empty lines
+            if editor.show_line_numbers && document.show_gutter {
+                execute!(w, crossterm::style::SetBackgroundColor(gutter_bg)).unwrap();
+                print!("{}", " ".repeat(gutter_width));
+            }
+
+            // The rest of the line
+            let mut curr_x = inner_rect.x + gutter_width as u16;
+            let mut cols_remaining = (inner_rect.width as usize).saturating_sub(gutter_width);
+
+            for _ in 0..cols_remaining {
+                let is_scrollbar = scrollbar.is_scrollbar(curr_x, screen_row);
+                let bg_color = if is_scrollbar {
+                    if scrollbar.is_handle(curr_x, screen_row) {
+                        handle_bg
+                    } else {
+                        track_bg
+                    }
+                } else {
+                    editor_bg
+                };
+                execute!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
+                print!(" ");
+                curr_x += 1;
+            }
+
+            screen_row += 1;
         }
 
-        let scrollbar = document.show_scrollbar.then(|| vim_ui::ScrollbarModel {
-            total_rows: total_rows.max(1),
-            first_visible_row: display.scroll_y.min(total_rows.saturating_sub(1)),
-            visible_rows: (rect.height as u32).min(total_rows.max(1)),
-            cursor_row: cursor_display_row.filter(|row| *row < total_rows),
-            track_style: style(editor_fg, gutter_bg, None),
-            thumb_style: selection_style,
-            cursor_style: Some(selection_style),
-        });
-
-        vim_ui::TextViewModel {
-            viewport_width: rect.width,
-            viewport_height: rect.height,
-            rows,
-            selections: Vec::new(),
-            cursor,
-            scrollbar,
-            default_style,
-        }
+        let cursor_shape = match editor.mode {
+            Mode::Insert | Mode::Command => Some(crate::ui::CursorShape::Line),
+            _ => Some(crate::ui::CursorShape::Block),
+        };
+        Ok(cursor_pos.map(|(x, y)| (x, y, cursor_shape)))
     }
 }
 
 impl View for TextView {
     fn draw(
         &self,
-        writer: &mut dyn Write,
+        mut w: &mut dyn Write,
         rect: Rect,
         editor: &Editor,
         buffer_manager: &mut crate::editor::buffers::BufferManager,
@@ -213,66 +303,6 @@ impl View for TextView {
         ui: &crate::ui::Ui,
     ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>>
     {
-        let document = document.expect("TextView requires document view state");
-        let model = self.build_model(rect, editor, buffer_manager, document, ui);
-        model.validate()?;
-        let cursor = model.cursor;
-        let window_id = vim_ui::WindowId::new(1);
-        let context = vim::ViewContext::new(ui.colorscheme()).with_text_model(window_id, model);
-        let view = vim_ui::TextView::new(window_id);
-        vim::draw(&view, writer, rect, &context)?;
-
-        Ok(cursor.filter(|cursor| cursor.visible).map(|cursor| {
-            (
-                rect.x + cursor.position.column as u16,
-                rect.y + cursor.position.row as u16,
-                Some(match cursor.shape {
-                    vim_ui::CursorShape::Block => crate::ui::CursorShape::Block,
-                    vim_ui::CursorShape::Bar => crate::ui::CursorShape::Line,
-                    vim_ui::CursorShape::Underline => crate::ui::CursorShape::Block,
-                }),
-            )
-        }))
-    }
-}
-
-fn pattern_ranges(
-    text: &str,
-    document: &crate::editor::document::Document,
-    editor: &Editor,
-) -> Vec<(usize, usize)> {
-    if !document.show_pattern_match {
-        return Vec::new();
-    }
-    editor
-        .search_regex
-        .as_ref()
-        .map(|regex| {
-            text.find_pattern(regex)
-                .into_iter()
-                .map(|(byte_start, byte_len, _)| {
-                    let byte_end = byte_start + byte_len;
-                    (
-                        text[..byte_start].chars().count(),
-                        text[..byte_end].chars().count(),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn style(
-    foreground: crossterm::style::Color,
-    background: crossterm::style::Color,
-    attributes: Option<&crate::ui::colorscheme::Style>,
-) -> vim_ui::Style {
-    vim_ui::Style {
-        fg: Some(vim::color(foreground)),
-        bg: Some(vim::color(background)),
-        bold: attributes.is_some_and(|style| style.bold),
-        italic: attributes.is_some_and(|style| style.italic),
-        underline: attributes.is_some_and(|style| style.underline),
-        strikethrough: attributes.is_some_and(|style| style.strikethrough),
+        self.draw_textview(&mut w, rect, editor, buffer_manager, document, ui)
     }
 }

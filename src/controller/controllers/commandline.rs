@@ -4,7 +4,8 @@ use crate::editor::Editor;
 use crate::services::background;
 use crate::ui::Ui;
 use vim_input::Action;
-use vim_ui::Rect;
+// use vim_ui::Rect;
+use crate::ui::layout::Rect;
 
 pub struct CommandLineController {
     controller: crate::controller::controllers::textview::TextViewController,

@@ -140,32 +140,32 @@ impl Controller {
                     }
                 }
                 actions::Action::FocusLeftWindow => {
-                    if let Some(nid) = ui.find_neighbor(vim_ui::NavigationDirection::Left) {
+                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Left) {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusDownWindow => {
-                    if let Some(nid) = ui.find_neighbor(vim_ui::NavigationDirection::Down) {
+                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Down) {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusUpWindow => {
-                    if let Some(nid) = ui.find_neighbor(vim_ui::NavigationDirection::Up) {
+                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Up) {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusRightWindow => {
-                    if let Some(nid) = ui.find_neighbor(vim_ui::NavigationDirection::Right) {
+                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Right) {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::SplitHorizontal { file_path } => {
                     ui.split_focused_window(
-                        vim_ui::SplitAxis::Rows,
+                        crate::ui::layout::SplitDirection::Vertical,
                         file_path.clone(),
                         buffer_manager,
                     );
@@ -173,7 +173,7 @@ impl Controller {
                 }
                 actions::Action::SplitVertical { file_path } => {
                     ui.split_focused_window(
-                        vim_ui::SplitAxis::Columns,
+                        crate::ui::layout::SplitDirection::Horizontal,
                         file_path.clone(),
                         buffer_manager,
                     );
@@ -190,19 +190,19 @@ impl Controller {
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeLeft => {
-                    ui.adjust_focused_window_size(vim_ui::SplitAxis::Columns, -0.05);
+                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Horizontal, -0.05);
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeRight => {
-                    ui.adjust_focused_window_size(vim_ui::SplitAxis::Columns, 0.05);
+                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Horizontal, 0.05);
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeUp => {
-                    ui.adjust_focused_window_size(vim_ui::SplitAxis::Rows, 0.05);
+                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Vertical, 0.05);
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeDown => {
-                    ui.adjust_focused_window_size(vim_ui::SplitAxis::Rows, -0.05);
+                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Vertical, -0.05);
                     editor.should_redraw = true;
                 }
                 actions::Action::Command(command_string) => {
