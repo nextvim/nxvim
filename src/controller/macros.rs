@@ -1,5 +1,5 @@
-use crate::controller::actions::Action;
 use std::collections::HashMap;
+use vim_input::Action;
 
 pub struct MacroRecorder {
     macros: HashMap<String, Vec<Action>>,

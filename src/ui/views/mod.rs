@@ -1,12 +1,11 @@
-
 pub mod statusbar;
 pub mod tabs;
 pub mod textview;
 mod vim;
 
 use crate::editor::Editor;
-use vim_ui::Rect;
 use std::io::Write;
+use vim_ui::Rect;
 
 pub trait View {
     fn draw(

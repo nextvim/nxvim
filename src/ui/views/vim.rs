@@ -1,6 +1,6 @@
 use crate::ui::colorscheme::ColorScheme as LegacyColorScheme;
-use vim_ui::Rect;
 use std::io::Write;
+use vim_ui::Rect;
 use vim_ui::{BufferId, BufferViewModel, Color, ColorScheme, Metadata, Style, UIContext, View};
 
 pub struct ViewContext {

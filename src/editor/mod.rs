@@ -9,7 +9,7 @@ use crate::editor::document::Document;
 use crate::services::Services;
 use crate::ui::colorscheme::ColorScheme;
 
-use controller::actions::{Action, Mode};
+use vim_input::{Action, Mode};
 
 pub struct Editor {
     pub mode: Mode,
@@ -58,7 +58,7 @@ impl Editor {
         &mut self,
         ui: &mut crate::ui::Ui,
         buffer_manager: &mut BufferManager,
-        action: &controller::actions::Action,
+        action: &Action,
     ) {
         let active_win_id = ui.focused_window_id().unwrap();
         let window = ui.window_mut(active_win_id).unwrap();
