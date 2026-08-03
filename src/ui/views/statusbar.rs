@@ -51,7 +51,6 @@ impl StatusBarView {
             }
         }
 
-        /*
         let mut autocomplete_str = String::new();
         if let Some(doc) = _doc {
             let anchor = doc.selections().last().unwrap().head();
@@ -147,10 +146,6 @@ impl StatusBarView {
                 last_action_str, scope_str, indexer_status, autocomplete_str
             )
         };
-        */
-
-        let left_part = "";
-        let pending_str = "";
 
         let total_len = left_part.len() + pending_str.len();
         let remaining = rect.width.saturating_sub(total_len as u16);

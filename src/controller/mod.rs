@@ -8,14 +8,17 @@ pub mod macros;
 
 use crate::controller::controllers::ViewController;
 use crate::controller::controllers::textview::TextViewController;
+use crate::scripting::script::execute_source;
 use crate::services::background;
 use crate::ui::views::View;
 use crate::{editor, ui::Ui, ui::window};
+use vim_script::runtime::{Scheduler, Value, Vm};
+use vim_script::source::{Diagnostic, Severity, SourceMap};
 
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use vim_input as actions;
 use vim_input::{Keymap, ResolveOutcome, Resolver};
 
@@ -47,6 +50,9 @@ pub struct Controller {
     keymap: Keymap,
     pub command: command::Command,
 
+    globals: HashMap<String, Value>,
+    sources: SourceMap,
+
     pub macro_recorder: macros::MacroRecorder,
     pending_actions: VecDeque<PendingAction>,
 }
@@ -57,6 +63,9 @@ impl Controller {
             input: Resolver::new(actions::Mode::Normal),
             keymap: Keymap::vim_defaults(),
             command: command::Command::new(),
+
+            globals: HashMap::new(),
+            sources: SourceMap::default(),
 
             macro_recorder: macros::MacroRecorder::new(),
             pending_actions: VecDeque::new(),
@@ -71,9 +80,9 @@ impl Controller {
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         match event {
             Event::Key(key_event) => {
-                if self.input.mode() != editor.mode {
-                    self.input.set_mode(editor.mode);
-                }
+                // if self.input.mode() != editor.mode {
+                //     self.input.set_mode(editor.mode);
+                // }
 
                 if key_event.kind != KeyEventKind::Release {
                     if let Some(key) = crossterm_input::key_from_crossterm(&key_event) {
@@ -92,22 +101,17 @@ impl Controller {
                 }
 
                 editor.pending_keys = self.input.pending().to_string();
-                // match (key_event.code, key_event.modifiers) {
-                //     (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                //         return Ok(ControllerResult::Exit);
-                //     }
-                //     _ => {}
-                // }
             }
             Event::Resize(_, _) => {
                 editor.should_redraw = true;
             }
             _ => {}
         }
+
         Ok(ControllerResult::None)
     }
 
-    fn queue_action(&mut self, action: actions::Action) {
+    pub fn queue_action(&mut self, action: actions::Action) {
         self.pending_actions.push_back(PendingAction::host(action));
     }
 
@@ -116,12 +120,21 @@ impl Controller {
         editor: &mut crate::editor::Editor,
         buffer_manager: &mut crate::editor::buffers::BufferManager,
         ui: &mut crate::ui::Ui,
+        mut script: Option<&mut crate::scripting::script::ScriptRuntime>,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         let mut last_result = ControllerResult::None;
 
         while let Some(pending) = self.pending_actions.pop_front() {
             let PendingAction { action, register } = pending;
             match &action {
+                actions::Action::Clear => {
+                    self.input.set_mode(editor.mode);
+                    if let Some(last_focused_window_id) = ui.last_focused_window_id() {
+                        ui.focus_window(last_focused_window_id);
+                        editor.should_redraw = true;
+                        editor.mode = actions::Mode::Normal;
+                    }
+                }
                 actions::Action::BeginMacro { register } => {
                     self.macro_recorder.begin(register.clone());
                 }
@@ -140,25 +153,32 @@ impl Controller {
                     }
                 }
                 actions::Action::FocusLeftWindow => {
-                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Left) {
+                    if let Some(nid) =
+                        ui.find_neighbor(crate::ui::layout::NavigationDirection::Left)
+                    {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusDownWindow => {
-                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Down) {
+                    if let Some(nid) =
+                        ui.find_neighbor(crate::ui::layout::NavigationDirection::Down)
+                    {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusUpWindow => {
-                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Up) {
+                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Up)
+                    {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
                 }
                 actions::Action::FocusRightWindow => {
-                    if let Some(nid) = ui.find_neighbor(crate::ui::layout::NavigationDirection::Right) {
+                    if let Some(nid) =
+                        ui.find_neighbor(crate::ui::layout::NavigationDirection::Right)
+                    {
                         ui.set_focused_window(nid);
                         editor.should_redraw = true;
                     }
@@ -190,27 +210,57 @@ impl Controller {
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeLeft => {
-                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Horizontal, -0.05);
+                    ui.adjust_focused_window_size(
+                        crate::ui::layout::SplitDirection::Horizontal,
+                        -0.05,
+                    );
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeRight => {
-                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Horizontal, 0.05);
+                    ui.adjust_focused_window_size(
+                        crate::ui::layout::SplitDirection::Horizontal,
+                        0.05,
+                    );
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeUp => {
-                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Vertical, 0.05);
+                    ui.adjust_focused_window_size(
+                        crate::ui::layout::SplitDirection::Vertical,
+                        0.05,
+                    );
                     editor.should_redraw = true;
                 }
                 actions::Action::ResizeDown => {
-                    ui.adjust_focused_window_size(crate::ui::layout::SplitDirection::Vertical, -0.05);
+                    ui.adjust_focused_window_size(
+                        crate::ui::layout::SplitDirection::Vertical,
+                        -0.05,
+                    );
                     editor.should_redraw = true;
                 }
                 actions::Action::Command(command_string) => {
-                    self.command.set(command_string);
-                    if let Some(result) = self.command.ex(ui, editor, buffer_manager) {
-                        editor.should_redraw = true;
-                        last_result = result;
+                    let mut executed_via_script = false;
+                    if let Some(script_runtime) = script.as_mut() {
+                        let cmd_name = command_string.split_whitespace().next().unwrap_or("");
+                        if script_runtime.is_command_registered(cmd_name) {
+                            if let Some(host) = script_runtime.host_runtime() {
+                                execute_source(
+                                    command_string,
+                                    &mut self.globals,
+                                    host,
+                                    &mut self.sources,
+                                );
+                                executed_via_script = true;
+                            }
+                        }
                     }
+
+                    // if !executed_via_script {
+                    //     self.command.set(command_string);
+                    //     if let Some(result) = self.command.ex(ui, editor, buffer_manager) {
+                    //         editor.should_redraw = true;
+                    //         last_result = result;
+                    //     }
+                    // }
                 }
                 _ => {
                     self.macro_recorder.update(&action);
@@ -223,6 +273,8 @@ impl Controller {
                         | actions::Action::SetToCommandSearchBackward => {
                             ui.focus_window(crate::ui::WindowId::CommandLine as usize);
                             editor.should_redraw = true;
+                            editor.mode = actions::Mode::Command;
+                            self.input.set_mode(actions::Mode::Insert);
                         }
                         actions::Action::SearchForward { .. }
                         | actions::Action::SearchBackward { .. } => {
