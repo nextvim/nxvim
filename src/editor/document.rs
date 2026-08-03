@@ -1,8 +1,8 @@
-use crate::controller::actions::{Action, Mode};
 use crate::editor::Editor;
 use crate::editor::display::{self};
 use crate::editor::selections::{Motions, SelectionCollection};
 use crate::services::clipboard::ClipboardKind;
+use vim_input::{Action, Mode};
 
 use crate::editor::display::display_map::DisplayMap;
 use crate::editor::display::highlight::Highlights;

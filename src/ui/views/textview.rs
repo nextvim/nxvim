@@ -1,11 +1,11 @@
-use crate::controller::actions::Mode;
 use crate::editor::Editor;
 use crate::editor::display::display_map::DisplayPoint;
 use crate::services::search::TextSearch;
-use vim_ui::Rect;
 use crate::ui::views::{View, vim};
 use std::io::Write;
 use text::ToPoint;
+use vim_input::Mode;
+use vim_ui::Rect;
 
 pub struct TextView;
 
