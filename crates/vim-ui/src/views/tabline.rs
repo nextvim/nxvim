@@ -15,7 +15,12 @@ impl TabLineView {
 }
 
 impl View for TabLineView {
-    fn draw(&self, area: Rect, context: &dyn UIContext, renderer: &mut dyn Renderer) {
+    fn draw(
+        &self,
+        area: Rect,
+        context: &dyn UIContext,
+        renderer: &mut dyn Renderer,
+    ) -> std::io::Result<()> {
         let mut fill_bg = Color::DarkGrey;
         let mut fill_fg = Color::White;
 
@@ -64,25 +69,25 @@ impl View for TabLineView {
             }
         }
 
-        renderer.set_bg(fill_bg);
-        renderer.set_fg(fill_fg);
+        renderer.set_bg(fill_bg)?;
+        renderer.set_fg(fill_fg)?;
 
-        renderer.move_to(area.x, area.y);
-        renderer.print(&" ".repeat(area.width as usize));
+        renderer.move_to(area.x, area.y)?;
+        renderer.print(&" ".repeat(area.width as usize))?;
 
         let mut x = area.x;
         for (i, tab) in self.tabs.iter().enumerate() {
             if i == self.active_index {
-                renderer.set_bg(active_bg);
-                renderer.set_fg(active_fg);
+                renderer.set_bg(active_bg)?;
+                renderer.set_fg(active_fg)?;
             } else {
-                renderer.set_bg(inactive_bg);
-                renderer.set_fg(inactive_fg);
+                renderer.set_bg(inactive_bg)?;
+                renderer.set_fg(inactive_fg)?;
             }
 
             let text = format!(" {} ", tab);
-            renderer.move_to(x, area.y);
-            renderer.print(&text);
+            renderer.move_to(x, area.y)?;
+            renderer.print(&text)?;
             x += text.len() as u16;
 
             if x >= area.x + area.width {
@@ -90,6 +95,7 @@ impl View for TabLineView {
             }
         }
 
-        renderer.reset_colors();
+        renderer.reset_colors()?;
+        Ok(())
     }
 }
