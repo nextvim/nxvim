@@ -2,7 +2,7 @@
 
 `vim-input` is an editor-agnostic Vim input resolver. It consumes normalized key presses, keeps the small amount of state required by Vim's input grammar, and resolves key sequences defined by a `Keymap` into `Action` values.
 
-The initial implementation is extracted from `.tmp-dzed/src/controller/{input,keymap,actions}.rs`, but the crate must not depend on dzed, an editor buffer, a renderer, or a terminal event library.
+The initial implementation was extracted from `.tmp-dzed/src/controller/{input,keymap,actions}.rs`, but the crate does not depend on nxvim, an editor buffer, a renderer, or a terminal event library.
 
 ```text
 backend event                vim-input                         editor
@@ -17,7 +17,7 @@ backend event                vim-input                         editor
 - Resolve single keys and multi-key sequences such as `j`, `gg`, and `<C-w>h`.
 - Support Vim editing modes, counts, operators, motions, text objects, and registers.
 - Keep bindings in a configurable `Keymap`, separate from the resolver algorithm.
-- Preserve the existing `Mode` and `Action` enums during extraction so dzed can migrate without rewriting its executor.
+- Preserve the existing `Mode` and `Action` enums so nxvim can use the crate without rewriting its executor.
 - Expose pending input for status lines and diagnostics.
 - Be deterministic, synchronous, cheap to reset, and straightforward to test.
 - Remain independent of document contents. The crate describes intent; the editor applies it.
@@ -31,12 +31,12 @@ backend event                vim-input                         editor
 - Implementing Command mode, command-line parsing, or Ex commands.
 - Deciding whether an action is valid for a particular document or editor layout.
 
-## Proposed public API
+## Public API
 
 ```rust
 use vim_input::{Key, Keymap, Mode, ResolveOutcome, Resolver};
 
-let keymap = Keymap::vim_defaults()?;
+let keymap = Keymap::vim_defaults();
 let mut input = Resolver::new(Mode::Normal);
 
 match input.feed(Key::char('j'), &keymap) {
@@ -51,7 +51,7 @@ match input.feed(Key::char('j'), &keymap) {
 }
 ```
 
-The important types should have approximately these responsibilities:
+The important types have these responsibilities:
 
 ```rust
 pub struct Resolver { /* private grammar state */ }
@@ -79,7 +79,7 @@ pub struct ResolvedAction {
 }
 ```
 
-`ResolvedAction` carries the register alongside the action instead of exposing dzed's timing-sensitive `last_register` field. `Pending` replaces the ambiguous use of `Action::NoOp` for an incomplete sequence. `Ignored` covers events that intentionally produce no command, while `Invalid` makes failed mappings observable. A frontend may choose to treat either as a no-op.
+`ResolvedAction` carries the register alongside the action instead of exposing a timing-sensitive mutable `last_register` field. Nxvim queues the complete resolved action so register metadata stays attached until dispatch. `Pending` replaces the ambiguous use of `Action::NoOp` for an incomplete sequence. `Ignored` covers events that intentionally produce no command, while `Invalid` makes failed mappings observable. A frontend may choose to enqueue nothing for these outcomes.
 
 Mode changes caused by resolved actions remain immediate: after resolving `i`, `mode()` reports `Insert` before the caller executes the action. Direct editor-driven changes use `set_mode`.
 
@@ -99,6 +99,7 @@ pub enum KeyCode {
     Escape,
     Backspace,
     Tab,
+    BackTab,
     Left,
     Right,
     Up,
@@ -113,9 +114,9 @@ pub enum KeyCode {
 }
 ```
 
-`Modifiers` should be a bitflag containing at least Shift, Control, Alt, and Super. Character normalization must have one documented rule: printable characters retain their character and Shift is ignored for matching when the character already encodes case; non-character keys retain Shift. This prevents backends from disagreeing about whether `A` is represented as `Char('A')` or `Shift + Char('a')`.
+`Modifiers` is a compact flag type supporting Shift, Control, Alt, and Super. `Resolver::feed` normalizes keys before matching: Shift plus an alphabetic character is represented by the corresponding uppercase character without an explicit Shift flag, while non-character keys retain Shift. This prevents backends from disagreeing about whether an uppercase letter is represented as `Char('A')` or `Shift + Char('a')`.
 
-Backend conversion belongs outside the core. The workspace can provide `From<crossterm::event::KeyEvent>` behind an optional `crossterm` feature, or dzed can keep a tiny adapter. Key-release filtering also belongs in that adapter because the resolver only receives logical key presses.
+Backend conversion belongs outside the core. Nxvim keeps crossterm conversion in its private `controller::crossterm_input` module and filters key-release events before calling `Resolver::feed`, so terminal types do not leak into `vim-input`.
 
 Mappings use a parseable notation compatible with the source implementation:
 
@@ -144,7 +145,7 @@ map.bind(BindingContext::Normal, "<C-w>h", Action::FocusLeftWindow)?;
 map.unbind(BindingContext::Normal, "Q")?;
 ```
 
-The initial contexts preserve dzed's current behavior:
+The binding contexts preserve nxvim's behavior:
 
 - `Operator`
 - `Motion`
@@ -222,9 +223,9 @@ A `Display` implementation may provide the status-line string currently produced
 
 ## `Action` and `Mode` compatibility
 
-The first release should copy and maintain the existing `Action` and `Mode` enums, including variant names and payloads. This is deliberate: the extraction should change dependency boundaries, not simultaneously force a rewrite of dzed's action executor. `Action` remains the crate's resolved-command vocabulary and dzed matches on it as before.
+The crate maintains the extracted `Action` and `Mode` enums, including their variant names and payloads. This was deliberate: the extraction changed dependency boundaries without simultaneously forcing a rewrite of nxvim's action executor. `Action` remains the crate's resolved-command vocabulary and nxvim matches on it directly.
 
-The resolver currently relies on `Action::with_count`, `Action::with_select`, `Action::with_char`, and `Action::count`. Keep these methods during migration and add exhaustive tests for every applicable variant. Inapplicable transformations should not quietly return surprising values.
+The resolver relies on `Action::with_count`, `Action::with_select`, `Action::with_char`, and `Action::count`. These methods remain part of the compatibility surface. Inapplicable transformations should not quietly return surprising values.
 
 ### Recommended improvements after extraction
 
@@ -272,24 +273,29 @@ The dependency direction is one-way:
 
 ```text
 vim-input -> std (+ small foundational crates)
-dzed      -> vim-input
+nxvim     -> vim-input
 ```
 
-`vim-input` must not depend on `nxvim`, dzed, `vim-buffer`, clipboard services, or rendering code. Optional event adapters must not leak backend types into the core API.
+`vim-input` must not depend on `nxvim`, `vim-buffer`, clipboard services, rendering code, or terminal event libraries. Backend adapters must not leak their event types into the core API.
 
-## Migration plan
+## Migration status
 
-1. Copy `Mode` and `Action` with characterization tests covering formatting and transformation helpers.
-2. Introduce backend-neutral keys and port sequence parsing tests.
-3. Move default bindings into `defaults.rs`; make invalid defaults fail in tests rather than panic during normal construction.
-4. Port the state machine behind `Resolver::feed`, retaining current precedence, count, operator, wildcard, and register behavior while changing invalid sequences to cancel and reset.
-5. Add a crossterm adapter in dzed or behind a feature.
-6. Replace dzed's `VimInput` with `Resolver`, translating `ResolveOutcome::Resolved` into its existing action dispatch.
-7. Only after parity, consider the `Action` improvements above and a stable programmatic keymap configuration API.
+The nxvim migration is complete:
+
+1. `Mode` and `Action` are owned and exported by `vim-input`.
+2. Backend-neutral keys and sequence parsing are implemented in the crate.
+3. `Keymap::vim_defaults()` provides the shipped bindings.
+4. `Resolver::feed` owns mode, count, operator, wildcard, register, pending, and invalid-sequence grammar state.
+5. Nxvim keeps crossterm conversion and key-release filtering in `src/controller/crossterm_input.rs`.
+6. Nxvim's `Controller` owns `Resolver` and `Keymap` directly and consumes every `ResolveOutcome` without converting parser states to `Action::NoOp`.
+7. Resolved actions are queued with their optional register metadata; host-generated and macro-replayed actions use no implicit register.
+8. The old `controller::{input,actions,keymap}` compatibility modules have been removed.
+
+Further `Action` vocabulary improvements remain separate from the completed extraction and integration work.
 
 ## Testing strategy
 
-Characterization tests from dzed should be copied before refactoring. At minimum, cover:
+The crate and nxvim integration tests cover the extracted grammar and backend boundary. Important cases include:
 
 - key notation parsing and round trips;
 - exact, wildcard, prefix, and conflicting mappings;

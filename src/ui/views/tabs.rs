@@ -1,7 +1,7 @@
 use crate::editor::Editor;
-use vim_ui::Rect;
 use crate::ui::views::{View, vim};
 use std::io::Write;
+use vim_ui::Rect;
 
 pub struct TabsView;
 

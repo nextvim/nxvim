@@ -1,10 +1,10 @@
 use crate::controller::ControllerResult;
-use crate::controller::actions;
 use crate::controller::ex;
 use crate::controller::exmap;
 use crate::editor::Editor;
 use crate::editor::buffers::TextBuffer;
 use crate::ui::colorscheme;
+use vim_input as actions;
 
 pub struct Command {
     pub cmd: String,
@@ -236,7 +236,7 @@ mod tests {
     use crate::editor::Editor;
     use crate::editor::buffers::TextBuffer;
     use crate::editor::document::Document;
-    use actions::Action;
+    use actions::{Action, Mode};
 
     #[test]
     fn test_try_resolve_action() {
@@ -625,23 +625,18 @@ mod tests {
             doc.clear(&buf.buffer);
         }
 
-        editor.mode = crate::controller::actions::Mode::Command;
+        editor.mode = Mode::Command;
         if let Some(win) = ui.window_mut(cmd_win) {
             let buf = &buffer_manager
                 .find(win.doc.as_ref().unwrap())
                 .unwrap()
                 .buffer;
-            win.doc
-                .as_mut()
-                .unwrap()
-                .enter_mode(buf, crate::controller::actions::Mode::Command);
+            win.doc.as_mut().unwrap().enter_mode(buf, Mode::Command);
         }
 
         ui.focus_window(cmd_win);
 
-        controller
-            .pending_actions
-            .push_back(Action::InsertNewLine { count: 1 });
+        controller.queue_action(Action::InsertNewLine { count: 1 });
 
         controller
             .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
@@ -699,11 +694,9 @@ mod tests {
         }
 
         ui.focus_window(cmd_win);
-        editor.mode = crate::controller::actions::Mode::Command;
+        editor.mode = Mode::Command;
 
-        controller
-            .pending_actions
-            .push_back(Action::InsertNewLine { count: 1 });
+        controller.queue_action(Action::InsertNewLine { count: 1 });
         controller
             .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
             .unwrap();
@@ -719,20 +712,18 @@ mod tests {
         }
 
         ui.focus_window(cmd_win);
-        editor.mode = crate::controller::actions::Mode::Command;
+        editor.mode = Mode::Command;
 
-        controller
-            .pending_actions
-            .push_back(Action::InsertNewLine { count: 1 });
+        controller.queue_action(Action::InsertNewLine { count: 1 });
         controller
             .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
             .unwrap();
         assert!(!editor.show_line_numbers);
 
         ui.focus_window(cmd_win);
-        editor.mode = crate::controller::actions::Mode::Command;
+        editor.mode = Mode::Command;
 
-        controller.pending_actions.push_back(Action::MoveUp {
+        controller.queue_action(Action::MoveUp {
             select: false,
             count: 1,
         });
@@ -746,7 +737,7 @@ mod tests {
             assert_eq!(buf.buffer.snapshot().text(), ":set nonu");
         }
 
-        controller.pending_actions.push_back(Action::MoveUp {
+        controller.queue_action(Action::MoveUp {
             select: false,
             count: 1,
         });
@@ -760,7 +751,7 @@ mod tests {
             assert_eq!(buf.buffer.snapshot().text(), ":set nu");
         }
 
-        controller.pending_actions.push_back(Action::MoveDown {
+        controller.queue_action(Action::MoveDown {
             select: false,
             count: 1,
         });
@@ -774,7 +765,7 @@ mod tests {
             assert_eq!(buf.buffer.snapshot().text(), ":set nonu");
         }
 
-        controller.pending_actions.push_back(Action::MoveDown {
+        controller.queue_action(Action::MoveDown {
             select: false,
             count: 1,
         });

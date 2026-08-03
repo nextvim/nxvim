@@ -1,12 +1,12 @@
 use crate::controller::ControllerResult;
 use crate::controller::ViewController;
-use crate::controller::actions::Action;
 use crate::editor::Editor;
 use crate::editor::display::display_map::DisplayPoint;
 use crate::services::background::{self, BackgroundTask, TaskId};
 use crate::ui::Ui;
-use vim_ui::Rect;
 use text::ToPoint;
+use vim_input::Action;
+use vim_ui::Rect;
 
 pub struct TextViewController {}
 

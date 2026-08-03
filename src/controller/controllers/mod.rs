@@ -1,7 +1,7 @@
 use crate::controller::ControllerResult;
-use crate::controller::actions;
 use crate::editor::Editor;
 use crate::ui::Ui;
+use vim_input as actions;
 use vim_ui::Rect;
 
 use crate::services::background;
