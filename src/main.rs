@@ -1,5 +1,6 @@
 mod controller;
 mod editor;
+mod scripting;
 mod services;
 mod ui;
 
@@ -30,6 +31,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut ui = ui::Ui::new();
     let mut editor = editor::Editor::new()?;
     let mut controller = controller::Controller::new();
+    let mut script = scripting::script::ScriptRuntime::new();
 
     for path in file_paths {
         buffer_manager.add_buffer_for_path(&path)?;
@@ -69,7 +71,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     execute!(stdout, crossterm::cursor::Hide).unwrap();
 
-    loop {
+    'main_loop: loop {
         ui.update(&mut editor, &mut buffer_manager)?;
         if editor.should_redraw {
             ui.draw(&mut stdout, &mut editor, &mut buffer_manager)?;
@@ -86,7 +88,26 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        match controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)? {
+        let cmds: Vec<controller::ex::Ex> =
+            std::iter::from_fn(|| script.try_next_command()).collect();
+        for cmd in cmds {
+            match cmd {
+                controller::ex::Ex::Quit => {
+                    break 'main_loop;
+                }
+                controller::ex::Ex::Delete => {
+                    controller.queue_action(vim_input::Action::DeleteLine { count: 1 });
+                }
+                _ => {}
+            }
+        }
+
+        match controller.dispatch_actions(
+            &mut editor,
+            &mut buffer_manager,
+            &mut ui,
+            Some(&mut script),
+        )? {
             controller::ControllerResult::Exit => {
                 break;
             }

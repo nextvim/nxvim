@@ -639,7 +639,7 @@ mod tests {
         controller.queue_action(Action::InsertNewLine { count: 1 });
 
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
 
         assert!(editor.show_line_numbers);
@@ -698,7 +698,7 @@ mod tests {
 
         controller.queue_action(Action::InsertNewLine { count: 1 });
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
 
         assert!(editor.show_line_numbers);
@@ -716,7 +716,7 @@ mod tests {
 
         controller.queue_action(Action::InsertNewLine { count: 1 });
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
         assert!(!editor.show_line_numbers);
 
@@ -728,7 +728,7 @@ mod tests {
             count: 1,
         });
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
 
         {
@@ -742,7 +742,7 @@ mod tests {
             count: 1,
         });
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
 
         {
@@ -756,7 +756,7 @@ mod tests {
             count: 1,
         });
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
 
         {
@@ -770,7 +770,7 @@ mod tests {
             count: 1,
         });
         controller
-            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui, None)
             .unwrap();
 
         {

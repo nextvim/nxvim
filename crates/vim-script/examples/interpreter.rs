@@ -39,6 +39,8 @@ fn main() {
     host.capabilities.grant(Capability::Terminal);
     host.capabilities.grant(Capability::Process);
 
+    host.capabilities.grant(Capability::UserInterface);
+
     // Register host functions of MockEditor
     host.register_function("getline", Arity::Exact(1), vec![Capability::BufferRead]);
     host.register_function("setline", Arity::Exact(2), vec![Capability::BufferWrite]);
@@ -238,6 +240,14 @@ fn print_editor_state(editor: &MockEditor) {
                     );
                 }
             }
+
+            if !state.highlights.groups.is_empty() {
+                println!("  Highlights:");
+                for (group, style) in &state.highlights.groups {
+                    println!("    highlight {} attributes={:?}", group, style.attributes);
+                }
+            }
+
             if !state.messages.is_empty() {
                 println!("  Messages/Logs:");
                 for msg in &state.messages {
