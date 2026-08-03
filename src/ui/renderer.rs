@@ -1,10 +1,10 @@
-use std::io::Write;
+use super::layout::Rect;
 use crossterm::{
     cursor::MoveTo,
-    execute,
+    queue,
     style::{Color, Print, ResetColor, SetForegroundColor},
 };
-use super::layout::Rect;
+use std::io::Write;
 
 pub struct Renderer;
 
@@ -27,17 +27,17 @@ impl Renderer {
         };
 
         // Draw border
-        execute!(w, SetForegroundColor(border_fg))?;
+        queue!(w, SetForegroundColor(border_fg))?;
 
         // Draw top border
-        execute!(w, MoveTo(rect.x, rect.y))?;
+        queue!(w, MoveTo(rect.x, rect.y))?;
         if rect.width > 2 {
-            execute!(
+            queue!(
                 w,
                 Print(format!("┌{}┐", "─".repeat(rect.width as usize - 2)))
             )?;
         } else {
-            execute!(
+            queue!(
                 w,
                 Print("┌┐".chars().take(rect.width as usize).collect::<String>())
             )?;
@@ -45,30 +45,30 @@ impl Renderer {
 
         // Draw sides
         for y in 1..rect.height.saturating_sub(1) {
-            execute!(w, MoveTo(rect.x, rect.y + y))?;
+            queue!(w, MoveTo(rect.x, rect.y + y))?;
             if rect.width > 1 {
-                execute!(w, Print("│"))?;
-                execute!(w, MoveTo(rect.x + rect.width - 1, rect.y + y))?;
-                execute!(w, Print("│"))?;
+                queue!(w, Print("│"))?;
+                queue!(w, MoveTo(rect.x + rect.width - 1, rect.y + y))?;
+                queue!(w, Print("│"))?;
             } else {
-                execute!(w, Print("│"))?;
+                queue!(w, Print("│"))?;
             }
         }
 
         // Draw bottom border
         if rect.height > 1 {
-            execute!(w, MoveTo(rect.x, rect.y + rect.height - 1))?;
+            queue!(w, MoveTo(rect.x, rect.y + rect.height - 1))?;
             if rect.width > 1 {
-                execute!(
+                queue!(
                     w,
                     Print(format!("└{}┘", "─".repeat(rect.width as usize - 2)))
                 )?;
             } else {
-                execute!(w, Print("└"))?;
+                queue!(w, Print("└"))?;
             }
         }
 
-        execute!(w, ResetColor)?;
+        queue!(w, ResetColor)?;
         Ok(())
     }
 
@@ -90,7 +90,7 @@ impl Renderer {
             } else {
                 Color::DarkGrey
             };
-            execute!(
+            queue!(
                 w,
                 SetForegroundColor(border_fg),
                 MoveTo(x, y),
@@ -131,9 +131,8 @@ impl Scrollbar {
         let handle_h = handle_h.min(height);
 
         let start_y = if total_rows > height {
-            ((scroll_y as f32 / (total_rows - height) as f32)
-                * (height - handle_h) as f32)
-                .round() as u32
+            ((scroll_y as f32 / (total_rows - height) as f32) * (height - handle_h) as f32).round()
+                as u32
         } else {
             0
         };
@@ -182,4 +181,3 @@ impl Scrollbar {
         }
     }
 }
-

@@ -74,19 +74,35 @@ impl TextView {
             cursor_row,
         );
 
+        let mut current_fg: Option<crossterm::style::Color> = None;
+        let mut current_bg: Option<crossterm::style::Color> = None;
+
         for row in display_snapshot.scroll_y..end_line {
             {
-                execute!(w, MoveTo(inner_rect.x, screen_row)).unwrap();
+                crossterm::queue!(w, MoveTo(inner_rect.x, screen_row)).unwrap();
 
                 // line number
                 if editor.show_line_numbers && document.show_gutter {
                     let line_number = display_snapshot.buffer_row_for_display_row(row);
-                    execute!(w, crossterm::style::SetForegroundColor(gutter_fg)).unwrap();
-                    execute!(w, crossterm::style::SetBackgroundColor(gutter_bg)).unwrap();
+                    if current_fg != Some(gutter_fg) {
+                        crossterm::queue!(w, crossterm::style::SetForegroundColor(gutter_fg))
+                            .unwrap();
+                        current_fg = Some(gutter_fg);
+                    }
+                    if current_bg != Some(gutter_bg) {
+                        crossterm::queue!(w, crossterm::style::SetBackgroundColor(gutter_bg))
+                            .unwrap();
+                        current_bg = Some(gutter_bg);
+                    }
                     if prev_line_number != line_number as i32 {
-                        print!("{:>width$} ", (line_number + 1), width = gutter_width - 1);
+                        write!(
+                            w,
+                            "{:>width$} ",
+                            (line_number + 1),
+                            width = gutter_width - 1
+                        )?;
                     } else {
-                        print!("{}", " ".repeat(gutter_width));
+                        write!(w, "{}", " ".repeat(gutter_width))?;
                     }
                     prev_line_number = line_number as i32;
                 }
@@ -186,8 +202,15 @@ impl TextView {
                             bg
                         };
 
-                        execute!(w, crossterm::style::SetForegroundColor(fg)).unwrap();
-                        execute!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
+                        if current_fg != Some(fg) {
+                            crossterm::queue!(w, crossterm::style::SetForegroundColor(fg)).unwrap();
+                            current_fg = Some(fg);
+                        }
+                        if current_bg != Some(bg_color) {
+                            crossterm::queue!(w, crossterm::style::SetBackgroundColor(bg_color))
+                                .unwrap();
+                            current_bg = Some(bg_color);
+                        }
 
                         match ch {
                             '\t' => {
@@ -209,15 +232,21 @@ impl TextView {
                                     } else {
                                         bg
                                     };
-                                    execute!(w, crossterm::style::SetBackgroundColor(cell_bg))
+                                    if current_bg != Some(cell_bg) {
+                                        crossterm::queue!(
+                                            w,
+                                            crossterm::style::SetBackgroundColor(cell_bg)
+                                        )
                                         .unwrap();
-                                    print!(" ");
+                                        current_bg = Some(cell_bg);
+                                    }
+                                    write!(w, " ")?;
                                     curr_x += 1;
                                     cols_remaining = cols_remaining.saturating_sub(1);
                                 }
                             }
                             _ => {
-                                print!("{}", ch);
+                                write!(w, "{}", ch)?;
                                 curr_x += 1;
                                 cols_remaining = cols_remaining.saturating_sub(1);
                             }
@@ -229,7 +258,7 @@ impl TextView {
                     }
                 }
 
-                for x in 0..cols_remaining {
+                for _x in 0..cols_remaining {
                     let is_scrollbar = scrollbar.is_scrollbar(curr_x, screen_row);
                     let bg_color = if is_scrollbar {
                         if scrollbar.is_handle(curr_x, screen_row) {
@@ -240,8 +269,12 @@ impl TextView {
                     } else {
                         editor_bg
                     };
-                    execute!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
-                    print!(" ");
+                    if current_bg != Some(bg_color) {
+                        crossterm::queue!(w, crossterm::style::SetBackgroundColor(bg_color))
+                            .unwrap();
+                        current_bg = Some(bg_color);
+                    }
+                    write!(w, " ")?;
                     curr_x += 1;
                 }
 
@@ -253,12 +286,15 @@ impl TextView {
         }
 
         while screen_row < inner_rect.y + inner_rect.height {
-            execute!(w, MoveTo(inner_rect.x, screen_row)).unwrap();
+            crossterm::queue!(w, MoveTo(inner_rect.x, screen_row)).unwrap();
 
             // Gutter/line numbers area for empty lines
             if editor.show_line_numbers && document.show_gutter {
-                execute!(w, crossterm::style::SetBackgroundColor(gutter_bg)).unwrap();
-                print!("{}", " ".repeat(gutter_width));
+                if current_bg != Some(gutter_bg) {
+                    crossterm::queue!(w, crossterm::style::SetBackgroundColor(gutter_bg)).unwrap();
+                    current_bg = Some(gutter_bg);
+                }
+                write!(w, "{}", " ".repeat(gutter_width))?;
             }
 
             // The rest of the line
@@ -276,8 +312,11 @@ impl TextView {
                 } else {
                     editor_bg
                 };
-                execute!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
-                print!(" ");
+                if current_bg != Some(bg_color) {
+                    crossterm::queue!(w, crossterm::style::SetBackgroundColor(bg_color)).unwrap();
+                    current_bg = Some(bg_color);
+                }
+                write!(w, " ")?;
                 curr_x += 1;
             }
 
