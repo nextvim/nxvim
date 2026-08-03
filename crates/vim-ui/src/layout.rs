@@ -242,6 +242,72 @@ impl LayoutNode {
         }
     }
 
+    pub fn adjust_size(&mut self, target_id: WindowId, axis: SplitAxis, amount: f32) -> bool {
+        match self {
+            LayoutNode::Leaf { .. } => false,
+            LayoutNode::Split {
+                axis: split_axis,
+                constraints,
+                children,
+            } => {
+                for child in children.iter_mut() {
+                    if child.adjust_size(target_id, axis, amount) {
+                        return true;
+                    }
+                }
+
+                if *split_axis != axis {
+                    return false;
+                }
+                let Some(target_index) = children
+                    .iter()
+                    .position(|child| child.contains_leaf(target_id))
+                else {
+                    return false;
+                };
+                if children.len() < 2 {
+                    return false;
+                }
+                if constraints.len() != children.len() {
+                    *constraints = vec![
+                        SizeConstraint::Percentage(1.0 / children.len() as f32);
+                        children.len()
+                    ];
+                }
+                if !constraints
+                    .iter()
+                    .all(|constraint| matches!(constraint, SizeConstraint::Percentage(_)))
+                {
+                    return false;
+                }
+
+                let SizeConstraint::Percentage(current) = constraints[target_index] else {
+                    unreachable!();
+                };
+                let adjusted = (current + amount).clamp(0.05, 0.95);
+                let difference = adjusted - current;
+                let neighbor_index = if target_index > 0 {
+                    target_index - 1
+                } else {
+                    target_index + 1
+                };
+                let SizeConstraint::Percentage(neighbor) = &mut constraints[neighbor_index] else {
+                    unreachable!();
+                };
+                if *neighbor - difference < 0.05 {
+                    return false;
+                }
+
+                constraints[target_index] = SizeConstraint::Percentage(adjusted);
+                let SizeConstraint::Percentage(neighbor) = &mut constraints[neighbor_index] else {
+                    unreachable!();
+                };
+                *neighbor -= difference;
+                true
+            }
+        }
+    }
+
     pub fn contains_leaf(&self, target_id: WindowId) -> bool {
         match self {
             LayoutNode::Leaf { window_id } => *window_id == target_id,
@@ -304,6 +370,10 @@ impl LayoutEngine {
 
     pub fn remove_leaf(&mut self, target_id: WindowId) -> (bool, Option<WindowId>) {
         self.root_layout.remove_leaf(target_id)
+    }
+
+    pub fn adjust_size(&mut self, target_id: WindowId, axis: SplitAxis, amount: f32) -> bool {
+        self.root_layout.adjust_size(target_id, axis, amount)
     }
 
     pub fn contains_leaf(&self, target_id: WindowId) -> bool {

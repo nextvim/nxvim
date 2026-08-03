@@ -247,14 +247,16 @@ impl BackgroundWorker {
                         // 1. Buffer keywords (extracted line-by-line using TextSearch, grouped by row)
                         use crate::services::search::TextSearch;
                         use text::ToOffset;
-                        
+
                         let mut buffer_keywords = HashMap::new();
                         for r in start_row..(start_row + row_count) {
                             if r < snapshot.row_count() {
                                 let mut row_keys = std::collections::HashSet::new();
                                 let start = rope::Point::new(r, 0).to_offset(&snapshot);
-                                let end = rope::Point::new(r, snapshot.line_len(r)).to_offset(&snapshot);
-                                let line_str: String = snapshot.as_rope().chunks_in_range(start..end).collect();
+                                let end =
+                                    rope::Point::new(r, snapshot.line_len(r)).to_offset(&snapshot);
+                                let line_str: String =
+                                    snapshot.as_rope().chunks_in_range(start..end).collect();
                                 for (_, _, word) in line_str.find_words() {
                                     if word.len() >= 1 {
                                         row_keys.insert(word.to_string());
@@ -274,7 +276,10 @@ impl BackgroundWorker {
                                         source: &BufferSnapshot,
                                         start_row: u32,
                                         row_count: u32,
-                                        out: &mut HashMap<u32, Vec<(String, HashMap<String, String>)>>,
+                                        out: &mut HashMap<
+                                            u32,
+                                            Vec<(String, HashMap<String, String>)>,
+                                        >,
                                     ) {
                                         let start_pos = node.start_position();
                                         let end_pos = node.end_position();
@@ -287,26 +292,54 @@ impl BackgroundWorker {
 
                                         let kind = node.kind();
                                         if kind.contains("identifier") {
-                                            let text: String = source.as_rope().chunks_in_range(node.byte_range()).collect();
+                                            let text: String = source
+                                                .as_rope()
+                                                .chunks_in_range(node.byte_range())
+                                                .collect();
                                             if !text.is_empty() {
                                                 let mut meta = HashMap::new();
                                                 meta.insert("kind".to_string(), kind.to_string());
-                                                meta.insert("start_row".to_string(), start_pos.row.to_string());
-                                                meta.insert("start_col".to_string(), start_pos.column.to_string());
+                                                meta.insert(
+                                                    "start_row".to_string(),
+                                                    start_pos.row.to_string(),
+                                                );
+                                                meta.insert(
+                                                    "start_col".to_string(),
+                                                    start_pos.column.to_string(),
+                                                );
                                                 out.entry(start_pos.row as u32)
                                                     .or_default()
                                                     .push((text, meta));
                                             }
                                         }
-                                        if crate::services::treesitter::tree_sitter::SCOPE_KINDS.contains(&kind) {
-                                            if let Some(name_node) = node.child_by_field_name("name") {
-                                                let text: String = source.as_rope().chunks_in_range(name_node.byte_range()).collect();
+                                        if crate::services::treesitter::tree_sitter::SCOPE_KINDS
+                                            .contains(&kind)
+                                        {
+                                            if let Some(name_node) =
+                                                node.child_by_field_name("name")
+                                            {
+                                                let text: String = source
+                                                    .as_rope()
+                                                    .chunks_in_range(name_node.byte_range())
+                                                    .collect();
                                                 if !text.is_empty() {
                                                     let mut meta = HashMap::new();
-                                                    meta.insert("kind".to_string(), kind.to_string());
-                                                    meta.insert("definition".to_string(), "true".to_string());
-                                                    meta.insert("start_row".to_string(), start_pos.row.to_string());
-                                                    meta.insert("start_col".to_string(), start_pos.column.to_string());
+                                                    meta.insert(
+                                                        "kind".to_string(),
+                                                        kind.to_string(),
+                                                    );
+                                                    meta.insert(
+                                                        "definition".to_string(),
+                                                        "true".to_string(),
+                                                    );
+                                                    meta.insert(
+                                                        "start_row".to_string(),
+                                                        start_pos.row.to_string(),
+                                                    );
+                                                    meta.insert(
+                                                        "start_col".to_string(),
+                                                        start_pos.column.to_string(),
+                                                    );
                                                     out.entry(start_pos.row as u32)
                                                         .or_default()
                                                         .push((text, meta));
@@ -317,7 +350,13 @@ impl BackgroundWorker {
                                         let mut cursor = node.walk();
                                         if cursor.goto_first_child() {
                                             loop {
-                                                walk_node(cursor.node(), source, start_row, row_count, out);
+                                                walk_node(
+                                                    cursor.node(),
+                                                    source,
+                                                    start_row,
+                                                    row_count,
+                                                    out,
+                                                );
                                                 if !cursor.goto_next_sibling() {
                                                     break;
                                                 }

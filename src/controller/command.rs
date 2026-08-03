@@ -131,7 +131,9 @@ impl Command {
                     if let Some(win) = ui.get_focused_window_mut() {
                         if let Some(doc) = &win.doc {
                             if let Some(buf) = buffer_manager.find_mut(doc) {
-                                let path = resolved.arguments.as_ref()
+                                let path = resolved
+                                    .arguments
+                                    .as_ref()
                                     .and_then(|args| args.first())
                                     .map(|s| s.clone());
                                 if let Some(p) = path {
@@ -147,7 +149,9 @@ impl Command {
                 }
                 ex::Ex::Edit => {
                     if let Some(win) = ui.get_focused_window_mut() {
-                        let path = resolved.arguments.as_ref()
+                        let path = resolved
+                            .arguments
+                            .as_ref()
                             .and_then(|args| args.first())
                             .map(|s| s.clone());
                         if let Some(p) = path {
@@ -168,8 +172,7 @@ impl Command {
                         .unwrap_or("tokyonight");
                     let loaded = colorscheme::ColorScheme::get_by_name(name)
                         .unwrap_or_else(|| colorscheme::ColorScheme::load_default());
-                    ui.colorscheme = loaded;
-                    ui.clear_highlights();
+                    ui.set_colorscheme(loaded);
                     None
                 }
                 ex::Ex::Syntax => {
@@ -198,19 +201,27 @@ impl Command {
                     None
                 }
                 ex::Ex::Split => {
-                    let file_path = resolved.arguments.as_ref().and_then(|args| args.first()).cloned();
-                    Some(ControllerResult::Action(actions::Action::SplitHorizontal { file_path }))
+                    let file_path = resolved
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .cloned();
+                    Some(ControllerResult::Action(actions::Action::SplitHorizontal {
+                        file_path,
+                    }))
                 }
                 ex::Ex::Vsplit => {
-                    let file_path = resolved.arguments.as_ref().and_then(|args| args.first()).cloned();
-                    Some(ControllerResult::Action(actions::Action::SplitVertical { file_path }))
+                    let file_path = resolved
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .cloned();
+                    Some(ControllerResult::Action(actions::Action::SplitVertical {
+                        file_path,
+                    }))
                 }
-                ex::Ex::Close => {
-                    Some(ControllerResult::Action(actions::Action::CloseWindow))
-                }
-                ex::Ex::Only => {
-                    Some(ControllerResult::Action(actions::Action::OnlyWindow))
-                }
+                ex::Ex::Close => Some(ControllerResult::Action(actions::Action::CloseWindow)),
+                ex::Ex::Only => Some(ControllerResult::Action(actions::Action::OnlyWindow)),
                 _ => None,
             }
         } else {
@@ -266,7 +277,7 @@ mod tests {
 
         cmd.set("set wrap");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -280,7 +291,7 @@ mod tests {
 
         cmd.set("set nowrap");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -294,7 +305,7 @@ mod tests {
 
         cmd.set("set nonu");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -308,7 +319,7 @@ mod tests {
 
         cmd.set("set nu");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -322,7 +333,7 @@ mod tests {
 
         cmd.set("set nofold");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -336,7 +347,7 @@ mod tests {
 
         cmd.set("set fold");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -350,7 +361,7 @@ mod tests {
 
         cmd.set("set nofoldmultiline");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -364,7 +375,7 @@ mod tests {
 
         cmd.set("set foldmultiline");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -378,7 +389,7 @@ mod tests {
 
         cmd.set("set notreesitter");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -392,7 +403,7 @@ mod tests {
 
         cmd.set("set treesitter");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -406,7 +417,7 @@ mod tests {
 
         cmd.set("set notm");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -420,7 +431,7 @@ mod tests {
 
         cmd.set("set tm");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -434,7 +445,7 @@ mod tests {
 
         cmd.set("set tshl");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -448,7 +459,7 @@ mod tests {
 
         cmd.set("set notshl");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -463,7 +474,7 @@ mod tests {
         // Test colorschemes command and aliases
         cmd.set("colorschemes catppuccin");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -473,11 +484,11 @@ mod tests {
             ));
         }
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        assert_eq!(ui.colorscheme.metadata.name, "catppuccin-mocha");
+        assert_eq!(ui.colorscheme().metadata.name, "catppuccin-mocha");
 
         cmd.set("colorscheme kanagawa");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -487,11 +498,11 @@ mod tests {
             ));
         }
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        assert_eq!(ui.colorscheme.metadata.name, "kanagawa");
+        assert_eq!(ui.colorscheme().metadata.name, "kanagawa");
 
         cmd.set("colo catppuccin");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -501,11 +512,11 @@ mod tests {
             ));
         }
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        assert_eq!(ui.colorscheme.metadata.name, "catppuccin-mocha");
+        assert_eq!(ui.colorscheme().metadata.name, "catppuccin-mocha");
 
         cmd.set("colorscheme unknown_colorscheme");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -515,12 +526,12 @@ mod tests {
             ));
         }
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        assert_eq!(ui.colorscheme.metadata.name, "catppuccin-mocha");
+        assert_eq!(ui.colorscheme().metadata.name, "catppuccin-mocha");
 
         // Test syntax command
         cmd.set("syntax off");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -534,7 +545,7 @@ mod tests {
 
         cmd.set("syn on");
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -552,7 +563,7 @@ mod tests {
             .unwrap();
 
         let mut ui = crate::ui::Ui::new();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let active_buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -564,11 +575,11 @@ mod tests {
 
         cmd.set("bnext");
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        assert_eq!(ui.windows.get(&main_win).unwrap().buffer_id, Some(1));
+        assert_eq!(ui.window(main_win).unwrap().buffer_id, Some(1));
 
         cmd.set("bprev");
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        assert_eq!(ui.windows.get(&main_win).unwrap().buffer_id, Some(0));
+        assert_eq!(ui.window(main_win).unwrap().buffer_id, Some(0));
     }
 
     #[test]
@@ -581,7 +592,7 @@ mod tests {
         let mut ui = crate::ui::Ui::new();
 
         let main_win = crate::ui::WindowId::MainWindow as usize;
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -595,7 +606,7 @@ mod tests {
         let cmd_id = cmd_buf.id;
         let cmd_file_path = cmd_buf.file_path.clone();
         let cmd_win = crate::ui::WindowId::CommandLine as usize;
-        if let Some(win) = ui.windows.get_mut(&cmd_win) {
+        if let Some(win) = ui.window_mut(cmd_win) {
             let cmd_buffer = buffer_manager.find_by_path(&cmd_file_path).unwrap();
             win.buffer_id = Some(cmd_id);
             win.doc = Some(Document::new_with_buffer(
@@ -608,14 +619,14 @@ mod tests {
         let mut controller = crate::controller::Controller::new();
 
         {
-            let doc = ui.windows.get_mut(&cmd_win).unwrap().doc.as_mut().unwrap();
+            let doc = ui.window_mut(cmd_win).unwrap().doc.as_mut().unwrap();
             let buf = buffer_manager.find_mut(doc).unwrap();
             buf.buffer.edit([(0..0, "set nu")]);
             doc.clear(&buf.buffer);
         }
 
         editor.mode = crate::controller::actions::Mode::Command;
-        if let Some(win) = ui.windows.get_mut(&cmd_win) {
+        if let Some(win) = ui.window_mut(cmd_win) {
             let buf = &buffer_manager
                 .find(win.doc.as_ref().unwrap())
                 .unwrap()
@@ -645,11 +656,11 @@ mod tests {
         let mut buffer_manager = crate::editor::buffers::BufferManager::new();
         let active_buf = buffer_manager.add_buffer_for_path("").unwrap();
         let _active_buf_id = active_buf.id;
-        
+
         let mut ui = crate::ui::Ui::new();
-        
+
         let main_win = crate::ui::WindowId::MainWindow as usize;
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             let buf = &buffer_manager.buffers[0];
             win.buffer_id = Some(buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -658,15 +669,16 @@ mod tests {
                 &buf.file_path,
             ));
         }
-        
+
         let cmd_buf = buffer_manager.add_buffer_for_path("#command").unwrap();
         let cmd_id = cmd_buf.id;
         let cmd_file_path = cmd_buf.file_path.clone();
         let cmd_win = crate::ui::WindowId::CommandLine as usize;
-        
-        let cmd_controller = crate::controller::controllers::commandline::CommandLineController::new();
-        
-        if let Some(win) = ui.windows.get_mut(&cmd_win) {
+
+        let cmd_controller =
+            crate::controller::controllers::commandline::CommandLineController::new();
+
+        if let Some(win) = ui.window_mut(cmd_win) {
             let cmd_buffer = buffer_manager.find_by_path(&cmd_file_path).unwrap();
             win.buffer_id = Some(cmd_id);
             win.doc = Some(Document::new_with_buffer(
@@ -678,9 +690,9 @@ mod tests {
         }
 
         let mut controller = crate::controller::Controller::new();
-        
+
         {
-            let doc = ui.windows.get_mut(&cmd_win).unwrap().doc.as_mut().unwrap();
+            let doc = ui.window_mut(cmd_win).unwrap().doc.as_mut().unwrap();
             let buf = buffer_manager.find_mut(doc).unwrap();
             buf.buffer.edit([(0..0, ":set nu")]);
             doc.clear(&buf.buffer);
@@ -689,13 +701,17 @@ mod tests {
         ui.focus_window(cmd_win);
         editor.mode = crate::controller::actions::Mode::Command;
 
-        controller.pending_actions.push_back(Action::InsertNewLine { count: 1 });
-        controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui).unwrap();
-        
+        controller
+            .pending_actions
+            .push_back(Action::InsertNewLine { count: 1 });
+        controller
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .unwrap();
+
         assert!(editor.show_line_numbers);
 
         {
-            let doc = ui.windows.get_mut(&cmd_win).unwrap().doc.as_mut().unwrap();
+            let doc = ui.window_mut(cmd_win).unwrap().doc.as_mut().unwrap();
             let buf = buffer_manager.find_mut(doc).unwrap();
             let len = buf.buffer.len();
             buf.buffer.edit([(0..len, ":set nonu")]);
@@ -705,45 +721,69 @@ mod tests {
         ui.focus_window(cmd_win);
         editor.mode = crate::controller::actions::Mode::Command;
 
-        controller.pending_actions.push_back(Action::InsertNewLine { count: 1 });
-        controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui).unwrap();
+        controller
+            .pending_actions
+            .push_back(Action::InsertNewLine { count: 1 });
+        controller
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .unwrap();
         assert!(!editor.show_line_numbers);
 
         ui.focus_window(cmd_win);
         editor.mode = crate::controller::actions::Mode::Command;
 
-        controller.pending_actions.push_back(Action::MoveUp { select: false, count: 1 });
-        controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui).unwrap();
+        controller.pending_actions.push_back(Action::MoveUp {
+            select: false,
+            count: 1,
+        });
+        controller
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .unwrap();
 
         {
-            let doc = ui.windows.get(&cmd_win).unwrap().doc.as_ref().unwrap();
+            let doc = ui.window(cmd_win).unwrap().doc.as_ref().unwrap();
             let buf = buffer_manager.find(doc).unwrap();
             assert_eq!(buf.buffer.snapshot().text(), ":set nonu");
         }
 
-        controller.pending_actions.push_back(Action::MoveUp { select: false, count: 1 });
-        controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui).unwrap();
+        controller.pending_actions.push_back(Action::MoveUp {
+            select: false,
+            count: 1,
+        });
+        controller
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .unwrap();
 
         {
-            let doc = ui.windows.get(&cmd_win).unwrap().doc.as_ref().unwrap();
+            let doc = ui.window(cmd_win).unwrap().doc.as_ref().unwrap();
             let buf = buffer_manager.find(doc).unwrap();
             assert_eq!(buf.buffer.snapshot().text(), ":set nu");
         }
 
-        controller.pending_actions.push_back(Action::MoveDown { select: false, count: 1 });
-        controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui).unwrap();
+        controller.pending_actions.push_back(Action::MoveDown {
+            select: false,
+            count: 1,
+        });
+        controller
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .unwrap();
 
         {
-            let doc = ui.windows.get(&cmd_win).unwrap().doc.as_ref().unwrap();
+            let doc = ui.window(cmd_win).unwrap().doc.as_ref().unwrap();
             let buf = buffer_manager.find(doc).unwrap();
             assert_eq!(buf.buffer.snapshot().text(), ":set nonu");
         }
 
-        controller.pending_actions.push_back(Action::MoveDown { select: false, count: 1 });
-        controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui).unwrap();
+        controller.pending_actions.push_back(Action::MoveDown {
+            select: false,
+            count: 1,
+        });
+        controller
+            .dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)
+            .unwrap();
 
         {
-            let doc = ui.windows.get(&cmd_win).unwrap().doc.as_ref().unwrap();
+            let doc = ui.window(cmd_win).unwrap().doc.as_ref().unwrap();
             let buf = buffer_manager.find(doc).unwrap();
             assert_eq!(buf.buffer.snapshot().text(), "");
         }
@@ -760,16 +800,14 @@ mod tests {
         // Clean up any old test files
         let _ = std::fs::remove_file(&file_path);
 
-        let buf = buffer_manager
-            .add_buffer_for_path(path_str)
-            .unwrap();
+        let buf = buffer_manager.add_buffer_for_path(path_str).unwrap();
         buf.buffer.edit([(0..0, "hello world")]);
 
         let mut cmd = Command::new();
         let main_win = crate::ui::WindowId::MainWindow as usize;
         let mut ui = crate::ui::Ui::new();
 
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             win.buffer_id = Some(buf.id);
             win.doc = Some(Document::new_with_buffer(
                 buf.id,
@@ -780,7 +818,7 @@ mod tests {
 
         cmd.set("write");
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
-        
+
         let content = std::fs::read_to_string(path_str).unwrap();
         assert_eq!(content, "hello world");
         let _ = std::fs::remove_file(&file_path);
@@ -788,7 +826,7 @@ mod tests {
         let custom_file_path = temp_dir.join("dzd_test_write_custom.txt");
         let custom_path_str = custom_file_path.to_str().unwrap();
         let _ = std::fs::remove_file(&custom_file_path);
-        
+
         cmd.set(&format!("write {}", custom_path_str));
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
 
@@ -812,7 +850,7 @@ mod tests {
         let mut ui = crate::ui::Ui::new();
 
         let empty_buf = buffer_manager.add_buffer_for_path("").unwrap();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             win.buffer_id = Some(empty_buf.id);
             win.doc = Some(Document::new_with_buffer(
                 empty_buf.id,
@@ -824,7 +862,7 @@ mod tests {
         cmd.set(&format!("edit {}", path_str));
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
 
-        if let Some(win) = ui.windows.get(&main_win) {
+        if let Some(win) = ui.window(main_win) {
             let active_doc = win.doc.as_ref().unwrap();
             let active_buf = buffer_manager.find(active_doc).unwrap();
             assert_eq!(active_buf.file_path, path_str);
@@ -843,23 +881,20 @@ mod tests {
         let mut ui = crate::ui::Ui::new();
 
         let buf = buffer_manager.add_buffer_for_path("").unwrap();
-        if let Some(win) = ui.windows.get_mut(&main_win) {
+        if let Some(win) = ui.window_mut(main_win) {
             win.buffer_id = Some(buf.id);
-            let mut doc = Document::new_with_buffer(
-                buf.id,
-                &buf.buffer,
-                &buf.file_path,
+            let mut doc = Document::new_with_buffer(buf.id, &buf.buffer, &buf.file_path);
+            doc.hl.textmate_style_cache.insert(
+                0,
+                crate::editor::display::highlight::StyleCache { styles: Vec::new() },
             );
-            doc.hl.textmate_style_cache.insert(0, crate::editor::display::highlight::StyleCache {
-                styles: Vec::new(),
-            });
             win.doc = Some(doc);
         }
 
         cmd.set("colorschemes tokyonight");
         cmd.ex(&mut ui, &mut editor, &mut buffer_manager);
 
-        if let Some(win) = ui.windows.get(&main_win) {
+        if let Some(win) = ui.window(main_win) {
             let doc = win.doc.as_ref().unwrap();
             assert!(doc.hl.textmate_style_cache.is_empty());
             assert!(doc.should_sync);

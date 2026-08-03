@@ -93,7 +93,6 @@ impl BufferManager {
         }
     }
 
-
     pub fn find(&self, doc: &Document) -> Option<&TextBuffer> {
         self.buffers.iter().find(|b| b.id == doc.id)
     }
@@ -110,11 +109,20 @@ impl BufferManager {
         self.buffers.iter_mut().find(|b| b.file_path == path)
     }
 
-    pub fn add_buffer_for_path(&mut self, path: &str) -> Result<&mut TextBuffer, Box<dyn std::error::Error>> {
+    pub fn add_buffer_for_path(
+        &mut self,
+        path: &str,
+    ) -> Result<&mut TextBuffer, Box<dyn std::error::Error>> {
         if let Some(pos) = self.buffers.iter().position(|b| b.file_path == path) {
             return Ok(&mut self.buffers[pos]);
         }
-        let next_id = self.buffers.iter().map(|b| b.id).max().map(|id| id + 1).unwrap_or(0);
+        let next_id = self
+            .buffers
+            .iter()
+            .map(|b| b.id)
+            .max()
+            .map(|id| id + 1)
+            .unwrap_or(0);
         let new_buf = TextBuffer::new(next_id, path)?;
         self.buffers.push(new_buf);
         Ok(self.buffers.last_mut().unwrap())
@@ -149,7 +157,7 @@ mod tests {
     fn test_add_buffer_for_path() {
         let mut bm = BufferManager::new();
         let path = "test_file_path.txt";
-        
+
         let id1 = {
             let buf1 = bm.add_buffer_for_path(path).unwrap();
             assert_eq!(buf1.file_path, path);

@@ -1,32 +1,17 @@
-use crate::ui::layout::Rect;
-use crate::ui::views::View;
-use crate::{controller::controllers::ViewController, editor::Editor};
+use crate::editor::Editor;
+use vim_ui::Rect;
+use crate::ui::views::{View, vim};
 use std::io::Write;
-
-use collections::Equivalent;
-use crossterm::{
-    cursor::MoveTo,
-    execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-};
 
 pub struct StatusBarView;
 
 impl StatusBarView {
-    pub fn new() -> Self {
-        StatusBarView {}
-    }
-}
-
-impl StatusBarView {
-    fn draw_statusbar<W: Write>(
+    fn status_parts(
         &self,
-        w: &mut W,
-        rect: Rect,
         editor: &Editor,
         buffer_manager: &mut crate::editor::buffers::BufferManager,
         _doc: Option<&crate::editor::document::Document>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(String, String), Box<dyn std::error::Error>> {
         use syntect::easy::ScopeRangeIterator;
         use syntect::parsing::{ParseState, ScopeStack};
         use text::{Point, ToOffset, ToPoint};
@@ -219,20 +204,7 @@ impl StatusBarView {
                 last_action_str, scope_str, indexer_status, autocomplete_str
             )
         };
-        let total_len = left_part.len() + pending_str.len();
-        let remaining = rect.width.saturating_sub(total_len as u16);
-        let spacing = " ".repeat(remaining as usize);
-        let status = format!("{}{}{}", left_part, spacing, pending_str);
-
-        execute!(
-            w,
-            MoveTo(rect.x, rect.y),
-            SetForegroundColor(Color::Black),
-            SetBackgroundColor(Color::White),
-            Print(status),
-            ResetColor,
-        )?;
-        Ok(())
+        Ok((left_part, pending_str.clone()))
     }
 }
 
@@ -248,10 +220,13 @@ impl View for StatusBarView {
     ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>>
     {
         let active_doc = ui
-            .focused_window_id
-            .and_then(|id| ui.windows.get(&id))
+            .focused_window_id()
+            .and_then(|id| ui.window(id))
             .and_then(|win| win.doc.as_ref());
-        self.draw_statusbar(&mut w, rect, editor, buffer_manager, active_doc)?;
+        let (left, right) = self.status_parts(editor, buffer_manager, active_doc)?;
+        let view = vim_ui::StatusLineView::new(left, right);
+        let context = vim::ViewContext::new(ui.colorscheme());
+        vim::draw(&view, &mut w, rect, &context)?;
         Ok(None)
     }
 }

@@ -5,7 +5,7 @@ use crate::editor::Editor;
 use crate::editor::display::display_map::DisplayPoint;
 use crate::services::background::{self, BackgroundTask, TaskId};
 use crate::ui::Ui;
-use crate::ui::layout::Rect;
+use vim_ui::Rect;
 use text::ToPoint;
 
 pub struct TextViewController {}
@@ -25,7 +25,8 @@ impl ViewController for TextViewController {
         window_id: usize,
         rect: Rect,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
-        let window = ui.windows.get_mut(&window_id).unwrap();
+        let colorscheme = ui.colorscheme().clone();
+        let window = ui.window_mut(window_id).unwrap();
         let document = window.doc.as_mut().unwrap();
         let buffer = buffer_manager.find_mut(document).unwrap();
 
@@ -93,7 +94,7 @@ impl ViewController for TextViewController {
                         snapshot: snapshot.clone(),
                         start_row: hl_start,
                         row_count: hl_end - hl_start,
-                        colorscheme: std::sync::Arc::new(ui.colorscheme.clone()),
+                        colorscheme: std::sync::Arc::new(colorscheme.clone()),
                         syntax_tree: buffer.syntax_tree.clone(),
                         textmate_highlights: editor.textmate_highlights,
                         treesitter_highlights: editor.treesitter_highlights,
@@ -123,7 +124,11 @@ impl ViewController for TextViewController {
                 }
             }
 
-            let is_first_index = document.current_index_task_id == 0 && document.latest_index_task_id.load(std::sync::atomic::Ordering::SeqCst) == 0;
+            let is_first_index = document.current_index_task_id == 0
+                && document
+                    .latest_index_task_id
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    == 0;
             if text_changed || is_first_index {
                 let start_row = if is_first_index {
                     0
@@ -215,7 +220,7 @@ impl ViewController for TextViewController {
                         &snapshot,
                         start_buffer_row,
                         end_buffer_row_exclusive - start_buffer_row,
-                        &ui.colorscheme,
+                        &colorscheme,
                         buffer.syntax_tree.as_ref(),
                         editor.textmate_highlights,
                         editor.treesitter_highlights,
@@ -239,7 +244,7 @@ impl ViewController for TextViewController {
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         if action != Action::NoOp {
             editor.apply_active_action(ui, buffer_manager, &action);
-            if let Some(window) = ui.windows.get_mut(&window_id) {
+            if let Some(window) = ui.window_mut(window_id) {
                 if let Some(ref mut document) = window.doc {
                     document.should_sync = true;
                 }

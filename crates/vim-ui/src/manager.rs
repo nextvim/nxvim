@@ -59,6 +59,10 @@ impl Ui {
         self.layout_engine.layout()
     }
 
+    pub fn computed_layout(&self) -> &ComputedLayout {
+        &self.cached_layout
+    }
+
     pub fn window_count(&self) -> usize {
         self.window_store.len()
     }
@@ -201,8 +205,10 @@ impl Ui {
             return Err(UiError::CannotCloseFinalEditorWindow);
         }
 
+        let mut sibling = None;
         if is_tiled {
-            let (removed, _) = self.layout_engine.remove_leaf(id);
+            let (removed, remaining_sibling) = self.layout_engine.remove_leaf(id);
+            sibling = remaining_sibling;
             debug_assert!(removed, "validated tiled window was not removed");
         } else if !self.overlay_manager.is_floating(id) {
             return Err(UiError::WindowNotInLayout(id));
@@ -213,10 +219,13 @@ impl Ui {
         self.update_layout();
 
         if self.focus_manager.focused_id() == id {
-            let replacement = self
-                .visible_focus_candidates()
-                .into_iter()
-                .next()
+            let replacement = sibling
+                .filter(|candidate| {
+                    self.window_store
+                        .get(*candidate)
+                        .is_some_and(|window| window.is_visible())
+                })
+                .or_else(|| self.visible_focus_candidates().into_iter().next())
                 .expect("closing a non-final window must leave a focus target");
             self.focus_manager.set_focus(replacement);
         }
@@ -225,6 +234,49 @@ impl Ui {
 
     pub fn find_neighbor(&self, direction: NavigationDirection) -> Option<WindowId> {
         self.focus_manager.navigate(direction, &self.cached_layout)
+    }
+
+    pub fn computed_overlays(
+        &self,
+        focused_window_cursor: Option<(u16, u16)>,
+    ) -> Vec<(WindowId, Rect)> {
+        self.overlay_manager
+            .sorted_floating_windows()
+            .into_iter()
+            .filter(|(id, _)| {
+                self.window_store
+                    .get(*id)
+                    .is_some_and(|window| window.is_visible())
+            })
+            .map(|(id, config)| {
+                let rect = self.overlay_manager.calculate_floating_rect(
+                    &config,
+                    self.screen_rect,
+                    &self.cached_layout,
+                    focused_window_cursor,
+                );
+                (id, rect)
+            })
+            .collect()
+    }
+
+    pub fn adjust_window_size(
+        &mut self,
+        id: WindowId,
+        axis: SplitAxis,
+        amount: f32,
+    ) -> UiResult<bool> {
+        if !self.window_store.contains(id) {
+            return Err(UiError::UnknownWindow(id));
+        }
+        if !self.layout_engine.contains_leaf(id) {
+            return Err(UiError::WindowNotInLayout(id));
+        }
+        let adjusted = self.layout_engine.adjust_size(id, axis, amount);
+        if adjusted {
+            self.update_layout();
+        }
+        Ok(adjusted)
     }
 
     pub fn draw(
