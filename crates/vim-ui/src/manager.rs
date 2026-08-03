@@ -419,11 +419,27 @@ impl Ui {
         let window = &self.window_store.get(id).unwrap();
         let is_focused = self.focus_manager.focused_id() == id;
         if window.draws_border() {
-            renderer.set_fg(if is_focused {
+            let mut border_fg = if is_focused {
                 crate::types::Color::Magenta
             } else {
                 crate::types::Color::DarkGrey
-            });
+            };
+            let mut border_bg = crate::types::Color::Reset;
+
+            if let Some(cs) = context.get_colorscheme() {
+                let border_group = if is_focused { "WinSeparator" } else { "LineNr" };
+                if let Some(style) = cs.get_style(border_group) {
+                    if let Some(fg) = style.fg {
+                        border_fg = fg;
+                    }
+                    if let Some(bg) = style.bg {
+                        border_bg = bg;
+                    }
+                }
+            }
+
+            renderer.set_fg(border_fg);
+            renderer.set_bg(border_bg);
             renderer.draw_rect(rect);
             renderer.reset_colors();
 
@@ -431,11 +447,27 @@ impl Ui {
                 let max_width = rect.width.saturating_sub(4) as usize;
                 if max_width > 0 {
                     let title: String = window.title().chars().take(max_width).collect();
-                    renderer.set_fg(if is_focused {
+                    let mut title_fg = if is_focused {
                         crate::types::Color::Magenta
                     } else {
                         crate::types::Color::White
-                    });
+                    };
+                    let mut title_bg = border_bg;
+
+                    if let Some(cs) = context.get_colorscheme() {
+                        let title_group = if is_focused { "Title" } else { "LineNr" };
+                        if let Some(style) = cs.get_style(title_group) {
+                            if let Some(fg) = style.fg {
+                                title_fg = fg;
+                            }
+                            if let Some(bg) = style.bg {
+                                title_bg = bg;
+                            }
+                        }
+                    }
+
+                    renderer.set_fg(title_fg);
+                    renderer.set_bg(title_bg);
                     renderer.move_to(rect.x + 2, rect.y);
                     renderer.print(&format!(" {title} "));
                     renderer.reset_colors();

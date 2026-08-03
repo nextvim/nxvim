@@ -9,6 +9,9 @@ use crate::model::BufferViewModel;
 pub trait UIContext {
     fn get_buffer_model(&self, id: BufferId) -> Option<BufferViewModel<'_>>;
     fn get_active_buffer_id(&self) -> Option<BufferId>;
+    fn get_colorscheme(&self) -> Option<&crate::colorscheme::ColorScheme> {
+        None
+    }
 }
 
 pub trait View {

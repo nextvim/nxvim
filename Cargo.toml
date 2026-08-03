@@ -26,3 +26,5 @@ vim-buffer = { path = "crates/vim-buffer" }
 vim-formatter = { path = "crates/vim-formatter" }
 vim-regex = { path = "crates/vim-regex" }
 vim-script = { path = "crates/vim-script" }
+vim-ui = { path = "crates/vim-ui" }
+vim-input = { path = "crates/vim-input" }
