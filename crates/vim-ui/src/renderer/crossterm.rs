@@ -1,4 +1,3 @@
-use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::types::Color;
 use crossterm::{
@@ -19,45 +18,50 @@ impl<W: Write> CrosstermRenderer<W> {
 }
 
 impl<W: Write> Renderer for CrosstermRenderer<W> {
-    fn move_to(&mut self, x: u16, y: u16) {
-        let _ = execute!(self.writer, MoveTo(x, y));
+    fn move_to(&mut self, x: u16, y: u16) -> std::io::Result<()> {
+        execute!(self.writer, MoveTo(x, y))
     }
 
-    fn print(&mut self, text: &str) {
-        let _ = execute!(self.writer, Print(text));
+    fn print(&mut self, text: &str) -> std::io::Result<()> {
+        execute!(self.writer, Print(text))
     }
 
-    fn set_fg(&mut self, color: Color) {
-        let _ = execute!(self.writer, SetForegroundColor(color.into()));
+    fn set_fg(&mut self, color: Color) -> std::io::Result<()> {
+        execute!(self.writer, SetForegroundColor(color.into()))
     }
 
-    fn set_bg(&mut self, color: Color) {
-        let _ = execute!(self.writer, SetBackgroundColor(color.into()));
+    fn set_bg(&mut self, color: Color) -> std::io::Result<()> {
+        execute!(self.writer, SetBackgroundColor(color.into()))
     }
 
-    fn reset_colors(&mut self) {
-        let _ = execute!(self.writer, ResetColor);
+    fn reset_colors(&mut self) -> std::io::Result<()> {
+        execute!(self.writer, ResetColor)
     }
+}
 
-    fn draw_rect(&mut self, rect: Rect) {
-        // Simple border drawing logic
-        self.move_to(rect.x, rect.y);
-        self.print("┌");
-        self.print(&"─".repeat(rect.width.saturating_sub(2) as usize));
-        self.print("┐");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        for y in 1..rect.height.saturating_sub(1) {
-            self.move_to(rect.x, rect.y + y);
-            self.print("│");
-            self.move_to(rect.x + rect.width.saturating_sub(1), rect.y + y);
-            self.print("│");
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("intentional renderer failure"))
         }
 
-        if rect.height > 1 {
-            self.move_to(rect.x, rect.y + rect.height - 1);
-            self.print("└");
-            self.print(&"─".repeat(rect.width.saturating_sub(2) as usize));
-            self.print("┘");
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
         }
+    }
+
+    #[test]
+    fn propagates_writer_errors() {
+        let mut renderer = CrosstermRenderer::new(FailingWriter);
+
+        let error = renderer.print("text").unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "intentional renderer failure");
     }
 }
