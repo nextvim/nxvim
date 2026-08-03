@@ -591,12 +591,14 @@ impl Document {
                 .find_character(*select, *count, *ch, true, *till, buffer),
             Action::SearchBackward { count } => {
                 for _ in 0..*count {
-                    self.selections.move_to_previous_match(&editor.search_pattern, true, buffer);
+                    self.selections
+                        .move_to_previous_match(&editor.search_pattern, true, buffer);
                 }
             }
             Action::SearchForward { count } => {
                 for _ in 0..*count {
-                    self.selections.move_to_next_match(&editor.search_pattern, true, buffer);
+                    self.selections
+                        .move_to_next_match(&editor.search_pattern, true, buffer);
                 }
             }
             Action::MoveWithinCharacter { count, ch } => {
@@ -950,7 +952,9 @@ impl Document {
                             id: cursor.id,
                             start,
                             end: anchor.clone(),
-                            reversed: *select && (buffer.offset_for_anchor(&anchor) < buffer.offset_for_anchor(&cursor.start)),
+                            reversed: *select
+                                && (buffer.offset_for_anchor(&anchor)
+                                    < buffer.offset_for_anchor(&cursor.start)),
                             goal: SelectionGoal::None,
                         };
                         self.selections.update(buffer, &next);
@@ -1652,7 +1656,7 @@ mod tests {
             buffer_manager.add_buffer_for_path("").unwrap();
             let mut ui = crate::ui::Ui::new();
             let active_buf = &buffer_manager.buffers[0];
-            if let Some(win) = ui.windows.get_mut(&MAIN_WIN) {
+            if let Some(win) = ui.window_mut(MAIN_WIN) {
                 win.buffer_id = Some(active_buf.id);
                 win.doc = Some(Document::new_with_buffer(
                     active_buf.id,
@@ -1673,23 +1677,11 @@ mod tests {
         }
 
         fn doc(&self) -> &Document {
-            self.ui
-                .windows
-                .get(&MAIN_WIN)
-                .unwrap()
-                .doc
-                .as_ref()
-                .unwrap()
+            self.ui.window(MAIN_WIN).unwrap().doc.as_ref().unwrap()
         }
 
         fn doc_mut(&mut self) -> &mut Document {
-            self.ui
-                .windows
-                .get_mut(&MAIN_WIN)
-                .unwrap()
-                .doc
-                .as_mut()
-                .unwrap()
+            self.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap()
         }
 
         fn buffer(&self) -> &text::Buffer {
@@ -1702,14 +1694,7 @@ mod tests {
         let mut env = TestEnv::new();
 
         let buffer = &env.buffer_manager.buffers[0].buffer;
-        let doc = env
-            .ui
-            .windows
-            .get_mut(&MAIN_WIN)
-            .unwrap()
-            .doc
-            .as_mut()
-            .unwrap();
+        let doc = env.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap();
         doc.enter_mode(buffer, Mode::Insert);
         env.apply_action(&Action::InsertText("abc".into()));
         env.apply_action(&Action::MoveLeft {
@@ -1731,14 +1716,7 @@ mod tests {
         let mut env = TestEnv::new();
 
         let buffer = &env.buffer_manager.buffers[0].buffer;
-        let doc = env
-            .ui
-            .windows
-            .get_mut(&MAIN_WIN)
-            .unwrap()
-            .doc
-            .as_mut()
-            .unwrap();
+        let doc = env.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap();
         doc.enter_mode(buffer, Mode::Insert);
         env.apply_action(&Action::InsertText("abc".into()));
         env.apply_action(&Action::MoveLeft {
@@ -1756,14 +1734,7 @@ mod tests {
 
         let mut env2 = TestEnv::new();
         let buffer2 = &env2.buffer_manager.buffers[0].buffer;
-        let doc2 = env2
-            .ui
-            .windows
-            .get_mut(&MAIN_WIN)
-            .unwrap()
-            .doc
-            .as_mut()
-            .unwrap();
+        let doc2 = env2.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap();
         doc2.enter_mode(buffer2, Mode::Insert);
         env2.apply_action(&Action::InsertText("abc".into()));
         env2.apply_action(&Action::MoveLeft {
@@ -1820,28 +1791,37 @@ mod tests {
 
         env.apply_action(&Action::MarkSet { ch: 'a' });
 
-        env.apply_action(&Action::MoveToStartOfDocument { select: false, count: 1 });
+        env.apply_action(&Action::MoveToStartOfDocument {
+            select: false,
+            count: 1,
+        });
         assert_eq!(
             env.doc().selection().head().to_point(env.buffer()).column,
             0
         );
 
-        env.apply_action(&Action::MarkJump { ch: 'a', select: false });
+        env.apply_action(&Action::MarkJump {
+            ch: 'a',
+            select: false,
+        });
         assert_eq!(
             env.doc().selection().head().to_point(env.buffer()).column,
             2
         );
 
-        env.apply_action(&Action::MoveToStartOfDocument { select: false, count: 1 });
-        env.apply_action(&Action::MarkJump { ch: 'a', select: true });
+        env.apply_action(&Action::MoveToStartOfDocument {
+            select: false,
+            count: 1,
+        });
+        env.apply_action(&Action::MarkJump {
+            ch: 'a',
+            select: true,
+        });
         assert_eq!(
             env.doc().selection().head().to_point(env.buffer()).column,
             2
         );
-        assert_eq!(
-            env.doc().selection().start.to_point(env.buffer()).column,
-            0
-        );
+        assert_eq!(env.doc().selection().start.to_point(env.buffer()).column, 0);
     }
 
     #[test]
@@ -1855,14 +1835,8 @@ mod tests {
         });
 
         env.apply_action(&Action::SelectSimilar);
-        assert_eq!(
-            env.doc().selection().start.to_point(env.buffer()).column,
-            6
-        );
-        assert_eq!(
-            env.doc().selection().end.to_point(env.buffer()).column,
-            10
-        );
+        assert_eq!(env.doc().selection().start.to_point(env.buffer()).column, 6);
+        assert_eq!(env.doc().selection().end.to_point(env.buffer()).column, 10);
 
         env.apply_action(&Action::SelectSimilar);
         assert_eq!(env.doc().selections().selections.len(), 2);
@@ -2016,7 +1990,7 @@ line 3"
     let y = 2;
 }";
         env.buffer_manager.buffers[0] = TextBuffer::new_with_text(text);
-        if let Some(win) = env.ui.windows.get_mut(&MAIN_WIN) {
+        if let Some(win) = env.ui.window_mut(MAIN_WIN) {
             let active_buf = &env.buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -2060,7 +2034,7 @@ line 3"
 
         let text = "fn main() { let x = 1; }";
         env.buffer_manager.buffers[0] = TextBuffer::new_with_text(text);
-        if let Some(win) = env.ui.windows.get_mut(&MAIN_WIN) {
+        if let Some(win) = env.ui.window_mut(MAIN_WIN) {
             let active_buf = &env.buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -2106,7 +2080,7 @@ line 2
 line 3
 line 4";
         env.buffer_manager.buffers[0] = TextBuffer::new_with_text(text);
-        if let Some(win) = env.ui.windows.get_mut(&MAIN_WIN) {
+        if let Some(win) = env.ui.window_mut(MAIN_WIN) {
             let active_buf = &env.buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -2135,14 +2109,7 @@ line 4";
             goal: SelectionGoal::None,
         };
         let buffer = &env.buffer_manager.buffers[0].buffer;
-        let doc = env
-            .ui
-            .windows
-            .get_mut(&MAIN_WIN)
-            .unwrap()
-            .doc
-            .as_mut()
-            .unwrap();
+        let doc = env.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap();
         doc.selections.update(buffer, &selection);
 
         env.apply_action(&Action::Delete { count: 1 });
@@ -2156,7 +2123,7 @@ line 4";
 
         let text = "fn main() {\n    let x = 1;\n}";
         env.buffer_manager.buffers[0] = TextBuffer::new_with_text(text);
-        if let Some(win) = env.ui.windows.get_mut(&MAIN_WIN) {
+        if let Some(win) = env.ui.window_mut(MAIN_WIN) {
             let active_buf = &env.buffer_manager.buffers[0];
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
@@ -2186,14 +2153,7 @@ line 4";
             goal: SelectionGoal::None,
         };
         let buffer = &env.buffer_manager.buffers[0].buffer;
-        let doc = env
-            .ui
-            .windows
-            .get_mut(&MAIN_WIN)
-            .unwrap()
-            .doc
-            .as_mut()
-            .unwrap();
+        let doc = env.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap();
         doc.selections.update(buffer, &selection);
 
         // Delete '}' forward should delete the fold
@@ -2208,7 +2168,7 @@ line 4";
         env.buffer_manager.buffers[0] = TextBuffer::new_with_text(text);
 
         let active_buf = &env.buffer_manager.buffers[0];
-        if let Some(win) = env.ui.windows.get_mut(&MAIN_WIN) {
+        if let Some(win) = env.ui.window_mut(MAIN_WIN) {
             win.buffer_id = Some(active_buf.id);
             win.doc = Some(Document::new_with_buffer(
                 active_buf.id,
@@ -2228,14 +2188,7 @@ line 4";
         // Clear the buffer and document
         let buf = &mut env.buffer_manager.buffers[0];
         buf.clear();
-        let doc = env
-            .ui
-            .windows
-            .get_mut(&MAIN_WIN)
-            .unwrap()
-            .doc
-            .as_mut()
-            .unwrap();
+        let doc = env.ui.window_mut(MAIN_WIN).unwrap().doc.as_mut().unwrap();
         doc.clear(&buf.buffer);
 
         // Verify everything was reset

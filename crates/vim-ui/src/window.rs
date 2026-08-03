@@ -4,11 +4,14 @@ use crate::rect::Rect;
 use crate::renderer::Renderer;
 
 use crate::id::BufferId;
-use crate::model::BufferViewModel;
+use crate::model::{BufferViewModel, TextViewModel};
 
 pub trait UIContext {
     fn get_buffer_model(&self, id: BufferId) -> Option<BufferViewModel<'_>>;
     fn get_active_buffer_id(&self) -> Option<BufferId>;
+    fn get_text_model(&self, _window_id: WindowId) -> Option<&TextViewModel> {
+        None
+    }
     fn get_colorscheme(&self) -> Option<&crate::colorscheme::ColorScheme> {
         None
     }

@@ -47,12 +47,7 @@ impl Editor {
     ) {
         self.tree_sitter = enabled;
         if !enabled {
-            for window in ui.windows.values_mut() {
-                if let Some(ref mut doc) = window.doc {
-                    doc.latest_parse_task_id
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                }
-            }
+            ui.cancel_document_parse_tasks();
             for buffer in &mut buffer_manager.buffers {
                 buffer.syntax_tree = None;
             }
@@ -65,8 +60,8 @@ impl Editor {
         buffer_manager: &mut BufferManager,
         action: &controller::actions::Action,
     ) {
-        let active_win_id = ui.focused_window_id.unwrap();
-        let window = ui.windows.get_mut(&active_win_id).unwrap();
+        let active_win_id = ui.focused_window_id().unwrap();
+        let window = ui.window_mut(active_win_id).unwrap();
         let doc = window.doc.as_mut().unwrap();
         let text_buffer = buffer_manager.find_mut(doc).unwrap();
         doc.apply_action(

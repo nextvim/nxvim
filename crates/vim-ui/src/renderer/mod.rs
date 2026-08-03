@@ -14,6 +14,47 @@ pub trait Renderer {
     fn set_bg(&mut self, color: Color) -> std::io::Result<()>;
     fn reset_colors(&mut self) -> std::io::Result<()>;
 
+    fn set_style(&mut self, style: crate::colorscheme::Style) -> std::io::Result<()> {
+        self.set_fg(style.fg.unwrap_or(Color::Reset))?;
+        self.set_bg(style.bg.unwrap_or(Color::Reset))
+    }
+
+    fn show_cursor(
+        &mut self,
+        x: u16,
+        y: u16,
+        _shape: crate::model::CursorShape,
+    ) -> std::io::Result<()> {
+        self.move_to(x, y)
+    }
+
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn draw_window_frame(
+        &mut self,
+        rect: Rect,
+        title: Option<&str>,
+        style: crate::colorscheme::Style,
+    ) -> std::io::Result<()> {
+        self.set_style(style)?;
+        self.draw_rect(rect)?;
+        if let Some(title) = title.filter(|title| !title.is_empty()) {
+            let max_width = rect.width.saturating_sub(4) as usize;
+            if max_width > 0 {
+                let title: String = title.chars().take(max_width).collect();
+                let title_width = title.chars().count();
+                if title_width + 4 < rect.width as usize {
+                    let x = rect.x + 1 + ((rect.width as usize - title_width - 4) / 2) as u16;
+                    self.move_to(x, rect.y)?;
+                    self.print(&format!(" {title} "))?;
+                }
+            }
+        }
+        self.reset_colors()
+    }
+
     fn draw_rect(&mut self, rect: Rect) -> std::io::Result<()> {
         self.move_to(rect.x, rect.y)?;
         self.print("┌")?;
@@ -54,6 +95,8 @@ pub struct BufferedRenderer {
     cursor_y: u16,
     final_cursor_x: u16,
     final_cursor_y: u16,
+    cursor_visible: bool,
+    cursor_shape: crate::model::CursorShape,
     current_fg: Color,
     current_bg: Color,
 }
@@ -71,6 +114,8 @@ impl BufferedRenderer {
             cursor_y: 0,
             final_cursor_x: 0,
             final_cursor_y: 0,
+            cursor_visible: false,
+            cursor_shape: crate::model::CursorShape::Block,
             current_fg: Color::Reset,
             current_bg: Color::Reset,
         }
@@ -88,6 +133,7 @@ impl BufferedRenderer {
     pub fn flush<W: std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
         use ::crossterm::{
             cursor::MoveTo,
+            cursor::{Hide, SetCursorStyle, Show},
             execute, queue,
             style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
         };
@@ -117,11 +163,22 @@ impl BufferedRenderer {
             }
         }
 
+        let cursor_shape = match self.cursor_shape {
+            crate::model::CursorShape::Block => SetCursorStyle::SteadyBlock,
+            crate::model::CursorShape::Bar => SetCursorStyle::SteadyBar,
+            crate::model::CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+        };
         execute!(
             writer,
             ResetColor,
-            MoveTo(self.final_cursor_x, self.final_cursor_y)
+            MoveTo(self.final_cursor_x, self.final_cursor_y),
+            cursor_shape
         )?;
+        if self.cursor_visible {
+            execute!(writer, Show)?;
+        } else {
+            execute!(writer, Hide)?;
+        }
 
         // Swap buffers
         std::mem::swap(&mut self.current, &mut self.last);
@@ -153,6 +210,24 @@ impl Renderer for BufferedRenderer {
             );
             self.cursor_x += 1;
         }
+        Ok(())
+    }
+
+    fn show_cursor(
+        &mut self,
+        x: u16,
+        y: u16,
+        shape: crate::model::CursorShape,
+    ) -> std::io::Result<()> {
+        self.final_cursor_x = x;
+        self.final_cursor_y = y;
+        self.cursor_shape = shape;
+        self.cursor_visible = true;
+        Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        self.cursor_visible = false;
         Ok(())
     }
 

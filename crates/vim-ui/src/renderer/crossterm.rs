@@ -1,9 +1,9 @@
 use crate::renderer::Renderer;
 use crate::types::Color;
 use crossterm::{
-    cursor::MoveTo,
+    cursor::{Hide, MoveTo, SetCursorStyle, Show},
     execute,
-    style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Attribute, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
 };
 use std::io::Write;
 
@@ -35,7 +35,54 @@ impl<W: Write> Renderer for CrosstermRenderer<W> {
     }
 
     fn reset_colors(&mut self) -> std::io::Result<()> {
-        execute!(self.writer, ResetColor)
+        execute!(self.writer, ResetColor, SetAttribute(Attribute::Reset))
+    }
+
+    fn show_cursor(
+        &mut self,
+        x: u16,
+        y: u16,
+        shape: crate::model::CursorShape,
+    ) -> std::io::Result<()> {
+        let shape = match shape {
+            crate::model::CursorShape::Block => SetCursorStyle::SteadyBlock,
+            crate::model::CursorShape::Bar => SetCursorStyle::SteadyBar,
+            crate::model::CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+        };
+        execute!(self.writer, MoveTo(x, y), shape, Show)
+    }
+
+    fn hide_cursor(&mut self) -> std::io::Result<()> {
+        execute!(self.writer, Hide)
+    }
+
+    fn set_style(&mut self, style: crate::colorscheme::Style) -> std::io::Result<()> {
+        execute!(
+            self.writer,
+            SetForegroundColor(style.fg.unwrap_or(Color::Reset).into()),
+            SetBackgroundColor(style.bg.unwrap_or(Color::Reset).into()),
+            SetAttribute(Attribute::Reset),
+            SetAttribute(if style.bold {
+                Attribute::Bold
+            } else {
+                Attribute::NoBold
+            }),
+            SetAttribute(if style.italic {
+                Attribute::Italic
+            } else {
+                Attribute::NoItalic
+            }),
+            SetAttribute(if style.underline {
+                Attribute::Underlined
+            } else {
+                Attribute::NoUnderline
+            }),
+            SetAttribute(if style.strikethrough {
+                Attribute::CrossedOut
+            } else {
+                Attribute::NotCrossedOut
+            })
+        )
     }
 }
 

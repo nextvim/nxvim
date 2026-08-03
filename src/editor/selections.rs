@@ -1700,7 +1700,8 @@ impl SelectionCollection {
                             cur.clone()
                         };
 
-                        if let Some(matched) = search_cur.move_to_next_pattern_match(regex, buffer) {
+                        if let Some(matched) = search_cur.move_to_next_pattern_match(regex, buffer)
+                        {
                             self.update(buffer, &matched);
                             break;
                         } else {
@@ -1910,7 +1911,7 @@ mod tests {
         );
         // Start at 'h' (index 0)
         let mut cursor = selection(&buffer, 0, 0, 0, false);
-        
+
         // Move to word end -> should be 'o' of hello (index 4)
         cursor = cursor.move_to_word_end(false, &buffer);
         assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 4));
@@ -1956,14 +1957,15 @@ mod tests {
             "abc\npattern_here\ndef",
         );
         let mut selections = SelectionCollection::new();
-        selections.selections.push(selection(&buffer, 0, 0, 0, false));
-        
+        selections
+            .selections
+            .push(selection(&buffer, 0, 0, 0, false));
+
         // Search forward for "pattern" (starts at first character of the second line)
         selections.move_to_next_match("pattern", true, &buffer);
-        
+
         // The selection should have moved to the start of "pattern_here" (line 1, column 0)
         let head_pt = selections.selections[0].head().to_point(&buffer);
         assert_eq!(head_pt, Point::new(1, 0));
     }
 }
-

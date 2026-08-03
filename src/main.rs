@@ -38,29 +38,18 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if buffer_manager.buffers.is_empty() {
         buffer_manager.add_buffer_for_path("")?;
     }
-    
-    if let Some(win) = ui.windows.get_mut(&(ui::WindowId::MainWindow as usize)) {
-        let active_buf = buffer_manager.buffers.first().unwrap();
-        win.buffer_id = Some(active_buf.id);
-        win.doc = Some(editor::document::Document::new_with_buffer(
-            active_buf.id,
-            &active_buf.buffer,
-            &active_buf.file_path,
-        ));
-    }
+
+    let active_buffer_id = buffer_manager.buffers.first().unwrap().id;
+    ui.set_window_buffer(
+        ui::WindowId::MainWindow as usize,
+        active_buffer_id,
+        &buffer_manager,
+    );
 
     let cmd_buf = buffer_manager.add_buffer_for_path("#command")?;
     let cmd_id = cmd_buf.id;
-    let cmd_file_path = cmd_buf.file_path.clone();
-    if let Some(win) = ui.windows.get_mut(&(ui::WindowId::CommandLine as usize)) {
-        let cmd_buffer = buffer_manager.find_by_path(&cmd_file_path).unwrap();
-        win.buffer_id = Some(cmd_id);
-        win.doc = Some(editor::document::Document::new_with_buffer(
-            cmd_id,
-            &cmd_buffer.buffer,
-            &cmd_buffer.file_path,
-        ));
-    }
+
+    ui.set_window_buffer(ui::WindowId::CommandLine as usize, cmd_id, &buffer_manager);
 
     crossterm::terminal::enable_raw_mode().unwrap();
     execute!(
@@ -97,12 +86,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        match controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)?{
-                controller::ControllerResult::Exit => {
-                    break;
-                }
-                _ => {}
+        match controller.dispatch_actions(&mut editor, &mut buffer_manager, &mut ui)? {
+            controller::ControllerResult::Exit => {
+                break;
             }
+            _ => {}
+        }
 
         services::poll(&mut editor, &mut buffer_manager, &mut ui)?;
     }

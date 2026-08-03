@@ -24,6 +24,7 @@ impl WindowStore {
     }
 
     pub fn insert(&mut self, id: WindowId, window: Window) {
+        self.next_id = self.next_id.max(id.get().saturating_add(1));
         self.windows.insert(id, window);
     }
 
