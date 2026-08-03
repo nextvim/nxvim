@@ -1,17 +1,32 @@
-use crate::editor::Editor;
-use crate::ui::views::{View, vim};
+use crate::ui::layout::Rect;
+use crate::ui::views::View;
+use crate::{controller::controllers::ViewController, editor::Editor};
 use std::io::Write;
-use vim_ui::Rect;
+
+use collections::Equivalent;
+use crossterm::{
+    cursor::MoveTo,
+    execute,
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+};
 
 pub struct StatusBarView;
 
 impl StatusBarView {
-    fn status_parts(
+    pub fn new() -> Self {
+        StatusBarView {}
+    }
+}
+
+impl StatusBarView {
+    fn draw_statusbar<W: Write>(
         &self,
+        w: &mut W,
+        rect: Rect,
         editor: &Editor,
         buffer_manager: &mut crate::editor::buffers::BufferManager,
         _doc: Option<&crate::editor::document::Document>,
-    ) -> Result<(String, String), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         use syntect::easy::ScopeRangeIterator;
         use syntect::parsing::{ParseState, ScopeStack};
         use text::{Point, ToOffset, ToPoint};
@@ -58,11 +73,11 @@ impl StatusBarView {
                     .chunks_in_range(start_off..end_off)
                     .collect();
                 let line = line_str + "\n";
-                if let Ok(parsed) = parser.parse_line(&line, doc.hl.syntax_set()) {
-                    for (_, op) in &parsed.ops {
-                        let _ = stack.apply(op);
-                    }
-                }
+                // if let Ok(ops) = parser.parse_line(&line, doc.hl.syntax_set()) {
+                //     for (_, op) in ops {
+                //         let _ = stack.apply(&op);
+                //     }
+                // }
             }
 
             let start_off = Point::new(point.row, 0).to_offset(&active_buf.buffer);
@@ -75,27 +90,27 @@ impl StatusBarView {
                 .chunks_in_range(start_off..end_off)
                 .collect();
             let line = line_str + "\n";
-            if let Ok(parsed) = parser.parse_line(&line, doc.hl.syntax_set()) {
-                let mut target_scopes = Vec::new();
-                let mut column = 0_u32;
-                for (range, op) in ScopeRangeIterator::new(&parsed.ops, &line) {
-                    let _ = stack.apply(&op);
-                    let start_column = column;
-                    let len = range.end - range.start;
-                    column += len as u32;
-                    if point.column >= start_column && point.column < column {
-                        target_scopes = stack.as_slice().to_vec();
-                        break;
-                    }
-                }
+            if let Ok(ops) = parser.parse_line(&line, doc.hl.syntax_set()) {
+                // let mut target_scopes = Vec::new();
+                // let mut column = 0_u32;
+                // for (range, op) in ScopeRangeIterator::new(&ops, &line) {
+                //     let _ = stack.apply(&op);
+                //     let start_column = column;
+                //     let len = range.end - range.start;
+                //     column += len as u32;
+                //     if point.column >= start_column && point.column < column {
+                //         target_scopes = stack.as_slice().to_vec();
+                //         break;
+                //     }
+                // }
 
-                if !target_scopes.is_empty() {
-                    scope_str.push('[');
-                    let scope_names: Vec<String> =
-                        target_scopes.iter().map(|s| s.to_string()).collect();
-                    scope_str.push_str(&scope_names.join(" "));
-                    scope_str.push(']');
-                }
+                // if !target_scopes.is_empty() {
+                // scope_str.push('[');
+                // let scope_names: Vec<String> =
+                //     target_scopes.iter().map(|s| s.to_string()).collect();
+                // scope_str.push_str(&scope_names.join(" "));
+                // scope_str.push(']');
+                // }
             }
 
             // 2. Tree-sitter node kind
@@ -204,7 +219,20 @@ impl StatusBarView {
                 last_action_str, scope_str, indexer_status, autocomplete_str
             )
         };
-        Ok((left_part, pending_str.clone()))
+        let total_len = left_part.len() + pending_str.len();
+        let remaining = rect.width.saturating_sub(total_len as u16);
+        let spacing = " ".repeat(remaining as usize);
+        let status = format!("{}{}{}", left_part, spacing, pending_str);
+
+        execute!(
+            w,
+            MoveTo(rect.x, rect.y),
+            SetForegroundColor(Color::Black),
+            SetBackgroundColor(Color::White),
+            Print(status),
+            ResetColor,
+        )?;
+        Ok(())
     }
 }
 
@@ -220,13 +248,10 @@ impl View for StatusBarView {
     ) -> Result<Option<(u16, u16, Option<crate::ui::CursorShape>)>, Box<dyn std::error::Error>>
     {
         let active_doc = ui
-            .focused_window_id()
-            .and_then(|id| ui.window(id))
+            .focused_window_id
+            .and_then(|id| ui.windows.get(&id))
             .and_then(|win| win.doc.as_ref());
-        let (left, right) = self.status_parts(editor, buffer_manager, active_doc)?;
-        let view = vim_ui::StatusLineView::new(left, right);
-        let context = vim::ViewContext::new(ui.colorscheme());
-        vim::draw(&view, &mut w, rect, &context)?;
+        self.draw_statusbar(&mut w, rect, editor, buffer_manager, active_doc)?;
         Ok(None)
     }
 }

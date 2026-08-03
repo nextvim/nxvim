@@ -4,9 +4,9 @@ use crate::editor::Editor;
 use crate::editor::display::display_map::DisplayPoint;
 use crate::services::background::{self, BackgroundTask, TaskId};
 use crate::ui::Ui;
+use crate::ui::layout::Rect;
 use text::ToPoint;
 use vim_input::Action;
-use vim_ui::Rect;
 
 pub struct TextViewController {}
 
@@ -26,9 +26,15 @@ impl ViewController for TextViewController {
         rect: Rect,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
         let colorscheme = ui.colorscheme().clone();
-        let window = ui.window_mut(window_id).unwrap();
-        let document = window.doc.as_mut().unwrap();
-        let buffer = buffer_manager.find_mut(document).unwrap();
+        let Some(window) = ui.window_mut(window_id) else {
+            return Ok(ControllerResult::None);
+        };
+        let Some(document) = window.doc.as_mut() else {
+            return Ok(ControllerResult::None);
+        };
+        let Some(buffer) = buffer_manager.find_mut(document) else {
+            return Ok(ControllerResult::None);
+        };
 
         // Update layout before wrapping so the wrap width reflects the current gutter.
         let row_count = buffer.buffer.row_count();
@@ -262,7 +268,9 @@ impl ViewController for TextViewController {
         document: Option<&mut crate::editor::document::Document>,
         colorscheme: &crate::ui::colorscheme::ColorScheme,
     ) -> Result<ControllerResult, Box<dyn std::error::Error>> {
-        let document = document.expect("TextViewController requires a Document view state");
+        let Some(document) = document else {
+            return Ok(ControllerResult::None);
+        };
         match result {
             background::BackgroundResult::HighlightComplete {
                 file_path,

@@ -1,8 +1,8 @@
 use crate::controller::ControllerResult;
 use crate::editor::Editor;
 use crate::ui::Ui;
+use crate::ui::layout::Rect;
 use vim_input as actions;
-use vim_ui::Rect;
 
 use crate::services::background;
 
