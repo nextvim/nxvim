@@ -240,11 +240,15 @@ impl Controller {
                 actions::Action::Command(command_string) => {
                     let mut executed_via_script = false;
                     if let Some(script_runtime) = script.as_mut() {
-                        let cmd_name = command_string.split_whitespace().next().unwrap_or("");
-                        if script_runtime.is_command_registered(cmd_name) {
+                        if script_runtime.is_command_registered(&command_string) {
                             if let Some(host) = script_runtime.host_runtime() {
+                                let executable_command = if command_string.starts_with(':') {
+                                    command_string.clone()
+                                } else {
+                                    format!(":{}", command_string)
+                                };
                                 execute_source(
-                                    command_string,
+                                    &executable_command,
                                     &mut self.globals,
                                     host,
                                     &mut self.sources,

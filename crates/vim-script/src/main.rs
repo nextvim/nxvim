@@ -47,6 +47,13 @@ fn main() {
         endfunction
 
         let g:factorial_5 = CalculateFactorial(5)
+
+        " Demonstrate command definitions accepting ranges
+        " 1. Log all initial buffer lines using a whole-file range (%)
+        :%LogRange
+
+        " 2. Delete the first two lines using a specific numeric range
+        :1,2DeleteLines
     "#;
 
     println!("Source code to execute:");
@@ -112,6 +119,24 @@ fn main() {
         accepts_count: false,
         accepts_register: false,
         required_capabilities: vec![Capability::UserInterface],
+    });
+    host.register_command(CommandDefinition {
+        name: "DeleteLines".into(),
+        minimum_abbreviation: 3,
+        accepts_bang: false,
+        accepts_range: true,
+        accepts_count: false,
+        accepts_register: false,
+        required_capabilities: vec![Capability::BufferWrite],
+    });
+    host.register_command(CommandDefinition {
+        name: "LogRange".into(),
+        minimum_abbreviation: 3,
+        accepts_bang: false,
+        accepts_range: true,
+        accepts_count: false,
+        accepts_register: false,
+        required_capabilities: vec![Capability::BufferRead],
     });
 
     // 4. Compile the Vimscript
@@ -182,6 +207,16 @@ fn main() {
             println!("Final Editor Buffer State:");
             print_buffer_lines(&editor);
             println!();
+
+            if let Ok(state) = editor.snapshot() {
+                if !state.messages.is_empty() {
+                    println!("Logged messages during execution:");
+                    for msg in &state.messages {
+                        println!("  {}", msg);
+                    }
+                    println!();
+                }
+            }
 
             println!("Final Editor Options and Style State:");
             if let Ok(state) = editor.snapshot() {

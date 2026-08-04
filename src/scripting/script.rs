@@ -25,6 +25,7 @@ impl ScriptRuntime {
         let (sender, commands) = mpsc::channel();
         let mut host = HostRuntime::new(Arc::new(EditorHost { sender }));
         host.capabilities.grant(Capability::Editor);
+        host.capabilities.grant(Capability::BufferWrite);
         register_editor_commands(&mut host);
 
         let mut scheduler = Scheduler::default();
@@ -39,10 +40,20 @@ impl ScriptRuntime {
         self.commands.try_recv().ok()
     }
 
-    pub fn is_command_registered(&self, name: &str) -> bool {
+    pub fn is_command_registered(&self, command_line: &str) -> bool {
+        use vim_script::ex_parser::ExLineParser;
+        use vim_script::source::SourceId;
+
+        let parser = ExLineParser::new(SourceId(0), command_line, 0);
+        let name = if let Ok(parsed) = parser.parse() {
+            parsed.command.name
+        } else {
+            command_line.to_string()
+        };
+
         self.scheduler
             .host()
-            .is_some_and(|host| host.commands.resolve(name).is_ok())
+            .is_some_and(|host| host.commands.resolve(&name).is_ok())
     }
 
     pub fn host_runtime(&self) -> Option<&HostRuntime> {
@@ -117,11 +128,11 @@ fn register_editor_commands(host: &mut HostRuntime) {
         host.register_command(CommandDefinition {
             name: name.to_owned(),
             minimum_abbreviation,
-            accepts_bang: false,
+            accepts_bang: true,
             accepts_range: true,
-            accepts_count: true,
+            accepts_count: false,
             accepts_register: false,
-            required_capabilities: vec![Capability::Editor],
+            required_capabilities: vec![Capability::BufferWrite],
         });
     }
 }
