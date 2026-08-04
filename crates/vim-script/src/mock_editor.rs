@@ -170,6 +170,80 @@ impl Host for MockEditor {
                     state.syntax_reset_count += 1;
                     Ok(Value::Null)
                 }
+                "DeleteLines" => {
+                    let cursor_line = state.cursor.0;
+                    let buffer = current_buffer_mut(&mut state)?;
+                    let line_count = buffer.lines.len();
+
+                    let (start, end) = if let Some(range) = &request.command.range {
+                        resolve_range(range, cursor_line, line_count)
+                    } else {
+                        (cursor_line, cursor_line)
+                    };
+
+                    // Clamp to valid line numbers and convert to 0-based indices
+                    let start_idx = start.clamp(1, line_count) - 1;
+                    let end_idx = end.clamp(1, line_count) - 1;
+
+                    let (low, high) = if start_idx <= end_idx {
+                        (start_idx, end_idx)
+                    } else {
+                        (end_idx, start_idx)
+                    };
+
+                    // Delete the lines in the resolved range
+                    buffer.lines.drain(low..=high);
+
+                    // Ensure buffer is never completely empty
+                    if buffer.lines.is_empty() {
+                        buffer.lines.push(String::new());
+                    }
+
+                    // Adjust the cursor if it has been invalidated by the deletion
+                    let new_count = buffer.lines.len();
+                    if state.cursor.0 > new_count {
+                        state.cursor.0 = new_count;
+                    }
+
+                    Ok(Value::Null)
+                }
+                "LogRange" => {
+                    let cursor_line = state.cursor.0;
+                    let (low, high) = {
+                        let buffer = current_buffer(&state)?;
+                        let line_count = buffer.lines.len();
+                        let (start, end) = if let Some(range) = &request.command.range {
+                            resolve_range(range, cursor_line, line_count)
+                        } else {
+                            (cursor_line, cursor_line)
+                        };
+                        let start_idx = start.clamp(1, line_count) - 1;
+                        let end_idx = end.clamp(1, line_count) - 1;
+                        if start_idx <= end_idx {
+                            (start_idx, end_idx)
+                        } else {
+                            (end_idx, start_idx)
+                        }
+                    };
+
+                    let mut logged = Vec::new();
+                    {
+                        let buffer = current_buffer(&state)?;
+                        for i in low..=high {
+                            if let Some(line) = buffer.lines.get(i) {
+                                logged.push((i + 1, line.clone()));
+                            }
+                        }
+                    }
+
+                    for (line_num, line) in logged {
+                        state
+                            .messages
+                            .push(format!("Logged Line {line_num}: {line}"));
+                    }
+
+                    Ok(Value::Null)
+                }
                 name => Err(RuntimeError::coded(
                     "E492",
                     RuntimeErrorKind::InvalidCommand,
@@ -246,6 +320,47 @@ fn string_argument(request: &HostRequest, index: usize) -> RuntimeResult<String>
             ),
         )),
     }
+}
+
+fn resolve_address(
+    address: &crate::ast::Address,
+    current_cursor_line: usize,
+    last_line: usize,
+) -> usize {
+    use crate::ast::Address;
+    match address {
+        Address::Current => current_cursor_line,
+        Address::Last => last_line,
+        Address::Line(line) => *line as usize,
+        Address::WholeFile => 1,
+        Address::Offset { base, amount } => {
+            let base_val = resolve_address(base, current_cursor_line, last_line);
+            if *amount >= 0 {
+                base_val.saturating_add(*amount as usize)
+            } else {
+                base_val.saturating_sub((-*amount) as usize)
+            }
+        }
+        _ => 1, // Fallback for patterns, marks, etc.
+    }
+}
+
+fn resolve_range(
+    range: &crate::ast::CommandRange,
+    current_cursor_line: usize,
+    last_line: usize,
+) -> (usize, usize) {
+    use crate::ast::Address;
+    let start = resolve_address(&range.start, current_cursor_line, last_line);
+    let end = if let Some(end_addr) = &range.end {
+        resolve_address(end_addr, current_cursor_line, last_line)
+    } else {
+        match &range.start {
+            Address::WholeFile => last_line,
+            _ => start,
+        }
+    };
+    (start, end)
 }
 
 fn line_index(line: i64, line_count: usize, allow_zero: bool) -> RuntimeResult<usize> {
@@ -431,5 +546,71 @@ mod tests {
         let error = call(&editor, "getline", vec![Value::Integer(2)]).unwrap_err();
         assert_eq!(error.code.as_deref(), Some("E16"));
         assert!(matches!(error.kind, RuntimeErrorKind::IndexError));
+    }
+
+    #[test]
+    fn handles_range_commands() {
+        use crate::ast::{Address, CommandRange};
+
+        let editor = MockEditor::default();
+        // Setup initial buffers
+        {
+            let mut state = editor.state.lock().unwrap();
+            let buf = state.buffers.get_mut(&1).unwrap();
+            buf.lines = vec![
+                "line 1".to_string(),
+                "line 2".to_string(),
+                "line 3".to_string(),
+            ];
+        }
+
+        // Run LogRange on whole file range
+        run(editor.execute_command(CommandRequest {
+            command: ExCommand {
+                modifiers: Vec::new(),
+                range: Some(CommandRange {
+                    start: Address::WholeFile,
+                    end: None,
+                    separator: None,
+                }),
+                name: "LogRange".to_string(),
+                bang: false,
+                count: None,
+                register: None,
+                arguments: "".to_string(),
+            },
+            context: HostContext::default(),
+        }))
+        .unwrap();
+
+        // Run DeleteLines on 1,2
+        run(editor.execute_command(CommandRequest {
+            command: ExCommand {
+                modifiers: Vec::new(),
+                range: Some(CommandRange {
+                    start: Address::Line(1),
+                    end: Some(Address::Line(2)),
+                    separator: None,
+                }),
+                name: "DeleteLines".to_string(),
+                bang: false,
+                count: None,
+                register: None,
+                arguments: "".to_string(),
+            },
+            context: HostContext::default(),
+        }))
+        .unwrap();
+
+        let state = editor.snapshot().unwrap();
+        assert_eq!(
+            state.messages,
+            vec![
+                "Logged Line 1: line 1".to_string(),
+                "Logged Line 2: line 2".to_string(),
+                "Logged Line 3: line 3".to_string(),
+            ]
+        );
+        assert_eq!(state.buffers[&1].lines, vec!["line 3".to_string()]);
     }
 }

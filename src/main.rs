@@ -96,7 +96,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     break 'main_loop;
                 }
                 controller::ex::Ex::Delete => {
-                    controller.queue_action(vim_input::Action::DeleteLine { count: 1 });
+                    break 'main_loop;
+                    // controller.queue_action(vim_input::Action::DeleteLine { count: 1 });
                 }
                 _ => {}
             }
