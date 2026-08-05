@@ -717,4 +717,143 @@ Six foundation decisions are resolved:
 - Keep all live buffer and manager mutation single-threaded and synchronous. Async services operate only on immutable, revision-tagged snapshots and return results to the owning thread.
 - Pin differential behavior and documentation to Vim `v9.2.0843`, commit `975e191dc817d8d00abca7197c4529a417c2f805`, matching `nextvim/vim-regex`.
 - Use synchronous returned outcomes as the core integration contract and dispatch Vim-compatible callbacks from a `dzed::Document::apply_action`-style executor/mutator.
-- Expose `VimSelection` as the compatibility API, backed internally by `text::Selection<text::Anchor>` and available for controlled Zed/`dzed` interoperation through immutable/consuming accessors.
+- Expose raw `Selection<Anchor>` as the authoritative selection representation, matching Zed and `dzed`. Vim compatibility behaviors (such as characterwise inclusive/exclusive ranges and payloads) are resolved on-demand using extension traits like `SelectionExt`.
+
+---
+
+## Usage Examples
+
+Here is how you can use `vim-buffer`'s core primitives to manage buffers, navigate standard Zed selections using Vim motions, and commit multi-cursor edits atomically.
+
+### 1. Initializing and Managing Buffers
+
+```rust
+use vim_buffer::{BufferManager, BufferOptions};
+
+fn main() {
+    // Create a new BufferManager to govern buffer lifecycles
+    let mut manager = BufferManager::new();
+
+    // Create an empty, modifiable buffer with default options
+    let buffer = manager.create("Hello, Vim World!\nThis is line 2.");
+    println!("Created buffer with ID: {:?}", buffer.id());
+    
+    // Query buffer characteristics
+    let snapshot = buffer.snapshot();
+    println!("Buffer line count: {}", snapshot.row_count());
+    println!("Buffer byte size: {}", snapshot.len_bytes());
+}
+```
+
+### 2. Word Scans and Pattern Matching
+
+```rust
+use vim_buffer::TextSearch;
+
+fn main() {
+    let text = "hello_world camelCase word";
+    
+    // Find standard alphanumeric word boundaries
+    let words = text.find_words();
+    for (start, len, slice) in words {
+        println!("Word: {:?} at start: {}, len: {}", slice, start, len);
+    }
+
+    // Locate adjacent words and endpoints from a specific cursor offset
+    if let Some((start, len, slice)) = text.find_next_word(5) {
+        println!("Next word: {:?} at {}", slice, start);
+    }
+}
+```
+
+### 3. Cursor Navigation using Vim `Motions`
+
+```rust
+use text::{Selection, SelectionGoal};
+use sum_tree::Bias;
+use vim_buffer::{BufferManager, Motions};
+
+fn main() {
+    let mut manager = BufferManager::new();
+    let buffer = manager.create("foo bar baz");
+
+    // Initialize a standard cursor selection
+    let head = buffer.as_text_buffer().anchor_before(0);
+    let selection = Selection {
+        id: 42,
+        start: head,
+        end: head,
+        reversed: false,
+        goal: SelectionGoal::None,
+    };
+
+    // Move the cursor forward by word boundaries
+    let next_word_cursor = selection.move_to_next_word(false, buffer.as_text_buffer());
+    let new_offset = buffer.as_text_buffer().offset_for_anchor(&next_word_cursor.head());
+    
+    assert_eq!(new_offset, 4); // Cursors successfully hopped onto the first character of "bar"!
+}
+```
+
+### 4. Committing Multi-Cursor Edits Atomically
+
+```rust
+use vim_buffer::{BufferManager, ByteOffset, EditOrigin, PlannedEdit, Edit, SelectionSet, SelectionId};
+use text::Selection;
+
+fn main() {
+    let mut manager = BufferManager::new();
+    let buffer = manager.create("A\nB\nC");
+
+    // Form a multi-cursor selection set
+    let anchor_a = buffer.as_text_buffer().anchor_before(0);
+    let anchor_b = buffer.as_text_buffer().anchor_before(2);
+    
+    let sel_a = Selection { id: 1, start: anchor_a, end: anchor_a, reversed: false, goal: text::SelectionGoal::None };
+    let sel_b = Selection { id: 2, start: anchor_b, end: anchor_b, reversed: false, goal: text::SelectionGoal::None };
+    
+    let selections = SelectionSet::from_selections(SelectionId::new(1), vec![sel_a, sel_b]).unwrap();
+
+    // Prepare a transaction
+    let mut transaction = buffer.transaction(EditOrigin::User);
+    transaction.insert(Some(SelectionId::new(1)), ByteOffset(0), "[A]");
+    transaction.insert(Some(SelectionId::new(2)), ByteOffset(2), "[B]");
+
+    // Commit all edits atomically against the single pre-edit snapshot
+    let outcome = transaction.commit(Some(selections)).unwrap();
+    
+    println!("Committed transaction. New Revision: {:?}", outcome.new_revision);
+    println!("Current Buffer text:\n{}", buffer.snapshot().chunks().collect::<String>());
+}
+```
+
+### 5. Resolving Inclusive/Exclusive Character Ranges
+
+```rust
+use text::{Selection, SelectionGoal};
+use vim_buffer::{BufferManager, SelectionExt};
+
+fn main() {
+    let mut manager = BufferManager::new();
+    let buffer = manager.create("aéz");
+    let snapshot = buffer.snapshot();
+
+    let start = buffer.as_text_buffer().anchor_before(1);
+    let end = buffer.as_text_buffer().anchor_before(1);
+    
+    let selection = Selection {
+        id: 1,
+        start,
+        end,
+        reversed: false,
+        goal: SelectionGoal::None,
+    };
+
+    // Calculate inclusive range (Vim's inclusive `v` selection style)
+    let range_inclusive = selection.edit_ranges(&snapshot, true).unwrap();
+    let text_inclusive = selection.operation_text(&snapshot, true).unwrap();
+
+    println!("Inclusive Range: {:?}", range_inclusive);
+    println!("Inclusive Content: {:?}", text_inclusive); // Returns "é"
+}
+```
