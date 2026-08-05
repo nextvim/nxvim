@@ -4,10 +4,12 @@ use vim_buffer::{BufferSnapshot, Point, TextRange};
 use vim_input::Mode;
 use vim_ui::{
     BufferId as UiBufferId, BufferPosition, BufferView, BufferViewModel, BufferedRenderer, Color,
-    EditorMode, LineSource, Rect, Renderer, StatusLineView, TabLineView, UIContext, View,
+    DisplayPosition, DisplayRow, DisplayRowKind, EditorMode, GutterCell, LineSource, Rect,
+    Renderer, StatusLineView, TabLineView, TextCursor, TextSpan, TextView, TextViewModel,
+    UIContext, View, WindowId,
 };
 
-use crate::{commandline, event::command_completions, state::AppState};
+use crate::{commandline, display::DisplayMap, event::command_completions, state::AppState};
 
 struct LinesView {
     lines: Vec<String>,
@@ -85,8 +87,17 @@ struct FrameBuffer {
 
 struct FrameContext {
     buffers: HashMap<UiBufferId, FrameBuffer>,
+    text_models: HashMap<WindowId, TextViewModel>,
     active: UiBufferId,
     mode: EditorMode,
+}
+
+struct DisplayTaskResult {
+    window_id: WindowId,
+    buffer_id: u64,
+    changedtick: u64,
+    wrap_width: u32,
+    map: DisplayMap,
 }
 
 impl UIContext for FrameContext {
@@ -103,9 +114,235 @@ impl UIContext for FrameContext {
     fn get_active_buffer_id(&self) -> Option<UiBufferId> {
         Some(self.active)
     }
+
+    fn get_text_model(&self, window_id: WindowId) -> Option<&TextViewModel> {
+        self.text_models.get(&window_id)
+    }
+}
+
+fn poll_display_tasks(state: &mut AppState) {
+    while let Some(result) = state.services.background_worker.try_recv() {
+        let task_id = result.task_id;
+        let Ok(completed) = result.downcast::<DisplayTaskResult>() else {
+            continue;
+        };
+        let Some(display) = state.display_states.get_mut(&completed.window_id) else {
+            continue;
+        };
+        if display.pending_task_id == Some(task_id)
+            && display.requested_buffer_id == Some(completed.buffer_id)
+            && display.requested_changedtick == Some(completed.changedtick)
+            && display.requested_wrap_width == Some(completed.wrap_width)
+        {
+            display.map = Some(completed.map);
+            display.applied_buffer_id = Some(completed.buffer_id);
+            display.applied_changedtick = Some(completed.changedtick);
+            display.pending_task_id = None;
+        }
+    }
+}
+
+fn schedule_display_tasks(state: &mut AppState) {
+    let windows: Vec<_> = state
+        .window_tabs
+        .iter()
+        .filter_map(|(&window_id, &tab_index)| {
+            let rect = state.ui.computed_layout().get_rect(window_id)?;
+            let draws_border = state
+                .ui
+                .window(window_id)
+                .is_some_and(|window| window.draws_border());
+            let inner = if draws_border { rect.inner(1) } else { rect };
+            Some((window_id, tab_index, inner.width.saturating_sub(4) as u32))
+        })
+        .collect();
+
+    for (window_id, tab_index, wrap_width) in windows {
+        let Some(tab) = state.tabs.get(tab_index) else {
+            continue;
+        };
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            continue;
+        };
+        let snapshot = buffer.snapshot();
+        let buffer_id = tab.active_buffer_id.get();
+        let changedtick = snapshot.changedtick().get();
+        let Some(display) = state.display_states.get_mut(&window_id) else {
+            continue;
+        };
+        if display.requested_buffer_id == Some(buffer_id)
+            && display.requested_changedtick == Some(changedtick)
+            && display.requested_wrap_width == Some(wrap_width)
+        {
+            continue;
+        }
+
+        if display.applied_buffer_id != Some(buffer_id) {
+            display.map = None;
+            display.applied_buffer_id = None;
+            display.applied_changedtick = None;
+        }
+        display.requested_buffer_id = Some(buffer_id);
+        display.requested_changedtick = Some(changedtick);
+        display.requested_wrap_width = Some(wrap_width);
+        let folds = display.folds.clone();
+        let latest_task_id = display.latest_task_id.clone();
+        let raw_snapshot = snapshot.into_inner();
+        let task_id = state
+            .services
+            .background_worker
+            .spawn_task(latest_task_id, move || {
+                let mut map = DisplayMap::new(raw_snapshot.clone(), Some(wrap_width));
+                if !folds.is_empty() {
+                    map.fold(folds, raw_snapshot);
+                }
+                DisplayTaskResult {
+                    window_id,
+                    buffer_id,
+                    changedtick,
+                    wrap_width,
+                    map,
+                }
+            });
+        display.pending_task_id = Some(task_id);
+    }
+}
+
+fn scroll_display_maps_to_cursors(state: &mut AppState) {
+    let windows: Vec<_> = state
+        .window_tabs
+        .iter()
+        .filter_map(|(&window_id, &tab_index)| {
+            let tab = state.tabs.get(tab_index)?;
+            let buffer = state.buffers.get(tab.active_buffer_id).ok()?;
+            let cursor = tab.cursor_point(buffer);
+            let rect = state.ui.computed_layout().get_rect(window_id)?;
+            let inner = if state
+                .ui
+                .window(window_id)
+                .is_some_and(|window| window.draws_border())
+            {
+                rect.inner(1)
+            } else {
+                rect
+            };
+            Some((window_id, tab.active_buffer_id.get(), cursor, inner))
+        })
+        .collect();
+
+    for (window_id, buffer_id, cursor, inner) in windows {
+        let Some(map) = state
+            .display_states
+            .get_mut(&window_id)
+            .filter(|display| display.applied_buffer_id == Some(buffer_id))
+            .and_then(|display| display.map.as_mut())
+        else {
+            continue;
+        };
+        let display_cursor = map.snapshot().point_to_display_point(cursor);
+        map.scroll_to_cursor(display_cursor, inner.height as i32, inner.width as i32);
+    }
+}
+
+fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
+    let mut models = HashMap::new();
+    for (&window_id, &tab_index) in &state.window_tabs {
+        let Some(tab) = state.tabs.get(tab_index) else {
+            continue;
+        };
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            continue;
+        };
+        let Some(display_state) = state.display_states.get(&window_id) else {
+            continue;
+        };
+        if display_state.applied_buffer_id != Some(tab.active_buffer_id.get()) {
+            continue;
+        }
+        let Some(map) = display_state.map.as_ref() else {
+            continue;
+        };
+        let Some(rect) = state.ui.computed_layout().get_rect(window_id) else {
+            continue;
+        };
+        let inner = if state
+            .ui
+            .window(window_id)
+            .is_some_and(|window| window.draws_border())
+        {
+            rect.inner(1)
+        } else {
+            rect
+        };
+        let snapshot = map.snapshot();
+        let first_row =
+            (snapshot.scroll_y as usize).min(snapshot.row_count().saturating_sub(1) as usize);
+        let end_row = (first_row + inner.height as usize).min(snapshot.row_count() as usize);
+        let style = vim_ui::Style::default();
+        let rows = (first_row..end_row)
+            .map(|display_row| {
+                let text = snapshot.line_text(display_row as u32);
+                let buffer_row = snapshot.buffer_row_for_display_row(display_row as u32);
+                let continuation = display_row > 0
+                    && snapshot.buffer_row_for_display_row(display_row as u32 - 1) == buffer_row;
+                DisplayRow {
+                    buffer_row: Some(buffer_row),
+                    kind: if text.contains('⋯') {
+                        DisplayRowKind::FoldPlaceholder
+                    } else if continuation {
+                        DisplayRowKind::WrappedContinuation
+                    } else {
+                        DisplayRowKind::Buffer
+                    },
+                    gutter: Some(GutterCell {
+                        text: if continuation {
+                            "    ".to_owned()
+                        } else {
+                            format!("{:>3} ", buffer_row + 1)
+                        },
+                        style,
+                    }),
+                    spans: vec![TextSpan { text, style }],
+                    fill_style: style,
+                }
+            })
+            .collect();
+        let cursor_point = tab.cursor_point(buffer);
+        let display_cursor = snapshot.point_to_display_point(cursor_point);
+        let cursor_row = display_cursor.row().saturating_sub(first_row as u32);
+        let cursor_column = display_cursor.column().saturating_add(4);
+        let cursor_visible = display_cursor.row() >= first_row as u32
+            && cursor_row < inner.height as u32
+            && cursor_column < inner.width as u32;
+        models.insert(
+            window_id,
+            TextViewModel {
+                viewport_width: inner.width,
+                viewport_height: inner.height,
+                rows,
+                selections: Vec::new(),
+                cursor: Some(TextCursor {
+                    position: DisplayPosition {
+                        row: cursor_row,
+                        column: cursor_column,
+                    },
+                    shape: if state.mode == Mode::Insert {
+                        vim_ui::CursorShape::Bar
+                    } else {
+                        vim_ui::CursorShape::Block
+                    },
+                    visible: cursor_visible,
+                }),
+                scrollbar: None,
+                default_style: style,
+            },
+        );
+    }
+    models
 }
 
 pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -> io::Result<()> {
+    poll_display_tasks(state);
     renderer.resize(area.width, area.height);
     if area.width <= 10 || area.height <= 5 {
         return Ok(());
@@ -135,21 +372,29 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
             },
         );
     }
+    schedule_display_tasks(state);
+    scroll_display_maps_to_cursors(state);
     let active_id = UiBufferId::new(state.tabs[active_tab].active_buffer_id.get());
+    let text_models = build_text_models(state);
     let context = FrameContext {
         buffers: frame_buffers,
+        text_models,
         active: active_id,
         mode: ui_mode(state.mode),
     };
 
     for (&window_id, &tab_index) in &state.window_tabs {
         let tab = &state.tabs[tab_index.min(state.tabs.len() - 1)];
-        let mut view = BufferView::new(UiBufferId::new(tab.active_buffer_id.get()), true);
-        view.scroll_row = tab.scroll_row;
-        view.scroll_col = tab.scroll_col;
         if let Some(window) = state.ui.window_mut(window_id) {
             window.set_title(tab.name.clone());
-            window.set_view(Box::new(view));
+            if context.text_models.contains_key(&window_id) {
+                window.set_view(Box::new(TextView::new(window_id)));
+            } else {
+                let mut view = BufferView::new(UiBufferId::new(tab.active_buffer_id.get()), true);
+                view.scroll_row = tab.scroll_row;
+                view.scroll_col = tab.scroll_col;
+                window.set_view(Box::new(view));
+            }
         }
     }
 
@@ -220,9 +465,6 @@ fn show_cursor(
         return renderer.hide_cursor();
     };
     let tab = &state.tabs[tab_index];
-    let mut view = BufferView::new(UiBufferId::new(tab.active_buffer_id.get()), true);
-    view.scroll_row = tab.scroll_row;
-    view.scroll_col = tab.scroll_col;
     let view_area = if state
         .ui
         .window(focused)
@@ -232,7 +474,15 @@ fn show_cursor(
     } else {
         rect
     };
-    if let Some((x, y)) = view.cursor_screen_pos(view_area, context) {
+    let cursor = if context.text_models.contains_key(&focused) {
+        TextView::new(focused).cursor_screen_pos(view_area, context)
+    } else {
+        let mut view = BufferView::new(UiBufferId::new(tab.active_buffer_id.get()), true);
+        view.scroll_row = tab.scroll_row;
+        view.scroll_col = tab.scroll_col;
+        view.cursor_screen_pos(view_area, context)
+    };
+    if let Some((x, y)) = cursor {
         let shape = if state.mode == Mode::Insert {
             vim_ui::CursorShape::Bar
         } else {
