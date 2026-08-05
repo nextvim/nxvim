@@ -11,7 +11,9 @@ property-tests = ["dep:proptest"]
 
 [dependencies]
 clock = { path = "../zed/crates/clock" }
+onig = { version = "6.5.2", default-features = false }
 proptest = { version = "1.9", optional = true }
+sum_tree = { path = "../zed/crates/sum_tree" }
 text = { path = "../zed/crates/text" }
 
 [[test]]
