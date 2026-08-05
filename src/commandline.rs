@@ -24,7 +24,7 @@ pub fn handle_key_event(
     let Some(controller_action) = state.controller.feed_crossterm_key(key) else {
         return Ok(());
     };
-    if let ControllerAction::Execute(action) = controller_action {
+    if let ControllerAction::Execute { action, .. } = controller_action {
         match action {
             Action::InsertNewLine { .. } => {
                 let command = state.command_text()?.trim().to_string();
@@ -42,6 +42,7 @@ pub fn handle_key_event(
                     &mut scroll_row,
                     &mut scroll_col,
                     viewport_height,
+                    &mut state.services.clipboard.borrow_mut(),
                 )?;
                 state
                     .ui

@@ -1,4 +1,4 @@
-use crate::{controller::InputController, script::ScriptRuntime};
+use crate::{controller::InputController, script::ScriptRuntime, services::Services};
 use text::{ToOffset, ToPoint};
 use vim_buffer::{Buffer, BufferError, BufferId, BufferManager, Point, SelectionSet};
 use vim_input::Mode;
@@ -68,6 +68,7 @@ pub struct AppState {
     pub command_line_focused: bool,
     pub controller: InputController,
     pub script: ScriptRuntime,
+    pub services: Services,
     pub ui: Ui,
     pub window_tabs: HashMap<WindowId, usize>,
     pub popups: PopupWindows,

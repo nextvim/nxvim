@@ -34,7 +34,13 @@ pub fn handle_key_event(
     let active_tab_index = state.active_tab_index;
     if let Some(controller_action) = state.controller.feed_crossterm_key(key) {
         match controller_action {
-            ControllerAction::Execute(action) => {
+            ControllerAction::Execute { action, register } => {
+                if let Some(register) = register
+                    && let Some(register) =
+                        crate::services::clipboard::RegisterName::from_char(register)
+                {
+                    state.services.clipboard.borrow().grab(register);
+                }
                 if matches!(
                     action,
                     Action::SetToCommand
@@ -52,12 +58,14 @@ pub fn handle_key_event(
                         &mut tab.scroll_row,
                         &mut tab.scroll_col,
                         viewport_height,
+                        &mut state.services.clipboard.borrow_mut(),
                     )? {
                         state.mode = state.controller.mode();
                     } else {
                         handle_unresolved_action(state, &action)?;
                     }
                 }
+                state.services.clipboard.borrow().release();
             }
             ControllerAction::Pending | ControllerAction::Invalid => {}
         }

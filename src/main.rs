@@ -4,6 +4,7 @@ mod controller;
 mod editor;
 mod event;
 mod script;
+mod services;
 mod state;
 mod terminal;
 
