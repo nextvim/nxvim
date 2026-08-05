@@ -1,6 +1,7 @@
 use crate::display::wrap_map::{WrapMap, WrapPoint, WrapSnapshot};
 use crate::display::{self};
 
+use std::ops::Range;
 use text::{BufferSnapshot, Point};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -34,6 +35,7 @@ pub struct DisplayMap {
     pub margin_right: u32,
     pub margin_top: u32,
     pub margin_bottom: u32,
+    buffer_window: Range<u32>,
 }
 
 pub struct DisplaySnapshot {
@@ -52,8 +54,25 @@ pub struct DisplaySnapshot {
 
 impl DisplayMap {
     pub fn new(buffer: BufferSnapshot, wrap_width: Option<u32>) -> Self {
+        let row_count = buffer.row_count();
+        Self::new_windowed(buffer, wrap_width, 0..row_count)
+    }
+
+    pub fn new_windowed(
+        buffer: BufferSnapshot,
+        wrap_width: Option<u32>,
+        buffer_window: Range<u32>,
+    ) -> Self {
+        let row_count = buffer.row_count();
+        let start = buffer_window.start.min(row_count);
+        let end = buffer_window.end.max(start).min(row_count);
+        let buffer_window = start..end;
         let fold_map = display::fold_map::FoldMap::new(&buffer, Vec::new());
-        let wrap_map = WrapMap::new(fold_map.folded_buffer().clone(), wrap_width);
+        let wrap_map = WrapMap::new_windowed(
+            fold_map.folded_buffer().clone(),
+            wrap_width,
+            buffer_window.clone(),
+        );
         Self {
             original_buffer: buffer,
             folds: Vec::new(),
@@ -68,7 +87,12 @@ impl DisplayMap {
             margin_right: 0,
             margin_top: 0,
             margin_bottom: 0,
+            buffer_window,
         }
+    }
+
+    pub fn covers_buffer_rows(&self, rows: &Range<u32>) -> bool {
+        self.buffer_window.start <= rows.start && self.buffer_window.end >= rows.end
     }
 
     pub fn fold(&mut self, folds: Vec<display::fold_map::Fold>, buffer: BufferSnapshot) {
@@ -80,6 +104,7 @@ impl DisplayMap {
         self.original_buffer = buffer.clone();
         self.fold_map = display::fold_map::FoldMap::new(&buffer, self.folds.clone());
         if folds_changed {
+            self.buffer_window = 0..buffer.row_count();
             self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
         } else {
             self.wrap_map.sync(self.fold_map.folded_buffer().clone());
@@ -116,6 +141,7 @@ impl DisplayMap {
             return;
         }
         self.original_buffer = buffer.clone();
+        self.buffer_window = 0..buffer.row_count();
         self.fold_map = display::fold_map::FoldMap::new(&buffer, self.folds.clone());
         self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
     }
@@ -240,6 +266,22 @@ mod tests {
     use super::*;
     use clock::ReplicaId;
     use text::{Buffer, BufferId};
+
+    #[test]
+    fn windowed_map_wraps_only_requested_rows() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "abcdefgh\nabcdefgh\nabcdefgh",
+        );
+        let map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(4), 1..2);
+        let snapshot = map.snapshot();
+
+        assert_eq!(snapshot.point_to_display_point(Point::new(0, 7)).row(), 0);
+        assert_eq!(snapshot.point_to_display_point(Point::new(1, 7)).row(), 2);
+        assert!(map.covers_buffer_rows(&(1..2)));
+        assert!(!map.covers_buffer_rows(&(0..2)));
+    }
 
     #[test]
     fn extracts_wrapped_display_rows() {

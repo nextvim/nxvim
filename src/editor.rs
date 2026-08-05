@@ -1,9 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
+    ops::Range,
 };
 
-use vim_buffer::{BufferSnapshot, Point, TextRange};
+use text::ToOffset;
+use vim_buffer::{Buffer, BufferId, BufferSnapshot, Point, TextRange};
 use vim_input::Mode;
 use vim_ui::{
     BufferId as UiBufferId, BufferPosition, BufferView, BufferViewModel, BufferedRenderer, Color,
@@ -17,10 +19,11 @@ use crate::{
     display::{DisplayMap, display_map::DisplayPoint},
     event::command_completions,
     services::{
+        highlight::{HighlightService, HighlightTaskResult},
         indexer::{IndexTaskResult, index_buffer_cancellable},
-        treesitter::{Grammar, HighlightTaskResult, ParseTaskResult, parse_snapshot_cancellable},
+        treesitter::{Grammar, ParseTaskResult, parse_snapshot_cancellable},
     },
-    state::AppState,
+    state::{AppState, TabPage},
 };
 
 struct LinesView {
@@ -110,6 +113,7 @@ struct DisplayTaskResult {
     changedtick: u64,
     wrap_width: u32,
     inner_height: u16,
+    buffer_window: Range<u32>,
     map: DisplayMap,
 }
 
@@ -148,6 +152,7 @@ fn poll_display_tasks(state: &mut AppState) {
                 && display.requested_changedtick == Some(completed.changedtick)
                 && display.requested_wrap_width == Some(completed.wrap_width)
                 && display.requested_inner_height == Some(completed.inner_height)
+                && display.requested_buffer_window.as_ref() == Some(&completed.buffer_window)
             {
                 display.map = Some(completed.map);
                 display.applied_buffer_id = Some(completed.buffer_id);
@@ -172,16 +177,19 @@ fn poll_display_tasks(state: &mut AppState) {
                 .treesitter
                 .borrow_mut()
                 .apply_task_result(task_id, completed);
-        } else if result.downcast_ref::<HighlightTaskResult>().is_some() {
-            let completed = result
-                .downcast::<HighlightTaskResult>()
-                .expect("highlight result type checked");
-            state
-                .services
-                .treesitter
-                .borrow_mut()
-                .apply_highlight_task_result(task_id, completed);
         }
+    }
+
+    while let Some(result) = state.services.highlight_worker.try_recv() {
+        let task_id = result.task_id;
+        let Ok(completed) = result.downcast::<HighlightTaskResult>() else {
+            continue;
+        };
+        state
+            .services
+            .highlights
+            .borrow_mut()
+            .apply_task_result(task_id, completed);
     }
 }
 
@@ -259,40 +267,119 @@ fn schedule_parse_tasks(state: &AppState) {
     }
 }
 
-fn highlight_tasks_needed(state: &AppState) -> bool {
-    let mut seen = HashSet::new();
-    state.tabs.iter().any(|tab| {
-        let buffer_id = tab.active_buffer_id.get();
-        if !seen.insert(buffer_id) {
-            return false;
-        }
-        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
-            return false;
+const HIGHLIGHT_LOOKBEHIND_ROWS: u32 = 500;
+const HIGHLIGHT_LOOKAHEAD_ROWS: u32 = 100;
+const HIGHLIGHT_CACHE_INTERVAL: u32 = 32;
+
+fn highlight_ranges(state: &AppState) -> HashMap<BufferId, (u32, u32)> {
+    let mut ranges = HashMap::new();
+    for (&window_id, &tab_index) in &state.window_tabs {
+        let Some(tab) = state.tabs.get(tab_index) else {
+            continue;
         };
-        if buffer
-            .path()
-            .and_then(|path| path.to_str())
-            .and_then(Grammar::from_path)
-            .is_none()
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            continue;
+        };
+        let Some(rect) = state.ui.computed_layout().get_rect(window_id) else {
+            continue;
+        };
+        let inner = if state
+            .ui
+            .window(window_id)
+            .is_some_and(|window| window.draws_border())
         {
-            return false;
+            rect.inner(1)
+        } else {
+            rect
+        };
+        let display_state = state.display_states.get(&window_id);
+        let current_map = display_state.and_then(|display| {
+            (display.applied_buffer_id == Some(tab.active_buffer_id.get())
+                && display.applied_changedtick == Some(buffer.changedtick().get()))
+            .then_some(display.map.as_ref())
+            .flatten()
+        });
+        let (first_buffer_row, last_buffer_row) = if let Some(map) = current_map {
+            let display = map.snapshot();
+            let first_display_row = display.scroll_y.min(display.max_point().row());
+            let last_display_row = display
+                .scroll_y
+                .saturating_add(inner.height.saturating_sub(1) as u32)
+                .min(display.max_point().row());
+            (
+                display.buffer_row_for_display_row(first_display_row),
+                display.buffer_row_for_display_row(last_display_row),
+            )
+        } else {
+            let row_count = buffer.as_text_buffer().row_count();
+            let cursor_row = tab.cursor_point(buffer).row;
+            let visible_rows = u32::from(inner.height).max(1);
+            let mut first_row = display_state
+                .and_then(|display| display.map.as_ref())
+                .map(|map| {
+                    let display = map.snapshot();
+                    display.buffer_row_for_display_row(display.scroll_y)
+                })
+                .unwrap_or(tab.scroll_row as u32)
+                .min(row_count.saturating_sub(1));
+            if cursor_row < first_row {
+                first_row = cursor_row;
+            } else if cursor_row >= first_row.saturating_add(visible_rows) {
+                first_row = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
+            }
+            (
+                first_row,
+                first_row
+                    .saturating_add(visible_rows.saturating_sub(1))
+                    .min(row_count.saturating_sub(1)),
+            )
+        };
+        let raw_start = first_buffer_row.saturating_sub(HIGHLIGHT_LOOKBEHIND_ROWS);
+        let start_row = raw_start.saturating_add(HIGHLIGHT_CACHE_INTERVAL - 1)
+            / HIGHLIGHT_CACHE_INTERVAL
+            * HIGHLIGHT_CACHE_INTERVAL;
+        let row_count = buffer.as_text_buffer().row_count();
+        let raw_end = last_buffer_row
+            .saturating_add(HIGHLIGHT_LOOKAHEAD_ROWS + 1)
+            .min(row_count);
+        let end_row = if raw_end == row_count {
+            raw_end
+        } else {
+            (raw_end / HIGHLIGHT_CACHE_INTERVAL) * HIGHLIGHT_CACHE_INTERVAL
         }
-        state
-            .services
-            .treesitter
-            .borrow()
-            .should_highlight(buffer_id, buffer.snapshot().changedtick().get())
-    })
+        .max(last_buffer_row.saturating_add(1));
+        ranges
+            .entry(tab.active_buffer_id)
+            .and_modify(|range: &mut (u32, u32)| {
+                range.0 = range.0.min(start_row);
+                range.1 = range.1.max(end_row);
+            })
+            .or_insert((start_row, end_row));
+    }
+    ranges
+}
+
+fn highlight_tasks_needed(state: &AppState) -> bool {
+    highlight_ranges(state)
+        .into_iter()
+        .any(|(buffer_id, (start_row, end_row))| {
+            let Ok(buffer) = state.buffers.get(buffer_id) else {
+                return false;
+            };
+            buffer.path().and_then(|path| path.to_str()).is_some()
+                && state.services.highlights.borrow().should_highlight(
+                    buffer_id.get(),
+                    buffer.snapshot().changedtick().get(),
+                    start_row,
+                    end_row,
+                )
+        })
 }
 
 fn schedule_highlight_tasks(state: &AppState) {
-    let mut seen = HashSet::new();
-    for tab in &state.tabs {
-        let buffer_id = tab.active_buffer_id.get();
-        if !seen.insert(buffer_id) {
-            continue;
-        }
-        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+    for (buffer_key, (start_row, end_row)) in highlight_ranges(state) {
+        let buffer_id = buffer_key.get();
+        let Ok(buffer) = state.buffers.get(buffer_key) else {
             continue;
         };
         let Some(file_path) = buffer
@@ -302,41 +389,50 @@ fn schedule_highlight_tasks(state: &AppState) {
         else {
             continue;
         };
-        if Grammar::from_path(&file_path).is_none() {
-            continue;
-        }
         let snapshot = buffer.snapshot();
         let changedtick = snapshot.changedtick().get();
-        let Some(latest_task_id) = state
-            .services
-            .treesitter
-            .borrow_mut()
-            .begin_highlight(buffer_id, changedtick)
-        else {
+        if !state.services.highlights.borrow().should_highlight(
+            buffer_id,
+            changedtick,
+            start_row,
+            end_row,
+        ) {
             continue;
-        };
-        let raw_snapshot = snapshot.into_inner();
-        let task_id = state.services.background_worker.spawn_cancellable_task(
-            latest_task_id,
-            move |cancel| {
-                let highlights = crate::display::highlight::parse_scopes_cancellable(
-                    &raw_snapshot,
-                    changedtick,
-                    Some(&file_path),
-                    || cancel.is_cancelled(),
-                );
-                (!cancel.is_cancelled()).then_some(HighlightTaskResult {
-                    buffer_id,
-                    changedtick,
-                    highlights,
-                })
-            },
-        );
-        state
+        }
+        let latest_task_id = state
             .services
-            .treesitter
+            .highlights
             .borrow_mut()
-            .set_pending_highlight_task(buffer_id, task_id);
+            .begin_highlight(buffer_id, changedtick);
+        let raw_snapshot = snapshot.into_inner();
+        let task_id =
+            state
+                .services
+                .highlight_worker
+                .spawn_cancellable_task(latest_task_id, move |cancel| {
+                    let parsed = crate::display::highlight::parse_scopes_cancellable(
+                        &raw_snapshot,
+                        changedtick,
+                        Some(&file_path),
+                        start_row,
+                        end_row,
+                        || cancel.is_cancelled(),
+                    );
+                    (!cancel.is_cancelled()).then_some(HighlightTaskResult {
+                        buffer_id,
+                        changedtick,
+                        start_row,
+                        end_row,
+                        highlights: parsed,
+                    })
+                });
+        state.services.highlights.borrow_mut().set_pending_task(
+            buffer_id,
+            task_id,
+            changedtick,
+            start_row,
+            end_row,
+        );
     }
 }
 
@@ -398,6 +494,41 @@ fn schedule_index_tasks(state: &AppState) {
     }
 }
 
+const DISPLAY_LOOKBEHIND_ROWS: u32 = 500;
+const DISPLAY_LOOKAHEAD_ROWS: u32 = 500;
+
+fn estimated_display_window(
+    state: &AppState,
+    window_id: WindowId,
+    tab: &TabPage,
+    buffer: &Buffer,
+    inner_height: u16,
+) -> Range<u32> {
+    let row_count = buffer.as_text_buffer().row_count();
+    let cursor_row = tab.cursor_point(buffer).row;
+    let visible_rows = u32::from(inner_height).max(1);
+    let mut first_row = state
+        .display_states
+        .get(&window_id)
+        .and_then(|display| display.map.as_ref())
+        .map(|map| {
+            let snapshot = map.snapshot();
+            snapshot.buffer_row_for_display_row(snapshot.scroll_y)
+        })
+        .unwrap_or(tab.scroll_row as u32)
+        .min(row_count.saturating_sub(1));
+    if cursor_row < first_row {
+        first_row = cursor_row;
+    } else if cursor_row >= first_row.saturating_add(visible_rows) {
+        first_row = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
+    }
+    first_row.saturating_sub(DISPLAY_LOOKBEHIND_ROWS)
+        ..first_row
+            .saturating_add(visible_rows)
+            .saturating_add(DISPLAY_LOOKAHEAD_ROWS)
+            .min(row_count)
+}
+
 fn display_tasks_needed(state: &AppState) -> bool {
     state.window_tabs.iter().any(|(&window_id, &tab_index)| {
         let Some(rect) = state.ui.computed_layout().get_rect(window_id) else {
@@ -418,10 +549,19 @@ fn display_tasks_needed(state: &AppState) -> bool {
         let Some(display) = state.display_states.get(&window_id) else {
             return false;
         };
+        let cursor_row = tab.cursor_point(buffer).row;
+        let required_start = cursor_row.saturating_sub(u32::from(inner.height));
+        let required_end = cursor_row
+            .saturating_add(u32::from(inner.height))
+            .min(buffer.as_text_buffer().row_count());
         display.requested_buffer_id != Some(tab.active_buffer_id.get())
-            || display.requested_changedtick != Some(buffer.snapshot().changedtick().get())
+            || display.requested_changedtick != Some(buffer.changedtick().get())
             || display.requested_wrap_width != Some(wrap_width)
             || display.requested_inner_height != Some(inner.height)
+            || display
+                .requested_buffer_window
+                .as_ref()
+                .is_none_or(|window| window.start > required_start || window.end < required_end)
     })
 }
 
@@ -452,6 +592,7 @@ fn schedule_display_tasks(state: &mut AppState) {
         let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
             continue;
         };
+        let buffer_window = estimated_display_window(state, window_id, tab, buffer, inner_height);
         let snapshot = buffer.snapshot();
         let buffer_id = tab.active_buffer_id.get();
         let changedtick = snapshot.changedtick().get();
@@ -462,6 +603,12 @@ fn schedule_display_tasks(state: &mut AppState) {
             && display.requested_changedtick == Some(changedtick)
             && display.requested_wrap_width == Some(wrap_width)
             && display.requested_inner_height == Some(inner_height)
+            && display
+                .requested_buffer_window
+                .as_ref()
+                .is_some_and(|window| {
+                    window.start <= buffer_window.start && window.end >= buffer_window.end
+                })
         {
             continue;
         }
@@ -475,6 +622,7 @@ fn schedule_display_tasks(state: &mut AppState) {
         display.requested_changedtick = Some(changedtick);
         display.requested_wrap_width = Some(wrap_width);
         display.requested_inner_height = Some(inner_height);
+        display.requested_buffer_window = Some(buffer_window.clone());
         let folds = display.folds.clone();
         let latest_task_id = display.latest_task_id.clone();
         let raw_snapshot = snapshot.into_inner();
@@ -484,7 +632,11 @@ fn schedule_display_tasks(state: &mut AppState) {
                 if cancel.is_cancelled() {
                     return None;
                 }
-                let mut map = DisplayMap::new(raw_snapshot.clone(), Some(wrap_width));
+                let mut map = DisplayMap::new_windowed(
+                    raw_snapshot.clone(),
+                    Some(wrap_width),
+                    buffer_window.clone(),
+                );
                 if cancel.is_cancelled() {
                     return None;
                 }
@@ -500,6 +652,7 @@ fn schedule_display_tasks(state: &mut AppState) {
                     changedtick,
                     wrap_width,
                     inner_height,
+                    buffer_window,
                     map,
                 })
             },
@@ -544,23 +697,114 @@ fn scroll_display_maps_to_cursors(state: &mut AppState) {
     }
 }
 
+fn live_row_text(buffer: &text::Buffer, row: u32) -> String {
+    let start = Point::new(row, 0).to_offset(buffer);
+    let end = Point::new(row, buffer.line_len(row)).to_offset(buffer);
+    buffer.as_rope().chunks_in_range(start..end).collect()
+}
+
+fn build_live_text_model(
+    buffer: &Buffer,
+    tab: &TabPage,
+    preferred_first_row: u32,
+    inner: Rect,
+    mode: Mode,
+    highlights: &HighlightService,
+) -> TextViewModel {
+    let text_buffer = buffer.as_text_buffer();
+    let row_count = text_buffer.row_count();
+    let cursor = tab.cursor_point(buffer);
+    let visible_rows = u32::from(inner.height).max(1);
+    let mut first_row = preferred_first_row.min(row_count.saturating_sub(1));
+    if cursor.row < first_row {
+        first_row = cursor.row;
+    } else if cursor.row >= first_row.saturating_add(visible_rows) {
+        first_row = cursor.row.saturating_sub(visible_rows.saturating_sub(1));
+    }
+    let end_row = first_row.saturating_add(visible_rows).min(row_count);
+    let default_style = vim_ui::Style::default();
+    let rows = (first_row..end_row)
+        .map(|row| {
+            let text = live_row_text(text_buffer, row);
+            let mut spans = Vec::<TextSpan>::new();
+            for (column, character) in text.char_indices() {
+                let column = column as u32;
+                let (selected, _, at_cursor_head) =
+                    tab.selections
+                        .is_selected(row, column, buffer.as_text_buffer());
+                let mut style = default_style;
+                if let Some(highlight) =
+                    highlights
+                        .spans(tab.active_buffer_id, row)
+                        .and_then(|spans| {
+                            spans
+                                .iter()
+                                .find(|span| column >= span.start && column < span.end)
+                        })
+                {
+                    let [red, green, blue] = highlight.foreground;
+                    style.fg = Some(Color::Rgb(red, green, blue));
+                }
+                if selected || at_cursor_head {
+                    style.bg = Some(Color::DarkGrey);
+                }
+                if let Some(span) = spans.last_mut().filter(|span| span.style == style) {
+                    span.text.push(character);
+                } else {
+                    spans.push(TextSpan {
+                        text: character.to_string(),
+                        style,
+                    });
+                }
+            }
+            DisplayRow {
+                buffer_row: Some(row),
+                kind: DisplayRowKind::Buffer,
+                gutter: Some(GutterCell {
+                    text: format!("{:>3} ", row + 1),
+                    style: default_style,
+                }),
+                spans,
+                fill_style: default_style,
+            }
+        })
+        .collect();
+    let cursor_row = cursor.row.saturating_sub(first_row);
+    let cursor_column = cursor.column.saturating_add(4);
+    let cursor_visible = cursor.row >= first_row
+        && cursor_row < visible_rows
+        && cursor_column < u32::from(inner.width);
+
+    TextViewModel {
+        viewport_width: inner.width,
+        viewport_height: inner.height,
+        rows,
+        selections: Vec::new(),
+        cursor: Some(TextCursor {
+            position: DisplayPosition {
+                row: cursor_row,
+                column: cursor_column,
+            },
+            shape: if mode == Mode::Insert {
+                vim_ui::CursorShape::Bar
+            } else {
+                vim_ui::CursorShape::Block
+            },
+            visible: cursor_visible,
+        }),
+        scrollbar: None,
+        default_style,
+    }
+}
+
 fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
     let mut models = HashMap::new();
-    let treesitter = state.services.treesitter.borrow();
+    let highlights = state.services.highlights.borrow();
     for (&window_id, &tab_index) in &state.window_tabs {
         let Some(tab) = state.tabs.get(tab_index) else {
             continue;
         };
         let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
-            continue;
-        };
-        let Some(display_state) = state.display_states.get(&window_id) else {
-            continue;
-        };
-        if display_state.applied_buffer_id != Some(tab.active_buffer_id.get()) {
-            continue;
-        }
-        let Some(map) = display_state.map.as_ref() else {
             continue;
         };
         let Some(rect) = state.ui.computed_layout().get_rect(window_id) else {
@@ -575,15 +819,39 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
         } else {
             rect
         };
+        let display_state = state.display_states.get(&window_id);
+        let preferred_first_row = display_state
+            .and_then(|display| display.map.as_ref())
+            .map(|map| {
+                let snapshot = map.snapshot();
+                snapshot.buffer_row_for_display_row(snapshot.scroll_y)
+            })
+            .unwrap_or(tab.scroll_row as u32);
+        let current_map = display_state.and_then(|display| {
+            (display.applied_buffer_id == Some(tab.active_buffer_id.get())
+                && display.applied_changedtick == Some(buffer.changedtick().get()))
+            .then_some(display.map.as_ref())
+            .flatten()
+        });
+        let Some(map) = current_map else {
+            models.insert(
+                window_id,
+                build_live_text_model(
+                    buffer,
+                    tab,
+                    preferred_first_row,
+                    inner,
+                    state.mode,
+                    &highlights,
+                ),
+            );
+            continue;
+        };
         let snapshot = map.snapshot();
         let first_row =
             (snapshot.scroll_y as usize).min(snapshot.row_count().saturating_sub(1) as usize);
         let end_row = (first_row + inner.height as usize).min(snapshot.row_count() as usize);
         let default_style = vim_ui::Style::default();
-        // Keep using the last completed highlight snapshot while the task for the
-        // current buffer version is still running. The service replaces it only
-        // after a complete, non-stale result arrives.
-        let highlights = treesitter.highlights(tab.active_buffer_id);
         let rows = (first_row..end_row)
             .map(|display_row| {
                 let text = snapshot.line_text(display_row as u32);
@@ -604,7 +872,7 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                     );
                     let mut span_style = default_style;
                     if let Some(highlight) = highlights
-                        .and_then(|highlights| highlights.spans_for_row(point.row))
+                        .spans(tab.active_buffer_id, point.row)
                         .and_then(|spans| {
                             spans
                                 .iter()
@@ -724,10 +992,10 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
     if parse_tasks_needed(state) {
         schedule_parse_tasks(state);
     }
+    scroll_display_maps_to_cursors(state);
     if highlight_tasks_needed(state) {
         schedule_highlight_tasks(state);
     }
-    scroll_display_maps_to_cursors(state);
     let active_id = UiBufferId::new(state.tabs[active_tab].active_buffer_id.get());
     let text_models = build_text_models(state);
     let context = FrameContext {

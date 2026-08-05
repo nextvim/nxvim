@@ -32,7 +32,17 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         renderer.flush(&mut output)?;
         output.flush()?;
 
-        if event::poll(Duration::from_millis(100))?
+        let rendering_pending = state.services.highlights.borrow().is_highlighting()
+            || state
+                .display_states
+                .values()
+                .any(|display| display.pending_task_id.is_some());
+        let poll_timeout = if rendering_pending {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_millis(100)
+        };
+        if event::poll(poll_timeout)?
             && let Event::Key(key) = event::read()?
             && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
         {
