@@ -92,17 +92,22 @@ Legacy code inside `src/` remains in the codebase initially *only for reference*
 
 ---
 
-### Stage 3: Splits, Overlays & Popup Chrome
+### Stage 3: Splits, Overlays & Popup Chrome [COMPLETED]
 
 **Goal:** Adopt `vim_ui::Ui`'s window manager and layout engines for window tiling and modal floating dialogs.
 
-**Tasks:**
+**Achievements (Verified on 2026-08-05):**
 1. **Window-Store Mapping**:
-   - Register active editor viewports inside `vim_ui::WindowStore`.
+   - `AppState` owns `vim_ui::Ui` and maps each typed tiled `WindowId` to the tab viewport rendered by that window.
 2. **Splits Integration**:
-   - Handle vertical and horizontal splits (`SplitAxis::Columns`, `SplitAxis::Rows`) using `vim_ui::Ui::split_focused`.
+   - Vertical and horizontal splits use `Ui::split_focused` with `SplitAxis::Columns` and `SplitAxis::Rows`.
+   - Normal-mode `Ctrl-V` / `Ctrl-S` create splits, `Ctrl-H/J/K/L` move focus, and `Ctrl-X` closes the focused split without closing the final editor window.
+   - `:vsplit`, `:split`, and `:close` expose the same operations through the command-line controller.
 3. **Overlay & Popups**:
-   - Port the command-line overlay, autocomplete list, and dialogue boxes to `vim_ui::OverlayManager` with relative Z-indexing.
+   - The command line, command autocomplete list, and message dialog are floating `Ui` windows registered with `OverlayManager`.
+   - Popups use editor/cursor-relative placement and Z-indices `100`, `110`, and `200`, respectively, so dialogue chrome renders above completion and command chrome.
+4. **Unified Rendering**:
+   - `Ui::draw` now owns tiled editor and floating-window composition; the app retains stateless tab and status lines around the managed editor area.
 
 ---
 

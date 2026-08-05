@@ -70,7 +70,7 @@ fn maps_returned_anchor_selections_through_the_zed_edit() {
     let mapped_anchor = mapped.selections()[0].head();
 
     assert_eq!(buffer.as_text_buffer().offset_for_anchor(&mapped_anchor), 2);
-    assert_eq!(mapped.primary(), SelectionId::new(7));
+    assert_eq!(mapped.primary_id(), SelectionId::new(7));
 }
 
 #[test]

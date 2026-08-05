@@ -67,8 +67,14 @@ impl SelectionSet {
         })
     }
 
-    pub fn primary(&self) -> SelectionId {
+    pub fn primary_id(&self) -> SelectionId {
         self.primary
+    }
+
+    pub fn primary(&self) -> &Selection<Anchor> {
+        self.selections
+            .first()
+            .expect("SelectionSet invariant requires a primary selection")
     }
 
     pub fn selections(&self) -> &[Selection<Anchor>] {
@@ -76,9 +82,7 @@ impl SelectionSet {
     }
 
     pub fn primary_selection(&self) -> &Selection<Anchor> {
-        self.selections
-            .first()
-            .expect("SelectionSet invariant requires a primary selection")
+        self.primary()
     }
 
     pub fn replace_primary(&mut self, selection: Selection<Anchor>) -> Result<(), BufferError> {
