@@ -1,7 +1,6 @@
 use text::{Selection, SelectionGoal};
 use vim_buffer::{
-    BufferError, BufferManager, ByteOffset, EditOrigin, SelectionId, SelectionKind, SelectionSet,
-    TextRange, VimSelection,
+    BufferError, BufferManager, ByteOffset, EditOrigin, SelectionId, SelectionSet, TextRange,
 };
 
 fn range(start: usize, end: usize) -> TextRange {
@@ -55,18 +54,14 @@ fn maps_returned_anchor_selections_through_the_zed_edit() {
     let mut manager = BufferManager::new();
     let buffer = manager.create("ab");
     let anchor = buffer.as_text_buffer().anchor_before(1);
-    let selection = VimSelection::new(
-        Selection {
-            id: 7,
-            start: anchor,
-            end: anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
-        },
-        SelectionKind::Characterwise,
-        false,
-    );
-    let selections = SelectionSet::new(SelectionId::new(7), vec![selection]).unwrap();
+    let selection = Selection {
+        id: 7,
+        start: anchor,
+        end: anchor,
+        reversed: false,
+        goal: SelectionGoal::None,
+    };
+    let selections = SelectionSet::from_selections(SelectionId::new(7), vec![selection]).unwrap();
 
     let mut transaction = buffer.transaction(EditOrigin::User);
     transaction.insert(None, ByteOffset(0), "X");

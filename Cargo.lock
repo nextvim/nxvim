@@ -1503,6 +1503,7 @@ dependencies = [
  "tree-sitter-zig",
  "unicode-segmentation",
  "util",
+ "vim-buffer",
  "vim-formatter",
  "vim-input",
  "vim-regex",
@@ -2930,6 +2931,17 @@ dependencies = [
  "sval_json",
  "sval_ref",
  "sval_serde",
+]
+
+[[package]]
+name = "vim-buffer"
+version = "0.1.0"
+dependencies = [
+ "clock",
+ "onig",
+ "proptest",
+ "sum_tree",
+ "text",
 ]
 
 [[package]]

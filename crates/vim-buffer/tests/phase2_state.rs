@@ -1,7 +1,7 @@
 use text::{Selection, SelectionGoal};
 use vim_buffer::{
-    BufferError, BufferManager, BufferOptions, ByteOffset, EditOrigin, FileFormat, Point,
-    SelectionKind, TextRange, VimSelection,
+    BufferError, BufferManager, BufferOptions, ByteOffset, EditOrigin, FileFormat, SelectionExt,
+    TextRange,
 };
 
 fn range(start: usize, end: usize) -> TextRange {
@@ -13,20 +13,14 @@ fn selection(
     id: usize,
     start: usize,
     end: usize,
-    kind: SelectionKind,
-    inclusive: bool,
-) -> VimSelection {
-    VimSelection::new(
-        Selection {
-            id,
-            start: buffer.as_text_buffer().anchor_before(start),
-            end: buffer.as_text_buffer().anchor_before(end),
-            reversed: false,
-            goal: SelectionGoal::None,
-        },
-        kind,
-        inclusive,
-    )
+) -> Selection<text::Anchor> {
+    Selection {
+        id,
+        start: buffer.as_text_buffer().anchor_before(start),
+        end: buffer.as_text_buffer().anchor_before(end),
+        reversed: false,
+        goal: SelectionGoal::None,
+    }
 }
 
 #[test]
@@ -97,27 +91,17 @@ fn save_points_and_checked_options_control_modified_state() {
 }
 
 #[test]
-fn vim_selections_resolve_to_character_line_and_block_ranges() {
+fn vim_selections_resolve_to_character_ranges() {
     let mut manager = BufferManager::new();
     let buffer = manager.create("aéz");
     let snapshot = buffer.snapshot();
-    let character = selection(buffer, 1, 1, 1, SelectionKind::Characterwise, true);
-    assert_eq!(character.edit_ranges(&snapshot).unwrap(), vec![range(1, 3)]);
-
-    let mut manager = BufferManager::new();
-    let buffer = manager.create("aa\nbb\ncc");
-    let snapshot = buffer.snapshot();
-    let line = selection(buffer, 2, 1, 4, SelectionKind::Linewise, true);
-    assert_eq!(line.edit_ranges(&snapshot).unwrap(), vec![range(0, 6)]);
-
-    let mut manager = BufferManager::new();
-    let buffer = manager.create("abcd\nxy\n1234");
-    let snapshot = buffer.snapshot();
-    let start = snapshot.point_to_offset(Point::new(0, 1)).unwrap().0;
-    let end = snapshot.point_to_offset(Point::new(2, 3)).unwrap().0;
-    let block = selection(buffer, 3, start, end, SelectionKind::Blockwise, true);
+    let character = selection(buffer, 1, 1, 1);
     assert_eq!(
-        block.edit_ranges(&snapshot).unwrap(),
-        vec![range(1, 4), range(6, 7), range(9, 12)]
+        character.edit_ranges(&snapshot, true).unwrap(),
+        vec![range(1, 3)]
+    );
+    assert_eq!(
+        character.edit_ranges(&snapshot, false).unwrap(),
+        vec![range(1, 1)]
     );
 }
