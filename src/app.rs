@@ -13,7 +13,7 @@ use crate::{
     event::handle_key_event,
     script::ScriptRuntime,
     services::Services,
-    state::{AppState, PopupWindows, TabPage, editor_rect},
+    state::{AppState, DisplayState, PopupWindows, TabPage, editor_rect},
     terminal::TerminalSession,
 };
 
@@ -104,6 +104,7 @@ fn initial_state(
         services: Services::new(),
         ui,
         window_tabs: [(editor_id, 0)].into_iter().collect(),
+        display_states: [(editor_id, DisplayState::new())].into_iter().collect(),
         popups: PopupWindows {
             autocomplete,
             dialog,

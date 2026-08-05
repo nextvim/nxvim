@@ -1,10 +1,18 @@
-use crate::{controller::InputController, script::ScriptRuntime, services::Services};
+use crate::{
+    controller::InputController,
+    display::{DisplayMap, Fold},
+    script::ScriptRuntime,
+    services::{Services, background::TaskId},
+};
 use text::{ToOffset, ToPoint};
 use vim_buffer::{Buffer, BufferError, BufferId, BufferManager, Point, SelectionSet};
 use vim_input::Mode;
 use vim_ui::{Rect, Ui, WindowId};
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicU64},
+};
 
 pub struct TabPage {
     pub name: String,
@@ -51,6 +59,45 @@ impl TabPage {
     }
 }
 
+pub struct DisplayState {
+    pub map: Option<DisplayMap>,
+    pub folds: Vec<Fold>,
+    pub latest_task_id: Arc<AtomicU64>,
+    pub pending_task_id: Option<TaskId>,
+    pub requested_buffer_id: Option<u64>,
+    pub applied_buffer_id: Option<u64>,
+    pub requested_changedtick: Option<u64>,
+    pub applied_changedtick: Option<u64>,
+    pub requested_wrap_width: Option<u32>,
+}
+
+impl DisplayState {
+    pub fn new() -> Self {
+        Self {
+            map: None,
+            folds: Vec::new(),
+            latest_task_id: Arc::new(AtomicU64::new(0)),
+            pending_task_id: None,
+            requested_buffer_id: None,
+            applied_buffer_id: None,
+            requested_changedtick: None,
+            applied_changedtick: None,
+            requested_wrap_width: None,
+        }
+    }
+
+    pub fn set_folds(&mut self, folds: Vec<Fold>) {
+        if self.folds != folds {
+            self.folds = folds;
+            self.requested_changedtick = None;
+        }
+    }
+
+    pub fn clear_folds(&mut self) {
+        self.set_folds(Vec::new());
+    }
+}
+
 pub struct PopupWindows {
     pub autocomplete: WindowId,
     pub dialog: WindowId,
@@ -71,6 +118,7 @@ pub struct AppState {
     pub services: Services,
     pub ui: Ui,
     pub window_tabs: HashMap<WindowId, usize>,
+    pub display_states: HashMap<WindowId, DisplayState>,
     pub popups: PopupWindows,
     pub dialog_message: Option<String>,
 }

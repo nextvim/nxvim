@@ -7,7 +7,7 @@ use crate::{
     commandline,
     controller::{self, ControllerAction},
     script::EditorCommand,
-    state::AppState,
+    state::{AppState, DisplayState},
 };
 
 pub fn handle_key_event(
@@ -124,6 +124,7 @@ fn split_focused(
         .expect("new split window")
         .set_draw_border(true);
     state.window_tabs.insert(new_id, state.active_tab_index);
+    state.display_states.insert(new_id, DisplayState::new());
     Ok(true)
 }
 
@@ -135,6 +136,7 @@ fn close_focused(state: &mut AppState) -> Result<bool, Box<dyn std::error::Error
     match state.ui.close_window(id) {
         Ok(()) => {
             state.window_tabs.remove(&id);
+            state.display_states.remove(&id);
             state.sync_active_tab_to_focus();
         }
         Err(vim_ui::UiError::CannotCloseFinalEditorWindow) => {}
