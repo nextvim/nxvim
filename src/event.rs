@@ -4,6 +4,7 @@ use vim_input::{Action, Mode};
 use vim_ui::{NavigationDirection, SplitAxis};
 
 use crate::{
+    commandline,
     controller::{self, ControllerAction},
     state::{AppState, TabPage},
 };
@@ -17,8 +18,8 @@ pub fn handle_key_event(
         state.running = false;
         return Ok(());
     }
-    if state.mode == Mode::Command {
-        handle_command_mode_input(state, key)?;
+    if state.command_line_focused {
+        commandline::handle_key_event(state, key, viewport_height)?;
         return Ok(());
     }
     if state.mode == Mode::Normal
@@ -33,19 +34,28 @@ pub fn handle_key_event(
     if let Some(controller_action) = state.controller.feed_crossterm_key(key) {
         match controller_action {
             ControllerAction::Execute(action) => {
-                let tab = &mut state.tabs[active_tab_index];
-                if controller::execute_action(
-                    &action,
-                    &mut state.buffers,
-                    tab.active_buffer_id,
-                    &mut tab.selections,
-                    &mut tab.scroll_row,
-                    &mut tab.scroll_col,
-                    viewport_height,
-                )? {
-                    state.mode = state.controller.mode();
-                } else {
+                if matches!(
+                    action,
+                    Action::SetToCommand
+                        | Action::SetToCommandSearchForward
+                        | Action::SetToCommandSearchBackward
+                ) {
                     handle_unresolved_action(state, &action)?;
+                } else {
+                    let tab = &mut state.tabs[active_tab_index];
+                    if controller::execute_action(
+                        &action,
+                        &mut state.buffers,
+                        tab.active_buffer_id,
+                        &mut tab.selections,
+                        &mut tab.scroll_row,
+                        &mut tab.scroll_col,
+                        viewport_height,
+                    )? {
+                        state.mode = state.controller.mode();
+                    } else {
+                        handle_unresolved_action(state, &action)?;
+                    }
                 }
             }
             ControllerAction::Pending | ControllerAction::Invalid => {}
@@ -54,59 +64,21 @@ pub fn handle_key_event(
     Ok(())
 }
 
-fn handle_command_mode_input(
+pub(crate) fn execute_command(
     state: &mut AppState,
-    key: KeyEvent,
+    command: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match key.code {
-        KeyCode::Esc => {
-            state.mode = Mode::Normal;
-            state.controller.set_mode(Mode::Normal);
-            state.command_line.clear();
-            state
-                .ui
-                .set_window_visible(state.popups.command_line, false)?;
-            state
-                .ui
-                .set_window_visible(state.popups.autocomplete, false)?;
-        }
-        KeyCode::Enter => {
-            execute_command(state)?;
-            state.mode = Mode::Normal;
-            state.controller.set_mode(Mode::Normal);
-        }
-        KeyCode::Backspace => {
-            state.command_line.pop();
-            sync_command_overlays(state)?;
-        }
-        KeyCode::Char(character) => {
-            state.command_line.push(character);
-            sync_command_overlays(state)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn execute_command(state: &mut AppState) -> Result<(), Box<dyn std::error::Error>> {
-    let command = state.command_line.trim().to_string();
-    state
-        .ui
-        .set_window_visible(state.popups.command_line, false)?;
-    state
-        .ui
-        .set_window_visible(state.popups.autocomplete, false)?;
-    if matches!(command.as_str(), "q" | "quit") {
+    if matches!(command, "q" | "quit") {
         state.running = false;
-    } else if matches!(command.as_str(), "vsp" | "vsplit") {
+    } else if matches!(command, "vsp" | "vsplit") {
         split_focused(state, SplitAxis::Columns)?;
-    } else if matches!(command.as_str(), "sp" | "split") {
+    } else if matches!(command, "sp" | "split") {
         split_focused(state, SplitAxis::Rows)?;
-    } else if matches!(command.as_str(), "close" | "clo") {
+    } else if matches!(command, "close" | "clo") {
         close_focused(state)?;
-    } else if matches!(command.as_str(), "tabnext" | "tabn") {
+    } else if matches!(command, "tabnext" | "tabn") {
         state.switch_focused_tab(1);
-    } else if matches!(command.as_str(), "tabprevious" | "tabp") {
+    } else if matches!(command, "tabprevious" | "tabp") {
         state.switch_focused_tab(-1);
     } else if command == "tabnew" {
         let tab_number = state.tabs.len() + 1;
@@ -122,20 +94,17 @@ fn execute_command(state: &mut AppState) -> Result<(), Box<dyn std::error::Error
         state
             .window_tabs
             .insert(state.ui.focused_window_id(), state.active_tab_index);
-        state.command_line = "New tab page created.".to_string();
     } else if command.starts_with('e') && command.len() > 2 {
         open_file(state, command[2..].trim())?;
-    } else if matches!(command.as_str(), "w" | "write") {
+    } else if matches!(command, "w" | "write") {
         let buffer_id = state.active_tab().active_buffer_id;
-        state.command_line = match state.buffers.save(buffer_id, false) {
-            Ok(_) => "File saved.".to_string(),
-            Err(error) => format!("Save error: {error}"),
-        };
+        if let Err(error) = state.buffers.save(buffer_id, false) {
+            state.dialog_message = Some(format!("Save error: {error}"));
+            state.ui.set_window_visible(state.popups.dialog, true)?;
+        }
     } else if command.is_empty() {
-        state.command_line.clear();
     } else {
         let message = format!("Unknown command: {command}");
-        state.command_line = message.clone();
         state.dialog_message = Some(message);
         state.ui.set_window_visible(state.popups.dialog, true)?;
     }
@@ -201,17 +170,6 @@ fn focus_direction(
     Ok(true)
 }
 
-fn sync_command_overlays(state: &mut AppState) -> Result<(), Box<dyn std::error::Error>> {
-    state
-        .ui
-        .set_window_visible(state.popups.command_line, true)?;
-    let has_matches = command_completions(&state.command_line).len() > 1;
-    state
-        .ui
-        .set_window_visible(state.popups.autocomplete, has_matches)?;
-    Ok(())
-}
-
 pub(crate) fn command_completions(prefix: &str) -> Vec<&'static str> {
     const COMMANDS: &[&str] = &[
         "close",
@@ -264,9 +222,11 @@ fn open_file(state: &mut AppState, filename: &str) -> Result<(), Box<dyn std::er
         Ok((buffer_id, _)) => {
             let buffer = state.buffers.get(buffer_id)?;
             state.tabs[state.active_tab_index].reset_buffer(filename, buffer);
-            state.command_line = format!("Loaded {filename}");
         }
-        Err(error) => state.command_line = format!("Error: {error}"),
+        Err(error) => {
+            state.dialog_message = Some(format!("Error: {error}"));
+            state.ui.set_window_visible(state.popups.dialog, true)?;
+        }
     }
     Ok(())
 }
@@ -279,11 +239,11 @@ fn handle_unresolved_action(
         Action::SetToCommand
         | Action::SetToCommandSearchForward
         | Action::SetToCommandSearchBackward => {
-            state.mode = Mode::Command;
-            state.command_line.clear();
-            state
-                .ui
-                .set_window_visible(state.popups.command_line, true)?;
+            state.command_return_focus = state.ui.focused_window_id();
+            state.clear_command_buffer()?;
+            state.mode = Mode::Insert;
+            state.controller.set_mode(Mode::Insert);
+            state.command_line_focused = true;
             state.ui.set_window_visible(state.popups.dialog, false)?;
             state.dialog_message = None;
         }

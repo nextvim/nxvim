@@ -7,7 +7,7 @@ use vim_ui::{
     EditorMode, LineSource, Rect, Renderer, StatusLineView, TabLineView, UIContext, View,
 };
 
-use crate::{event::command_completions, state::AppState};
+use crate::{commandline, event::command_completions, state::AppState};
 
 struct LinesView {
     lines: Vec<String>,
@@ -114,6 +114,7 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
     state.sync_active_tab_to_focus();
     let tab_area = Rect::new(0, 0, area.width, 1);
     let status_area = Rect::new(0, area.height - 2, area.width, 1);
+    let command_area = Rect::new(0, area.height - 1, area.width, 1);
     let active_tab = state.active_tab_index;
 
     let mut frame_buffers = HashMap::new();
@@ -152,20 +153,13 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
         }
     }
 
-    state
-        .ui
-        .window_mut(state.popups.command_line)
-        .expect("command overlay")
-        .set_view(Box::new(LinesView {
-            lines: vec![state.command_line.clone()],
-            prefix: ":",
-        }));
+    let command_text = state.command_text().map_err(io::Error::other)?;
     state
         .ui
         .window_mut(state.popups.autocomplete)
         .expect("autocomplete overlay")
         .set_view(Box::new(LinesView {
-            lines: command_completions(&state.command_line)
+            lines: command_completions(&command_text)
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
@@ -203,28 +197,19 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
         format!(" ln {}, col {} ", cursor.row + 1, cursor.column + 1),
     )
     .draw(status_area, &context, renderer)?;
+    commandline::draw(state, command_area, &context, renderer)?;
 
-    show_cursor(state, &context, renderer)
+    show_cursor(state, command_area, &context, renderer)
 }
 
 fn show_cursor(
     state: &AppState,
+    command_area: Rect,
     context: &FrameContext,
     renderer: &mut BufferedRenderer,
 ) -> io::Result<()> {
-    if state.mode == Mode::Command {
-        let overlays = state.ui.computed_overlays(None);
-        if let Some((_, rect)) = overlays
-            .into_iter()
-            .find(|(id, _)| *id == state.popups.command_line)
-        {
-            let column = 1 + state.command_line.chars().count() as u16;
-            return renderer.show_cursor(
-                rect.x + column.min(rect.width.saturating_sub(1)),
-                rect.y,
-                vim_ui::CursorShape::Bar,
-            );
-        }
+    if commandline::show_cursor(state, command_area, renderer)? {
+        return Ok(());
     }
 
     let focused = state.ui.focused_window_id();

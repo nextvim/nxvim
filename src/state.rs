@@ -61,7 +61,6 @@ impl TabPage {
 }
 
 pub struct PopupWindows {
-    pub command_line: WindowId,
     pub autocomplete: WindowId,
     pub dialog: WindowId,
 }
@@ -72,7 +71,10 @@ pub struct AppState {
     pub active_tab_index: usize,
     pub mode: Mode,
     pub running: bool,
-    pub command_line: String,
+    pub command_buffer_id: BufferId,
+    pub command_selections: SelectionSet,
+    pub command_return_focus: WindowId,
+    pub command_line_focused: bool,
     pub controller: InputController,
     pub ui: Ui,
     pub window_tabs: HashMap<WindowId, usize>,
@@ -81,6 +83,34 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn command_text(&self) -> Result<String, BufferError> {
+        Ok(self
+            .buffers
+            .get(self.command_buffer_id)?
+            .snapshot()
+            .chunks()
+            .collect())
+    }
+
+    pub fn clear_command_buffer(&mut self) -> Result<(), BufferError> {
+        let buffer = self.buffers.get_mut(self.command_buffer_id)?;
+        let len = buffer.snapshot().len_bytes();
+        if len > 0 {
+            let mut transaction = buffer.transaction(vim_buffer::EditOrigin::InsertMode);
+            transaction.delete(
+                None,
+                vim_buffer::TextRange {
+                    start: vim_buffer::ByteOffset(0),
+                    end: vim_buffer::ByteOffset(len),
+                },
+            );
+            transaction.commit(None)?;
+        }
+        self.command_selections = SelectionSet::new();
+        self.command_selections.add(buffer.as_text_buffer(), 0);
+        Ok(())
+    }
+
     pub fn active_tab(&self) -> &TabPage {
         &self.tabs[self.active_tab_index]
     }
