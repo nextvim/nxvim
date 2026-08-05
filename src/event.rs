@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use vim_buffer::{BufferSnapshot, ByteOffset, Point, TextRange};
 use vim_input::{Action, Mode};
@@ -31,45 +33,123 @@ pub fn handle_key_event(
     }
 
     state.sync_active_tab_to_focus();
-    let active_tab_index = state.active_tab_index;
-    if let Some(controller_action) = state.controller.feed_crossterm_key(key) {
-        match controller_action {
-            ControllerAction::Execute { action, register } => {
-                if let Some(register) = register
-                    && let Some(register) =
-                        crate::services::clipboard::RegisterName::from_char(register)
-                {
-                    state.services.clipboard.borrow().grab(register);
-                }
-                if matches!(
-                    action,
-                    Action::SetToCommand
-                        | Action::SetToCommandSearchForward
-                        | Action::SetToCommandSearchBackward
-                ) {
-                    handle_unresolved_action(state, &action)?;
-                } else {
-                    let tab = &mut state.tabs[active_tab_index];
-                    if controller::execute_action(
-                        &action,
-                        &mut state.buffers,
-                        tab.active_buffer_id,
-                        &mut tab.selections,
-                        &mut tab.scroll_row,
-                        &mut tab.scroll_col,
-                        viewport_height,
-                        &mut state.services.clipboard.borrow_mut(),
-                    )? {
-                        state.mode = state.controller.mode();
-                    } else {
-                        handle_unresolved_action(state, &action)?;
-                    }
-                }
-                state.services.clipboard.borrow().release();
+    let Some(controller_action) = state.controller.feed_crossterm_key(key) else {
+        return Ok(());
+    };
+    let mut pending = VecDeque::from([(controller_action, true)]);
+    let mut dispatched = 0usize;
+    const MAX_MACRO_ACTIONS: usize = 10_000;
+
+    while let Some((controller_action, should_record)) = pending.pop_front() {
+        dispatched += 1;
+        if dispatched > MAX_MACRO_ACTIONS {
+            state.dialog_message = Some("macro replay exceeded 10000 actions".to_owned());
+            state.ui.set_window_visible(state.popups.dialog, true)?;
+            break;
+        }
+        dispatch_controller_action(
+            state,
+            controller_action,
+            should_record,
+            viewport_height,
+            &mut pending,
+        )?;
+    }
+    Ok(())
+}
+
+fn dispatch_controller_action(
+    state: &mut AppState,
+    controller_action: ControllerAction,
+    should_record: bool,
+    viewport_height: usize,
+    pending: &mut VecDeque<(ControllerAction, bool)>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ControllerAction::Execute { action, register } = controller_action else {
+        return Ok(());
+    };
+
+    match action {
+        Action::BeginMacro { register } => {
+            state.services.macros.borrow_mut().begin(register);
+            return Ok(());
+        }
+        Action::EndMacro => {
+            state.services.macros.borrow_mut().end();
+            return Ok(());
+        }
+        Action::ReplayMacro {
+            register: macro_register,
+            count,
+        } => {
+            if should_record {
+                state.services.macros.borrow_mut().record(
+                    Action::ReplayMacro {
+                        register: macro_register.clone(),
+                        count,
+                    },
+                    register,
+                );
             }
-            ControllerAction::Pending | ControllerAction::Invalid => {}
+            let replay = state
+                .services
+                .macros
+                .borrow()
+                .replay(&macro_register, count);
+            for recorded in replay.into_iter().rev() {
+                pending.push_front((
+                    ControllerAction::Execute {
+                        action: recorded.action,
+                        register: recorded.register,
+                    },
+                    false,
+                ));
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    if should_record {
+        state
+            .services
+            .macros
+            .borrow_mut()
+            .record(action.clone(), register);
+    }
+    if let Some(register) = register
+        && let Some(register) = crate::services::clipboard::RegisterName::from_char(register)
+    {
+        state.services.clipboard.borrow().grab(register);
+    }
+
+    state.sync_active_tab_to_focus();
+    let active_tab_index = state.active_tab_index;
+    if matches!(
+        action,
+        Action::SetToCommand
+            | Action::SetToCommandSearchForward
+            | Action::SetToCommandSearchBackward
+    ) {
+        handle_unresolved_action(state, &action)?;
+    } else {
+        let tab = &mut state.tabs[active_tab_index];
+        if controller::execute_action(
+            &action,
+            &mut state.buffers,
+            tab.active_buffer_id,
+            &mut tab.selections,
+            &mut tab.scroll_row,
+            &mut tab.scroll_col,
+            viewport_height,
+            &mut state.services.clipboard.borrow_mut(),
+        )? {
+            state.mode = state.controller.mode();
+        } else {
+            handle_unresolved_action(state, &action)?;
         }
     }
+    state.services.clipboard.borrow().release();
     Ok(())
 }
 

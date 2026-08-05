@@ -1,18 +1,24 @@
 pub mod background;
 pub mod clipboard;
 pub mod indexer;
+pub mod macros;
+pub mod treesitter;
 
 use std::cell::RefCell;
 
 use background::BackgroundWorker;
 use clipboard::Clipboard;
 use indexer::Indexer;
+use macros::MacroRecorder;
+use treesitter::TreeSitterService;
 
 /// Long-lived application services shared by editor consumers.
 pub struct Services {
     pub background_worker: BackgroundWorker,
     pub clipboard: RefCell<Clipboard>,
     pub indexer: RefCell<Indexer>,
+    pub macros: RefCell<MacroRecorder>,
+    pub treesitter: RefCell<TreeSitterService>,
 }
 
 impl Services {
@@ -21,6 +27,8 @@ impl Services {
             background_worker: BackgroundWorker::new(),
             clipboard: RefCell::new(Clipboard::new()),
             indexer: RefCell::new(Indexer::new()),
+            macros: RefCell::new(MacroRecorder::new()),
+            treesitter: RefCell::new(TreeSitterService::new()),
         }
     }
 }

@@ -16,7 +16,10 @@ use crate::{
     commandline,
     display::DisplayMap,
     event::command_completions,
-    services::indexer::{IndexTaskResult, index_buffer},
+    services::{
+        indexer::{IndexTaskResult, index_buffer},
+        treesitter::{Grammar, ParseTaskResult, parse_snapshot},
+    },
     state::AppState,
 };
 
@@ -158,7 +161,57 @@ fn poll_display_tasks(state: &mut AppState) {
                 .indexer
                 .borrow_mut()
                 .apply_task_result(task_id, completed);
+        } else if result.downcast_ref::<ParseTaskResult>().is_some() {
+            let completed = result
+                .downcast::<ParseTaskResult>()
+                .expect("parse result type checked");
+            state
+                .services
+                .treesitter
+                .borrow_mut()
+                .apply_task_result(task_id, completed);
         }
+    }
+}
+
+fn schedule_parse_tasks(state: &AppState) {
+    let mut seen = HashSet::new();
+    for tab in &state.tabs {
+        let buffer_id = tab.active_buffer_id.get();
+        if !seen.insert(buffer_id) {
+            continue;
+        }
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            continue;
+        };
+        let Some(grammar) = buffer
+            .path()
+            .and_then(|path| path.to_str())
+            .and_then(Grammar::from_path)
+        else {
+            continue;
+        };
+        let snapshot = buffer.snapshot();
+        let changedtick = snapshot.changedtick().get();
+        let latest_task_id = {
+            let mut treesitter = state.services.treesitter.borrow_mut();
+            if !treesitter.should_parse(buffer_id, changedtick, grammar) {
+                continue;
+            }
+            treesitter.begin_parse(buffer_id, changedtick, grammar)
+        };
+        let raw_snapshot = snapshot.into_inner();
+        let task_id = state
+            .services
+            .background_worker
+            .spawn_task(latest_task_id, move || {
+                parse_snapshot(buffer_id, changedtick, grammar, raw_snapshot)
+            });
+        state
+            .services
+            .treesitter
+            .borrow_mut()
+            .set_pending_task(buffer_id, task_id);
     }
 }
 
@@ -431,6 +484,7 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
     }
     schedule_display_tasks(state);
     schedule_index_tasks(state);
+    schedule_parse_tasks(state);
     scroll_display_maps_to_cursors(state);
     let active_id = UiBufferId::new(state.tabs[active_tab].active_buffer_id.get());
     let text_models = build_text_models(state);

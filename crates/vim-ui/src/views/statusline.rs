@@ -2,18 +2,48 @@ use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::types::Color;
 use crate::window::{UIContext, View};
+use vim_formatter::{CompiledFormat, FormatDialect, FormatResolver, RenderItem, parse};
+
+#[derive(Default)]
+struct StatusLineResolver;
+
+impl FormatResolver for StatusLineResolver {}
 
 pub struct StatusLineView {
-    pub left_text: String,
-    pub right_text: String,
+    format: CompiledFormat,
+    resolver: StatusLineResolver,
 }
 
 impl StatusLineView {
     pub fn new(left: String, right: String) -> Self {
+        let source = format!(
+            " {} %=% {} ",
+            left.replace('%', "%%"),
+            right.replace('%', "%%")
+        );
+        let ast = parse(&source, FormatDialect::StatusLine)
+            .expect("generated statusline format must be valid");
+        let format =
+            CompiledFormat::compile(&ast).expect("generated statusline format must compile");
+
         Self {
-            left_text: left,
-            right_text: right,
+            format,
+            resolver: StatusLineResolver,
         }
+    }
+
+    fn render_text(&self, width: usize) -> std::io::Result<String> {
+        let items = self
+            .format
+            .render(&self.resolver, width)
+            .map_err(std::io::Error::other)?;
+        let mut text = String::new();
+        for item in items {
+            if let RenderItem::Text { text: item, .. } = item {
+                text.push_str(&item);
+            }
+        }
+        Ok(text)
     }
 }
 
@@ -41,20 +71,9 @@ impl View for StatusLineView {
         renderer.set_bg(bg)?;
         renderer.set_fg(fg)?;
 
-        // Clear line
+        let text = self.render_text(area.width as usize)?;
         renderer.move_to(area.x, area.y)?;
-        renderer.print(&" ".repeat(area.width as usize))?;
-
-        // Draw left text
-        renderer.move_to(area.x, area.y)?;
-        renderer.print(&format!(" {} ", self.left_text))?;
-
-        // Draw right text
-        let right_len = self.right_text.chars().count() + 2;
-        if area.width as usize > right_len + self.left_text.chars().count() + 4 {
-            renderer.move_to(area.x + area.width - right_len as u16, area.y)?;
-            renderer.print(&format!(" {} ", self.right_text))?;
-        }
+        renderer.print(&text)?;
 
         renderer.reset_colors()?;
         Ok(())

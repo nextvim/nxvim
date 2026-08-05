@@ -2,15 +2,51 @@ use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::types::Color;
 use crate::window::{UIContext, View};
+use vim_formatter::{CompiledFormat, FormatDialect, FormatResolver, RenderItem, StyleId, parse};
+
+const INACTIVE_STYLE: StyleId = StyleId(1);
+const ACTIVE_STYLE: StyleId = StyleId(2);
+
+#[derive(Default)]
+struct TabLineResolver;
+
+impl FormatResolver for TabLineResolver {
+    fn resolve_highlight(&self, name: &str) -> Option<StyleId> {
+        match name {
+            "TabLine" => Some(INACTIVE_STYLE),
+            "TabLineSel" => Some(ACTIVE_STYLE),
+            _ => None,
+        }
+    }
+}
 
 pub struct TabLineView {
-    pub tabs: Vec<String>,
-    pub active_index: usize,
+    format: CompiledFormat,
+    resolver: TabLineResolver,
 }
 
 impl TabLineView {
     pub fn new(tabs: Vec<String>, active_index: usize) -> Self {
-        Self { tabs, active_index }
+        let mut source = String::new();
+        for (index, tab) in tabs.iter().enumerate() {
+            let highlight = if index == active_index {
+                "TabLineSel"
+            } else {
+                "TabLine"
+            };
+            let tab = tab.replace('%', "%%");
+            source.push_str(&format!("%#{highlight}#%{}T {tab} ", index + 1));
+        }
+        source.push_str("%T%=");
+
+        let ast =
+            parse(&source, FormatDialect::TabLine).expect("generated tabline format must be valid");
+        let format = CompiledFormat::compile(&ast).expect("generated tabline format must compile");
+
+        Self {
+            format,
+            resolver: TabLineResolver,
+        }
     }
 }
 
@@ -23,76 +59,47 @@ impl View for TabLineView {
     ) -> std::io::Result<()> {
         let mut fill_bg = Color::DarkGrey;
         let mut fill_fg = Color::White;
-
         let mut active_bg = Color::Grey;
         let mut active_fg = Color::Black;
-
         let mut inactive_bg = Color::DarkGrey;
         let mut inactive_fg = Color::White;
 
         if let Some(cs) = context.get_colorscheme() {
-            // Default filler background
-            if let Some(style) = cs.get_style("TabLineFill") {
-                if let Some(b) = style.bg {
-                    fill_bg = b;
-                }
-                if let Some(f) = style.fg {
-                    fill_fg = f;
-                }
-            } else if let Some(style) = cs.get_style("TabLine") {
-                if let Some(b) = style.bg {
-                    fill_bg = b;
-                }
-                if let Some(f) = style.fg {
-                    fill_fg = f;
-                }
+            if let Some(style) = cs
+                .get_style("TabLineFill")
+                .or_else(|| cs.get_style("TabLine"))
+            {
+                fill_bg = style.bg.unwrap_or(fill_bg);
+                fill_fg = style.fg.unwrap_or(fill_fg);
             }
-
-            // Active tab style
             if let Some(style) = cs.get_style("TabLineSel") {
-                if let Some(b) = style.bg {
-                    active_bg = b;
-                }
-                if let Some(f) = style.fg {
-                    active_fg = f;
-                }
+                active_bg = style.bg.unwrap_or(active_bg);
+                active_fg = style.fg.unwrap_or(active_fg);
             }
-
-            // Inactive tab style
             if let Some(style) = cs.get_style("TabLine") {
-                if let Some(b) = style.bg {
-                    inactive_bg = b;
-                }
-                if let Some(f) = style.fg {
-                    inactive_fg = f;
-                }
+                inactive_bg = style.bg.unwrap_or(inactive_bg);
+                inactive_fg = style.fg.unwrap_or(inactive_fg);
             }
         }
 
-        renderer.set_bg(fill_bg)?;
-        renderer.set_fg(fill_fg)?;
+        let items = self
+            .format
+            .render(&self.resolver, area.width as usize)
+            .map_err(std::io::Error::other)?;
 
         renderer.move_to(area.x, area.y)?;
-        renderer.print(&" ".repeat(area.width as usize))?;
-
-        let mut x = area.x;
-        for (i, tab) in self.tabs.iter().enumerate() {
-            if i == self.active_index {
-                renderer.set_bg(active_bg)?;
-                renderer.set_fg(active_fg)?;
-            } else {
-                renderer.set_bg(inactive_bg)?;
-                renderer.set_fg(inactive_fg)?;
-            }
-
-            let text = format!(" {} ", tab);
-            renderer.move_to(x, area.y)?;
+        for item in items {
+            let RenderItem::Text { text, style } = item else {
+                continue;
+            };
+            let (fg, bg) = match style {
+                Some(ACTIVE_STYLE) => (active_fg, active_bg),
+                Some(INACTIVE_STYLE) => (inactive_fg, inactive_bg),
+                _ => (fill_fg, fill_bg),
+            };
+            renderer.set_fg(fg)?;
+            renderer.set_bg(bg)?;
             renderer.print(&text)?;
-            x += text.len() as u16;
-
-            if x >= area.x + area.width {
-                break;
-            }
         }
 
         renderer.reset_colors()?;
