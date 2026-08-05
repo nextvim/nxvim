@@ -2,6 +2,8 @@ use text::{ToOffset, ToPoint};
 use vim_buffer::{BufferId, BufferManager, ByteOffset, EditOrigin, Point, SelectionSet, TextRange};
 use vim_input::{Action, Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
 
+use crate::services::clipboard::{Clipboard, ClipboardKind};
+
 /// Application-level input controller that translates Crossterm events
 /// into Vim actions using `vim_input::Resolver`.
 pub struct InputController {
@@ -37,7 +39,10 @@ impl InputController {
         match self.resolver.feed(vim_key, &self.keymap) {
             ResolveOutcome::Resolved(resolved) => {
                 self.pending_display.clear();
-                Some(ControllerAction::Execute(resolved.action))
+                Some(ControllerAction::Execute {
+                    action: resolved.action,
+                    register: resolved.register,
+                })
             }
             ResolveOutcome::Pending => {
                 self.pending_display = self.resolver.pending().to_string();
@@ -56,7 +61,10 @@ impl InputController {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ControllerAction {
     /// A resolved action that should be executed.
-    Execute(Action),
+    Execute {
+        action: Action,
+        register: Option<char>,
+    },
     /// Input is pending (e.g., operator or count prefix).
     Pending,
     /// Invalid sequence was consumed.
@@ -112,6 +120,7 @@ pub fn execute_action(
     scroll_row: &mut usize,
     scroll_col: &mut usize,
     viewport_height: usize,
+    clipboard: &mut Clipboard,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let motion_handled = {
         let buffer = buffers.get(active_buffer_id)?.as_text_buffer();
@@ -241,6 +250,16 @@ pub fn execute_action(
             true
         }
         Action::DeleteChar { count, .. } => {
+            let text = character_text_at_selections(
+                buffers,
+                active_buffer_id,
+                selections,
+                *count as usize,
+                true,
+            )?;
+            if !text.is_empty() {
+                clipboard.set_text(text);
+            }
             delete_chars_at_selections(
                 buffers,
                 active_buffer_id,
@@ -251,6 +270,16 @@ pub fn execute_action(
             true
         }
         Action::DeleteCharBefore { count, .. } => {
+            let text = character_text_at_selections(
+                buffers,
+                active_buffer_id,
+                selections,
+                *count as usize,
+                false,
+            )?;
+            if !text.is_empty() {
+                clipboard.set_text(text);
+            }
             delete_chars_at_selections(
                 buffers,
                 active_buffer_id,
@@ -260,8 +289,43 @@ pub fn execute_action(
             )?;
             true
         }
-        Action::DeleteLine { count, .. } => {
+        Action::DeleteLine { count, .. } | Action::ChangeLine { count, .. } => {
+            let text =
+                line_text_at_selections(buffers, active_buffer_id, selections, *count as usize)?;
+            if !text.is_empty() {
+                clipboard.set_lines(text);
+            }
             delete_lines_at_selections(buffers, active_buffer_id, selections, *count as usize)?;
+            true
+        }
+        Action::YankLine { count, .. } => {
+            let text =
+                line_text_at_selections(buffers, active_buffer_id, selections, *count as usize)?;
+            if !text.is_empty() {
+                clipboard.set_lines(text);
+            }
+            true
+        }
+        Action::Put { count, .. } => {
+            put_at_selections(
+                buffers,
+                active_buffer_id,
+                selections,
+                clipboard,
+                *count as usize,
+                false,
+            )?;
+            true
+        }
+        Action::PutBefore { count, .. } => {
+            put_at_selections(
+                buffers,
+                active_buffer_id,
+                selections,
+                clipboard,
+                *count as usize,
+                true,
+            )?;
             true
         }
         Action::Undo { count, .. } => {
@@ -302,6 +366,115 @@ pub fn execute_action(
 }
 
 // Helper functions for editing
+
+fn character_text_at_selections(
+    buffers: &BufferManager,
+    buffer_id: BufferId,
+    selections: &SelectionSet,
+    count: usize,
+    forward: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let snapshot = buffers.get(buffer_id)?.snapshot();
+    let buffer = buffers.get(buffer_id)?.as_text_buffer();
+    let mut text = String::new();
+    for selection in selections.selections() {
+        let point = selection.head().to_point(buffer);
+        let Some(cursor) = get_byte_offset(&snapshot, point.row as usize, point.column as usize)
+        else {
+            continue;
+        };
+        let range = if forward {
+            let end_column = (point.column as usize)
+                .saturating_add(count)
+                .min(get_line_char_count(&snapshot, point.row as usize));
+            get_byte_offset(&snapshot, point.row as usize, end_column)
+                .and_then(|end| TextRange::new(cursor, end))
+        } else {
+            previous_character_offset(&snapshot, cursor, count)
+                .and_then(|start| TextRange::new(start, cursor))
+        };
+        if let Some(range) = range.filter(|range| !range.is_empty()) {
+            text.extend(snapshot.text_for_range(range)?);
+        }
+    }
+    Ok(text)
+}
+
+fn line_text_at_selections(
+    buffers: &BufferManager,
+    buffer_id: BufferId,
+    selections: &SelectionSet,
+    count: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let snapshot = buffers.get(buffer_id)?.snapshot();
+    let buffer = buffers.get(buffer_id)?.as_text_buffer();
+    let total_rows = snapshot.row_count() as usize;
+    let mut text = String::new();
+    for selection in selections.selections() {
+        let row = selection.head().to_point(buffer).row as usize;
+        let Some(start) = get_byte_offset(&snapshot, row, 0) else {
+            continue;
+        };
+        let end_row = row.saturating_add(count).min(total_rows);
+        let end =
+            get_byte_offset(&snapshot, end_row, 0).unwrap_or(ByteOffset(snapshot.len_bytes()));
+        if let Some(range) = TextRange::new(start, end).filter(|range| !range.is_empty()) {
+            text.extend(snapshot.text_for_range(range)?);
+            if end_row == total_rows && !text.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+    }
+    Ok(text)
+}
+
+fn put_at_selections(
+    buffers: &mut BufferManager,
+    buffer_id: BufferId,
+    selections: &mut SelectionSet,
+    clipboard: &Clipboard,
+    count: usize,
+    before: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if count == 0 || clipboard.is_empty() {
+        return Ok(());
+    }
+    let kind = clipboard.kind();
+    let text = clipboard.text();
+    let snapshot = buffers.get(buffer_id)?.snapshot();
+    let buffer = buffers.get(buffer_id)?.as_text_buffer();
+    let mut offsets = Vec::with_capacity(selections.len());
+    for selection in selections.selections() {
+        let point = selection.head().to_point(buffer);
+        let row = point.row as usize;
+        let offset = match kind {
+            ClipboardKind::Character | ClipboardKind::Block if before => {
+                get_byte_offset(&snapshot, row, point.column as usize)
+            }
+            ClipboardKind::Character | ClipboardKind::Block => {
+                let column = (point.column as usize + 1).min(get_line_char_count(&snapshot, row));
+                get_byte_offset(&snapshot, row, column)
+            }
+            ClipboardKind::Line if before => get_byte_offset(&snapshot, row, 0),
+            ClipboardKind::Line => get_byte_offset(&snapshot, row.saturating_add(1), 0)
+                .or(Some(ByteOffset(snapshot.len_bytes()))),
+        };
+        if let Some(offset) = offset {
+            offsets.push(offset);
+        }
+    }
+    drop(snapshot);
+
+    let inserted = text.repeat(count);
+    let mut transaction = buffers
+        .get_mut(buffer_id)?
+        .transaction(EditOrigin::InsertMode);
+    for offset in offsets {
+        transaction.insert(None, offset, inserted.as_str());
+    }
+    transaction.commit(Some(selections.clone()))?;
+    Ok(())
+}
 
 fn insert_text_at_selections(
     buffers: &mut BufferManager,
@@ -562,4 +735,87 @@ fn get_byte_offset(
     snapshot
         .point_to_offset(Point::new(row_u32, byte_idx as u32))
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup(text: &str) -> (BufferManager, BufferId, SelectionSet, Clipboard) {
+        let mut buffers = BufferManager::new();
+        let buffer_id = buffers.create(text).id();
+        let mut selections = SelectionSet::new();
+        selections.add(buffers.get(buffer_id).unwrap().as_text_buffer(), 0);
+        (buffers, buffer_id, selections, Clipboard::new())
+    }
+
+    fn execute(
+        action: Action,
+        buffers: &mut BufferManager,
+        buffer_id: BufferId,
+        selections: &mut SelectionSet,
+        clipboard: &mut Clipboard,
+    ) {
+        execute_action(
+            &action, buffers, buffer_id, selections, &mut 0, &mut 0, 10, clipboard,
+        )
+        .unwrap();
+    }
+
+    fn buffer_text(buffers: &BufferManager, buffer_id: BufferId) -> String {
+        buffers
+            .get(buffer_id)
+            .unwrap()
+            .snapshot()
+            .chunks()
+            .collect()
+    }
+
+    #[test]
+    fn deleting_and_putting_a_character_uses_the_clipboard() {
+        let (mut buffers, buffer_id, mut selections, mut clipboard) = setup("abc");
+
+        execute(
+            Action::DeleteChar { count: 1 },
+            &mut buffers,
+            buffer_id,
+            &mut selections,
+            &mut clipboard,
+        );
+        assert_eq!(clipboard.text(), "a");
+        assert_eq!(buffer_text(&buffers, buffer_id), "bc");
+
+        execute(
+            Action::Put { count: 1 },
+            &mut buffers,
+            buffer_id,
+            &mut selections,
+            &mut clipboard,
+        );
+        assert_eq!(buffer_text(&buffers, buffer_id), "bac");
+    }
+
+    #[test]
+    fn linewise_yank_puts_below_the_current_line() {
+        let (mut buffers, buffer_id, mut selections, mut clipboard) = setup("one\ntwo\n");
+
+        execute(
+            Action::YankLine { count: 1 },
+            &mut buffers,
+            buffer_id,
+            &mut selections,
+            &mut clipboard,
+        );
+        assert_eq!(clipboard.kind(), ClipboardKind::Line);
+        assert_eq!(clipboard.text(), "one\n");
+
+        execute(
+            Action::Put { count: 1 },
+            &mut buffers,
+            buffer_id,
+            &mut selections,
+            &mut clipboard,
+        );
+        assert_eq!(buffer_text(&buffers, buffer_id), "one\none\ntwo\n");
+    }
 }

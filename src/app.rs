@@ -12,6 +12,7 @@ use crate::{
     editor,
     event::handle_key_event,
     script::ScriptRuntime,
+    services::Services,
     state::{AppState, PopupWindows, TabPage, editor_rect},
     terminal::TerminalSession,
 };
@@ -100,6 +101,7 @@ fn initial_state(
         command_line_focused: false,
         controller: InputController::new(Mode::Normal),
         script: ScriptRuntime::new(),
+        services: Services::new(),
         ui,
         window_tabs: [(editor_id, 0)].into_iter().collect(),
         popups: PopupWindows {
