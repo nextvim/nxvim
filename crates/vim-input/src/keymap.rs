@@ -597,6 +597,19 @@ impl Keymap {
             .expect("Valid binding");
 
         normal_actions
+            .bind("gt", Action::NextTab { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("gT", Action::PreviousTab { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("<Tab>", Action::NextTab { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("<BackTab>", Action::PreviousTab { count: 1 })
+            .expect("Valid binding");
+
+        normal_actions
             .bind("<C-w><h>", Action::FocusLeftWindow)
             .expect("Valid binding");
         normal_actions

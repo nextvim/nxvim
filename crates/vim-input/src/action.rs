@@ -69,6 +69,12 @@ pub enum Action {
     },
     CloseWindow,
     OnlyWindow,
+    NextTab {
+        count: u32,
+    },
+    PreviousTab {
+        count: u32,
+    },
     ResizeLeft,
     ResizeRight,
     ResizeUp,
@@ -432,6 +438,8 @@ impl std::fmt::Display for Action {
             Action::SplitVertical { file_path } => write!(f, "SplitVertical({:?})", file_path),
             Action::CloseWindow => write!(f, "CloseWindow"),
             Action::OnlyWindow => write!(f, "OnlyWindow"),
+            Action::NextTab { count } => write!(f, "NextTab({})", count),
+            Action::PreviousTab { count } => write!(f, "PreviousTab({})", count),
             Action::ResizeLeft => write!(f, "ResizeLeft"),
             Action::ResizeRight => write!(f, "ResizeRight"),
             Action::ResizeUp => write!(f, "ResizeUp"),
@@ -711,6 +719,8 @@ impl Action {
             | Action::ResizeRight
             | Action::ResizeUp
             | Action::ResizeDown => self,
+            Action::NextTab { .. } => Action::NextTab { count },
+            Action::PreviousTab { .. } => Action::PreviousTab { count },
             Action::Delete { .. } => Action::Delete { count },
             Action::Change { .. } => Action::Change { count },
             Action::Yank { .. } => Action::Yank { count },

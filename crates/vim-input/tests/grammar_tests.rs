@@ -85,6 +85,36 @@ fn test_motions() {
 }
 
 #[test]
+fn test_tab_navigation() {
+    let keymap = Keymap::vim_defaults();
+    let mut resolver = Resolver::new(Mode::Normal);
+
+    let outcomes = run_keys(&mut resolver, &keymap, "3gt");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::NextTab { count: 3 }
+    );
+
+    let outcomes = run_keys(&mut resolver, &keymap, "gT");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::PreviousTab { count: 1 }
+    );
+
+    let outcomes = run_keys(&mut resolver, &keymap, "<Tab>");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::NextTab { count: 1 }
+    );
+
+    let outcomes = run_keys(&mut resolver, &keymap, "<BackTab>");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::PreviousTab { count: 1 }
+    );
+}
+
+#[test]
 fn test_operators() {
     let keymap = Keymap::vim_defaults();
     let mut resolver = Resolver::new(Mode::Normal);
