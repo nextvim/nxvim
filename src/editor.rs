@@ -1,4 +1,7 @@
-use std::{collections::HashMap, io};
+use std::{
+    collections::{HashMap, HashSet},
+    io,
+};
 
 use vim_buffer::{BufferSnapshot, Point, TextRange};
 use vim_input::Mode;
@@ -9,7 +12,13 @@ use vim_ui::{
     UIContext, View, WindowId,
 };
 
-use crate::{commandline, display::DisplayMap, event::command_completions, state::AppState};
+use crate::{
+    commandline,
+    display::DisplayMap,
+    event::command_completions,
+    services::indexer::{IndexTaskResult, index_buffer},
+    state::AppState,
+};
 
 struct LinesView {
     lines: Vec<String>,
@@ -123,22 +132,70 @@ impl UIContext for FrameContext {
 fn poll_display_tasks(state: &mut AppState) {
     while let Some(result) = state.services.background_worker.try_recv() {
         let task_id = result.task_id;
-        let Ok(completed) = result.downcast::<DisplayTaskResult>() else {
-            continue;
-        };
-        let Some(display) = state.display_states.get_mut(&completed.window_id) else {
-            continue;
-        };
-        if display.pending_task_id == Some(task_id)
-            && display.requested_buffer_id == Some(completed.buffer_id)
-            && display.requested_changedtick == Some(completed.changedtick)
-            && display.requested_wrap_width == Some(completed.wrap_width)
-        {
-            display.map = Some(completed.map);
-            display.applied_buffer_id = Some(completed.buffer_id);
-            display.applied_changedtick = Some(completed.changedtick);
-            display.pending_task_id = None;
+        if result.downcast_ref::<DisplayTaskResult>().is_some() {
+            let completed = result
+                .downcast::<DisplayTaskResult>()
+                .expect("display result type checked");
+            let Some(display) = state.display_states.get_mut(&completed.window_id) else {
+                continue;
+            };
+            if display.pending_task_id == Some(task_id)
+                && display.requested_buffer_id == Some(completed.buffer_id)
+                && display.requested_changedtick == Some(completed.changedtick)
+                && display.requested_wrap_width == Some(completed.wrap_width)
+            {
+                display.map = Some(completed.map);
+                display.applied_buffer_id = Some(completed.buffer_id);
+                display.applied_changedtick = Some(completed.changedtick);
+                display.pending_task_id = None;
+            }
+        } else if result.downcast_ref::<IndexTaskResult>().is_some() {
+            let completed = result
+                .downcast::<IndexTaskResult>()
+                .expect("index result type checked");
+            state
+                .services
+                .indexer
+                .borrow_mut()
+                .apply_task_result(task_id, completed);
         }
+    }
+}
+
+fn schedule_index_tasks(state: &AppState) {
+    let mut seen = HashSet::new();
+    for tab in &state.tabs {
+        let buffer_id = tab.active_buffer_id.get();
+        if !seen.insert(buffer_id) {
+            continue;
+        }
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            continue;
+        };
+        let snapshot = buffer.snapshot();
+        let changedtick = snapshot.changedtick().get();
+        let source_key = buffer
+            .path()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("buffer:{buffer_id}"));
+        let latest_task_id = {
+            let mut indexer = state.services.indexer.borrow_mut();
+            if !indexer.should_index(buffer_id, changedtick) {
+                continue;
+            }
+            indexer.begin_index(buffer_id, changedtick)
+        };
+        let task_id = state
+            .services
+            .background_worker
+            .spawn_task(latest_task_id, move || {
+                index_buffer(buffer_id, changedtick, source_key, snapshot)
+            });
+        state
+            .services
+            .indexer
+            .borrow_mut()
+            .set_pending_task(buffer_id, task_id);
     }
 }
 
@@ -373,6 +430,7 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
         );
     }
     schedule_display_tasks(state);
+    schedule_index_tasks(state);
     scroll_display_maps_to_cursors(state);
     let active_id = UiBufferId::new(state.tabs[active_tab].active_buffer_id.get());
     let text_models = build_text_models(state);
