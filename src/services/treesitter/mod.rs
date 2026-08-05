@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::background::TaskId;
+use crate::display::highlight::HighlightSnapshot;
 pub use grammars::Grammar;
 pub use tree_sitter::{SyntaxNode, SyntaxTree, TreeSitterParser};
 
@@ -18,6 +19,13 @@ pub(crate) struct ParseTaskResult {
     pub result: Result<SyntaxTree, String>,
 }
 
+#[derive(Debug)]
+pub(crate) struct HighlightTaskResult {
+    pub buffer_id: u64,
+    pub changedtick: u64,
+    pub highlights: Option<HighlightSnapshot>,
+}
+
 struct BufferSyntaxState {
     grammar: Grammar,
     requested_changedtick: u64,
@@ -26,6 +34,11 @@ struct BufferSyntaxState {
     latest_task_id: Arc<AtomicU64>,
     syntax_tree: Option<SyntaxTree>,
     error: Option<String>,
+    requested_highlight_changedtick: Option<u64>,
+    applied_highlight_changedtick: Option<u64>,
+    pending_highlight_task_id: Option<TaskId>,
+    latest_highlight_task_id: Arc<AtomicU64>,
+    highlights: Option<HighlightSnapshot>,
 }
 
 /// Owns exactly one syntax tree and parse sequence per editor buffer.
@@ -63,6 +76,11 @@ impl TreeSitterService {
                 latest_task_id: Arc::new(AtomicU64::new(0)),
                 syntax_tree: None,
                 error: None,
+                requested_highlight_changedtick: None,
+                applied_highlight_changedtick: None,
+                pending_highlight_task_id: None,
+                latest_highlight_task_id: Arc::new(AtomicU64::new(0)),
+                highlights: None,
             });
         if state.grammar != grammar {
             state.grammar = grammar;
@@ -106,6 +124,54 @@ impl TreeSitterService {
             }
         }
         true
+    }
+
+    pub(crate) fn should_highlight(&self, buffer_id: u64, changedtick: u64) -> bool {
+        self.buffers
+            .get(&buffer_id)
+            .is_none_or(|state| state.requested_highlight_changedtick != Some(changedtick))
+    }
+
+    pub(crate) fn begin_highlight(
+        &mut self,
+        buffer_id: u64,
+        changedtick: u64,
+    ) -> Option<Arc<AtomicU64>> {
+        let state = self.buffers.get_mut(&buffer_id)?;
+        state.requested_highlight_changedtick = Some(changedtick);
+        Some(state.latest_highlight_task_id.clone())
+    }
+
+    pub(crate) fn set_pending_highlight_task(&mut self, buffer_id: u64, task_id: TaskId) {
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.pending_highlight_task_id = Some(task_id);
+        }
+    }
+
+    pub(crate) fn apply_highlight_task_result(
+        &mut self,
+        task_id: TaskId,
+        completed: HighlightTaskResult,
+    ) -> bool {
+        let Some(state) = self.buffers.get_mut(&completed.buffer_id) else {
+            return false;
+        };
+        if state.pending_highlight_task_id != Some(task_id)
+            || state.requested_highlight_changedtick != Some(completed.changedtick)
+        {
+            return false;
+        }
+        state.pending_highlight_task_id = None;
+        let Some(highlights) = completed.highlights else {
+            return false;
+        };
+        state.highlights = Some(highlights);
+        state.applied_highlight_changedtick = Some(completed.changedtick);
+        true
+    }
+
+    pub fn highlights(&self, buffer_id: vim_buffer::BufferId) -> Option<&HighlightSnapshot> {
+        self.buffers.get(&buffer_id.get())?.highlights.as_ref()
     }
 
     pub fn syntax_tree(&self, buffer_id: vim_buffer::BufferId) -> Option<&SyntaxTree> {

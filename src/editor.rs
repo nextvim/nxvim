@@ -18,7 +18,7 @@ use crate::{
     event::command_completions,
     services::{
         indexer::{IndexTaskResult, index_buffer_cancellable},
-        treesitter::{Grammar, ParseTaskResult, parse_snapshot_cancellable},
+        treesitter::{Grammar, HighlightTaskResult, ParseTaskResult, parse_snapshot_cancellable},
     },
     state::AppState,
 };
@@ -172,6 +172,15 @@ fn poll_display_tasks(state: &mut AppState) {
                 .treesitter
                 .borrow_mut()
                 .apply_task_result(task_id, completed);
+        } else if result.downcast_ref::<HighlightTaskResult>().is_some() {
+            let completed = result
+                .downcast::<HighlightTaskResult>()
+                .expect("highlight result type checked");
+            state
+                .services
+                .treesitter
+                .borrow_mut()
+                .apply_highlight_task_result(task_id, completed);
         }
     }
 }
@@ -247,6 +256,87 @@ fn schedule_parse_tasks(state: &AppState) {
             .treesitter
             .borrow_mut()
             .set_pending_task(buffer_id, task_id);
+    }
+}
+
+fn highlight_tasks_needed(state: &AppState) -> bool {
+    let mut seen = HashSet::new();
+    state.tabs.iter().any(|tab| {
+        let buffer_id = tab.active_buffer_id.get();
+        if !seen.insert(buffer_id) {
+            return false;
+        }
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            return false;
+        };
+        if buffer
+            .path()
+            .and_then(|path| path.to_str())
+            .and_then(Grammar::from_path)
+            .is_none()
+        {
+            return false;
+        }
+        state
+            .services
+            .treesitter
+            .borrow()
+            .should_highlight(buffer_id, buffer.snapshot().changedtick().get())
+    })
+}
+
+fn schedule_highlight_tasks(state: &AppState) {
+    let mut seen = HashSet::new();
+    for tab in &state.tabs {
+        let buffer_id = tab.active_buffer_id.get();
+        if !seen.insert(buffer_id) {
+            continue;
+        }
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            continue;
+        };
+        let Some(file_path) = buffer
+            .path()
+            .and_then(|path| path.to_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if Grammar::from_path(&file_path).is_none() {
+            continue;
+        }
+        let snapshot = buffer.snapshot();
+        let changedtick = snapshot.changedtick().get();
+        let Some(latest_task_id) = state
+            .services
+            .treesitter
+            .borrow_mut()
+            .begin_highlight(buffer_id, changedtick)
+        else {
+            continue;
+        };
+        let raw_snapshot = snapshot.into_inner();
+        let task_id = state.services.background_worker.spawn_cancellable_task(
+            latest_task_id,
+            move |cancel| {
+                let highlights = crate::display::highlight::parse_scopes_cancellable(
+                    &raw_snapshot,
+                    changedtick,
+                    Some(&file_path),
+                    || cancel.is_cancelled(),
+                );
+                (!cancel.is_cancelled()).then_some(HighlightTaskResult {
+                    buffer_id,
+                    changedtick,
+                    highlights,
+                })
+            },
+        );
+        state
+            .services
+            .treesitter
+            .borrow_mut()
+            .set_pending_highlight_task(buffer_id, task_id);
     }
 }
 
@@ -456,6 +546,7 @@ fn scroll_display_maps_to_cursors(state: &mut AppState) {
 
 fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
     let mut models = HashMap::new();
+    let treesitter = state.services.treesitter.borrow();
     for (&window_id, &tab_index) in &state.window_tabs {
         let Some(tab) = state.tabs.get(tab_index) else {
             continue;
@@ -489,6 +580,10 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
             (snapshot.scroll_y as usize).min(snapshot.row_count().saturating_sub(1) as usize);
         let end_row = (first_row + inner.height as usize).min(snapshot.row_count() as usize);
         let default_style = vim_ui::Style::default();
+        // Keep using the last completed highlight snapshot while the task for the
+        // current buffer version is still running. The service replaces it only
+        // after a complete, non-stale result arrives.
+        let highlights = treesitter.highlights(tab.active_buffer_id);
         let rows = (first_row..end_row)
             .map(|display_row| {
                 let text = snapshot.line_text(display_row as u32);
@@ -508,6 +603,17 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                         buffer.as_text_buffer(),
                     );
                     let mut span_style = default_style;
+                    if let Some(highlight) = highlights
+                        .and_then(|highlights| highlights.spans_for_row(point.row))
+                        .and_then(|spans| {
+                            spans
+                                .iter()
+                                .find(|span| point.column >= span.start && point.column < span.end)
+                        })
+                    {
+                        let [red, green, blue] = highlight.foreground;
+                        span_style.fg = Some(Color::Rgb(red, green, blue));
+                    }
                     if selected || at_cursor_head {
                         span_style.bg = Some(Color::DarkGrey);
                     }
@@ -617,6 +723,9 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
     }
     if parse_tasks_needed(state) {
         schedule_parse_tasks(state);
+    }
+    if highlight_tasks_needed(state) {
+        schedule_highlight_tasks(state);
     }
     scroll_display_maps_to_cursors(state);
     let active_id = UiBufferId::new(state.tabs[active_tab].active_buffer_id.get());
