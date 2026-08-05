@@ -539,13 +539,13 @@ fn display_tasks_needed(state: &AppState) -> bool {
             .window(window_id)
             .is_some_and(|window| window.draws_border());
         let inner = if draws_border { rect.inner(1) } else { rect };
-        let wrap_width = inner.width.saturating_sub(4) as u32;
         let Some(tab) = state.tabs.get(tab_index) else {
             return false;
         };
         let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
             return false;
         };
+        let wrap_width = u32::from(inner.width).saturating_sub(gutter_width(buffer));
         let Some(display) = state.display_states.get(&window_id) else {
             return false;
         };
@@ -576,22 +576,18 @@ fn schedule_display_tasks(state: &mut AppState) {
                 .window(window_id)
                 .is_some_and(|window| window.draws_border());
             let inner = if draws_border { rect.inner(1) } else { rect };
-            Some((
-                window_id,
-                tab_index,
-                inner.width.saturating_sub(4) as u32,
-                inner.height,
-            ))
+            Some((window_id, tab_index, inner.width, inner.height))
         })
         .collect();
 
-    for (window_id, tab_index, wrap_width, inner_height) in windows {
+    for (window_id, tab_index, inner_width, inner_height) in windows {
         let Some(tab) = state.tabs.get(tab_index) else {
             continue;
         };
         let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
             continue;
         };
+        let wrap_width = u32::from(inner_width).saturating_sub(gutter_width(buffer));
         let buffer_window = estimated_display_window(state, window_id, tab, buffer, inner_height);
         let snapshot = buffer.snapshot();
         let buffer_id = tab.active_buffer_id.get();
@@ -697,6 +693,10 @@ fn scroll_display_maps_to_cursors(state: &mut AppState) {
     }
 }
 
+fn gutter_width(buffer: &Buffer) -> u32 {
+    buffer.as_text_buffer().row_count().to_string().len().max(3) as u32 + 1
+}
+
 fn live_row_text(buffer: &text::Buffer, row: u32) -> String {
     let start = Point::new(row, 0).to_offset(buffer);
     let end = Point::new(row, buffer.line_len(row)).to_offset(buffer);
@@ -723,15 +723,23 @@ fn build_live_text_model(
     }
     let end_row = first_row.saturating_add(visible_rows).min(row_count);
     let default_style = vim_ui::Style::default();
+    let gutter_width = gutter_width(buffer);
+    let mut primary_cursor_position = None;
     let rows = (first_row..end_row)
         .map(|row| {
             let text = live_row_text(text_buffer, row);
             let mut spans = Vec::<TextSpan>::new();
             for (column, character) in text.char_indices() {
                 let column = column as u32;
-                let (selected, _, at_cursor_head) =
+                let selection_state =
                     tab.selections
                         .is_selected(row, column, buffer.as_text_buffer());
+                if selection_state.at_primary_cursor_head {
+                    primary_cursor_position = Some(DisplayPosition {
+                        row: row - first_row,
+                        column: column.saturating_add(gutter_width),
+                    });
+                }
                 let mut style = default_style;
                 if let Some(highlight) =
                     highlights
@@ -745,7 +753,7 @@ fn build_live_text_model(
                     let [red, green, blue] = highlight.foreground;
                     style.fg = Some(Color::Rgb(red, green, blue));
                 }
-                if selected || at_cursor_head {
+                if selection_state.selected_cell || selection_state.at_cursor_head {
                     style.bg = Some(Color::DarkGrey);
                 }
                 if let Some(span) = spans.last_mut().filter(|span| span.style == style) {
@@ -761,7 +769,11 @@ fn build_live_text_model(
                 buffer_row: Some(row),
                 kind: DisplayRowKind::Buffer,
                 gutter: Some(GutterCell {
-                    text: format!("{:>3} ", row + 1),
+                    text: format!(
+                        "{:>width$} ",
+                        row + 1,
+                        width = gutter_width.saturating_sub(1) as usize
+                    ),
                     style: default_style,
                 }),
                 spans,
@@ -769,11 +781,13 @@ fn build_live_text_model(
             }
         })
         .collect();
-    let cursor_row = cursor.row.saturating_sub(first_row);
-    let cursor_column = cursor.column.saturating_add(4);
+    let cursor_position = primary_cursor_position.unwrap_or(DisplayPosition {
+        row: cursor.row.saturating_sub(first_row),
+        column: cursor.column.saturating_add(gutter_width),
+    });
     let cursor_visible = cursor.row >= first_row
-        && cursor_row < visible_rows
-        && cursor_column < u32::from(inner.width);
+        && cursor_position.row < visible_rows
+        && cursor_position.column < u32::from(inner.width);
 
     TextViewModel {
         viewport_width: inner.width,
@@ -781,10 +795,7 @@ fn build_live_text_model(
         rows,
         selections: Vec::new(),
         cursor: Some(TextCursor {
-            position: DisplayPosition {
-                row: cursor_row,
-                column: cursor_column,
-            },
+            position: cursor_position,
             shape: if mode == Mode::Insert {
                 vim_ui::CursorShape::Bar
             } else {
@@ -852,6 +863,8 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
             (snapshot.scroll_y as usize).min(snapshot.row_count().saturating_sub(1) as usize);
         let end_row = (first_row + inner.height as usize).min(snapshot.row_count() as usize);
         let default_style = vim_ui::Style::default();
+        let gutter_width = gutter_width(buffer);
+        let mut primary_cursor_position = None;
         let rows = (first_row..end_row)
             .map(|display_row| {
                 let text = snapshot.line_text(display_row as u32);
@@ -865,11 +878,17 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                         display_row as u32,
                         display_column as u32,
                     ));
-                    let (selected, _, at_cursor_head) = tab.selections.is_selected(
+                    let selection_state = tab.selections.is_selected(
                         point.row,
                         point.column,
                         buffer.as_text_buffer(),
                     );
+                    if selection_state.at_primary_cursor_head {
+                        primary_cursor_position = Some(DisplayPosition {
+                            row: display_row as u32 - first_row as u32,
+                            column: (display_column as u32).saturating_add(gutter_width),
+                        });
+                    }
                     let mut span_style = default_style;
                     if let Some(highlight) = highlights
                         .spans(tab.active_buffer_id, point.row)
@@ -882,7 +901,7 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                         let [red, green, blue] = highlight.foreground;
                         span_style.fg = Some(Color::Rgb(red, green, blue));
                     }
-                    if selected || at_cursor_head {
+                    if selection_state.selected_cell || selection_state.at_cursor_head {
                         span_style.bg = Some(Color::DarkGrey);
                     }
 
@@ -907,9 +926,13 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                     },
                     gutter: Some(GutterCell {
                         text: if continuation {
-                            "    ".to_owned()
+                            " ".repeat(gutter_width as usize)
                         } else {
-                            format!("{:>3} ", buffer_row + 1)
+                            format!(
+                                "{:>width$} ",
+                                buffer_row + 1,
+                                width = gutter_width.saturating_sub(1) as usize
+                            )
                         },
                         style: default_style,
                     }),
@@ -920,11 +943,13 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
             .collect();
         let cursor_point = tab.cursor_point(buffer);
         let display_cursor = snapshot.point_to_display_point(cursor_point);
-        let cursor_row = display_cursor.row().saturating_sub(first_row as u32);
-        let cursor_column = display_cursor.column().saturating_add(4);
+        let cursor_position = primary_cursor_position.unwrap_or(DisplayPosition {
+            row: display_cursor.row().saturating_sub(first_row as u32),
+            column: display_cursor.column().saturating_add(gutter_width),
+        });
         let cursor_visible = display_cursor.row() >= first_row as u32
-            && cursor_row < inner.height as u32
-            && cursor_column < inner.width as u32;
+            && cursor_position.row < inner.height as u32
+            && cursor_position.column < inner.width as u32;
         models.insert(
             window_id,
             TextViewModel {
@@ -933,10 +958,7 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                 rows,
                 selections: Vec::new(),
                 cursor: Some(TextCursor {
-                    position: DisplayPosition {
-                        row: cursor_row,
-                        column: cursor_column,
-                    },
+                    position: cursor_position,
                     shape: if state.mode == Mode::Insert {
                         vim_ui::CursorShape::Bar
                     } else {

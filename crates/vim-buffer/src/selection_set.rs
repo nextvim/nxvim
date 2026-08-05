@@ -8,6 +8,14 @@ use std::sync::Arc;
 use sum_tree::Bias;
 use text::{Anchor, Buffer, Point, Selection, SelectionGoal, ToOffset, ToPoint};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SelectionCellState {
+    pub selected_cell: bool,
+    pub selected_line: bool,
+    pub at_cursor_head: bool,
+    pub at_primary_cursor_head: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectionSet {
     pub id: usize,            // Auto-increment counter for generating unique selection IDs
@@ -352,8 +360,9 @@ impl SelectionSet {
         }
     }
 
-    pub fn is_selected(&self, row: u32, column: u32, buffer: &Buffer) -> (bool, bool, bool) {
-        // Returns (selected_cell, selected_line, at_cursor_head)
+    pub fn is_selected(&self, row: u32, column: u32, buffer: &Buffer) -> SelectionCellState {
+        let primary_head = self.primary().head().to_point(buffer);
+        let at_primary_cursor_head = row == primary_head.row && column == primary_head.column;
         let mut at_cursor_head = false;
         for cursor in self.selections.iter() {
             let head = cursor.head();
@@ -401,10 +410,20 @@ impl SelectionSet {
                     row == start.row && column == start.column
                 };
                 let selected_line = true; // row is within [start.row, end.row]
-                return (true, selected_line, at_cursor_head || at_head);
+                return SelectionCellState {
+                    selected_cell: true,
+                    selected_line,
+                    at_cursor_head: at_cursor_head || at_head,
+                    at_primary_cursor_head,
+                };
             }
         }
-        (false, false, at_cursor_head)
+        SelectionCellState {
+            selected_cell: false,
+            selected_line: false,
+            at_cursor_head,
+            at_primary_cursor_head,
+        }
     }
 
     pub fn has_selection(&self, buffer: &Buffer) -> bool {

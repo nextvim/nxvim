@@ -44,7 +44,7 @@ pub use outcome::{ManagerOutcome, MutationOutcome, OptionsOutcome, SaveOutcome};
 pub use position::{ByteOffset, TextExtent, TextRange};
 pub use search::{TextSearch, compile};
 pub use selection::SelectionExt;
-pub use selection_set::{SelectionCollection, SelectionSet};
+pub use selection_set::{SelectionCellState, SelectionCollection, SelectionSet};
 pub use snapshot::{BufferSnapshot, TextChunks};
 pub use text::{OffsetUtf16, Point, PointUtf16};
 pub use transaction::Transaction;
