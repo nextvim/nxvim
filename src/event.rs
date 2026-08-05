@@ -6,7 +6,8 @@ use vim_ui::{NavigationDirection, SplitAxis};
 use crate::{
     commandline,
     controller::{self, ControllerAction},
-    state::{AppState, TabPage},
+    script::EditorCommand,
+    state::AppState,
 };
 
 pub fn handle_key_event(
@@ -68,45 +69,20 @@ pub(crate) fn execute_command(
     state: &mut AppState,
     command: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if matches!(command, "q" | "quit") {
-        state.running = false;
-    } else if matches!(command, "vsp" | "vsplit") {
-        split_focused(state, SplitAxis::Columns)?;
-    } else if matches!(command, "sp" | "split") {
-        split_focused(state, SplitAxis::Rows)?;
-    } else if matches!(command, "close" | "clo") {
-        close_focused(state)?;
-    } else if matches!(command, "tabnext" | "tabn") {
-        state.switch_focused_tab(1);
-    } else if matches!(command, "tabprevious" | "tabp") {
-        state.switch_focused_tab(-1);
-    } else if command == "tabnew" {
-        let tab_number = state.tabs.len() + 1;
-        let buffer = state.buffers.create(format!(
-            "This is a new tab page buffer.\nTab count: {tab_number}\n"
-        ));
-        state.tabs.push(TabPage::new(
-            format!("tab_{tab_number}"),
-            buffer.id(),
-            buffer,
-        ));
-        state.active_tab_index = state.tabs.len() - 1;
-        state
-            .window_tabs
-            .insert(state.ui.focused_window_id(), state.active_tab_index);
-    } else if command.starts_with('e') && command.len() > 2 {
-        open_file(state, command[2..].trim())?;
-    } else if matches!(command, "w" | "write") {
-        let buffer_id = state.active_tab().active_buffer_id;
-        if let Err(error) = state.buffers.save(buffer_id, false) {
-            state.dialog_message = Some(format!("Save error: {error}"));
-            state.ui.set_window_visible(state.popups.dialog, true)?;
-        }
-    } else if command.is_empty() {
-    } else {
-        let message = format!("Unknown command: {command}");
-        state.dialog_message = Some(message);
+    if command.is_empty() {
+        return Ok(());
+    }
+
+    if let Err(error) = state.script.execute(command) {
+        state.dialog_message = Some(error);
         state.ui.set_window_visible(state.popups.dialog, true)?;
+        return Ok(());
+    }
+
+    while let Some(command) = state.script.try_next_command() {
+        match command {
+            EditorCommand::Quit => state.running = false,
+        }
     }
     Ok(())
 }
@@ -171,17 +147,7 @@ fn focus_direction(
 }
 
 pub(crate) fn command_completions(prefix: &str) -> Vec<&'static str> {
-    const COMMANDS: &[&str] = &[
-        "close",
-        "edit",
-        "quit",
-        "split",
-        "tabnew",
-        "tabnext",
-        "tabprevious",
-        "vsplit",
-        "write",
-    ];
+    const COMMANDS: &[&str] = &["quit"];
     COMMANDS
         .iter()
         .copied()
@@ -195,40 +161,10 @@ mod tests {
 
     #[test]
     fn command_completion_filters_known_commands() {
-        assert_eq!(command_completions("sp"), vec!["split"]);
-        assert_eq!(
-            command_completions(""),
-            vec![
-                "close",
-                "edit",
-                "quit",
-                "split",
-                "tabnew",
-                "tabnext",
-                "tabprevious",
-                "vsplit",
-                "write"
-            ]
-        );
+        assert!(command_completions("sp").is_empty());
+        assert_eq!(command_completions(""), vec!["quit"]);
         assert!(command_completions("missing").is_empty());
     }
-}
-
-fn open_file(state: &mut AppState, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if filename.is_empty() {
-        return Ok(());
-    }
-    match state.buffers.load(filename) {
-        Ok((buffer_id, _)) => {
-            let buffer = state.buffers.get(buffer_id)?;
-            state.tabs[state.active_tab_index].reset_buffer(filename, buffer);
-        }
-        Err(error) => {
-            state.dialog_message = Some(format!("Error: {error}"));
-            state.ui.set_window_visible(state.popups.dialog, true)?;
-        }
-    }
-    Ok(())
 }
 
 fn handle_unresolved_action(

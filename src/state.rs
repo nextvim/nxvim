@@ -1,4 +1,4 @@
-use crate::controller::InputController;
+use crate::{controller::InputController, script::ScriptRuntime};
 use text::{ToOffset, ToPoint};
 use vim_buffer::{Buffer, BufferError, BufferId, BufferManager, Point, SelectionSet};
 use vim_input::Mode;
@@ -49,15 +49,6 @@ impl TabPage {
         primary.reversed = false;
         self.selections.replace_primary(primary)
     }
-
-    pub fn reset_buffer(&mut self, name: impl Into<String>, buffer: &Buffer) {
-        self.name = name.into();
-        self.active_buffer_id = buffer.id();
-        self.selections = SelectionSet::new();
-        self.selections.add(buffer.as_text_buffer(), 0);
-        self.scroll_row = 0;
-        self.scroll_col = 0;
-    }
 }
 
 pub struct PopupWindows {
@@ -76,6 +67,7 @@ pub struct AppState {
     pub command_return_focus: WindowId,
     pub command_line_focused: bool,
     pub controller: InputController,
+    pub script: ScriptRuntime,
     pub ui: Ui,
     pub window_tabs: HashMap<WindowId, usize>,
     pub popups: PopupWindows,
@@ -109,10 +101,6 @@ impl AppState {
         self.command_selections = SelectionSet::new();
         self.command_selections.add(buffer.as_text_buffer(), 0);
         Ok(())
-    }
-
-    pub fn active_tab(&self) -> &TabPage {
-        &self.tabs[self.active_tab_index]
     }
 
     pub fn sync_active_tab_to_focus(&mut self) {

@@ -1,4 +1,5 @@
 use std::io::{Write, stdout};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -10,14 +11,16 @@ use crate::{
     controller::InputController,
     editor,
     event::handle_key_event,
+    script::ScriptRuntime,
     state::{AppState, PopupWindows, TabPage, editor_rect},
     terminal::TerminalSession,
 };
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let mut terminal = TerminalSession::enter()?;
     let screen = terminal.size()?;
-    let mut state = initial_state(screen)?;
+    let mut state = initial_state(screen, &paths)?;
     let mut renderer = BufferedRenderer::new(screen.width, screen.height);
     let mut output = stdout();
 
@@ -40,21 +43,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::Error>> {
+fn initial_state(
+    screen: vim_ui::Rect,
+    paths: &[PathBuf],
+) -> Result<AppState, Box<dyn std::error::Error>> {
     let mut buffers = BufferManager::new();
-    let first = buffers.create("Welcome to nxvim!\nThis is a complete rebuild of the editor from the ground up.\nNow powered by vim-ui and vim-buffer.\n\nEnjoy editing!\n").id();
-    let second = buffers.create("This is buffer 2.\nYou can cycle through tabs using Tab / Shift-Tab.\nEditing characters is supported in INSERT mode.").id();
-    let third = buffers
-        .create("This is buffer 3.\nIt represents another open file.")
-        .id();
+    let tabs = create_startup_tabs(&mut buffers, paths)?;
     let command_buffer_id = buffers.create("").id();
     let mut command_selections = vim_buffer::SelectionSet::new();
     command_selections.add(buffers.get(command_buffer_id)?.as_text_buffer(), 0);
-    let tabs = vec![
-        TabPage::new("nxvim_welcome", first, buffers.get(first)?),
-        TabPage::new("buffer_two", second, buffers.get(second)?),
-        TabPage::new("buffer_three", third, buffers.get(third)?),
-    ];
 
     let mut ui = Ui::new(editor_rect(screen));
     let editor_id = ui.focused_window_id();
@@ -102,6 +99,7 @@ fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::E
         command_return_focus: editor_id,
         command_line_focused: false,
         controller: InputController::new(Mode::Normal),
+        script: ScriptRuntime::new(),
         ui,
         window_tabs: [(editor_id, 0)].into_iter().collect(),
         popups: PopupWindows {
@@ -110,4 +108,37 @@ fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::E
         },
         dialog_message: None,
     })
+}
+
+fn create_startup_tabs(
+    buffers: &mut BufferManager,
+    paths: &[PathBuf],
+) -> Result<Vec<TabPage>, Box<dyn std::error::Error>> {
+    if paths.is_empty() {
+        let buffer_id = buffers.create("").id();
+        return Ok(vec![TabPage::new(
+            "[No Name]",
+            buffer_id,
+            buffers.get(buffer_id)?,
+        )]);
+    }
+
+    paths
+        .iter()
+        .map(|path| {
+            let (buffer_id, _) = buffers.load(path)?;
+            Ok(TabPage::new(
+                display_name(path),
+                buffer_id,
+                buffers.get(buffer_id)?,
+            ))
+        })
+        .collect()
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }

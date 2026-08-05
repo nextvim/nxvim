@@ -3,6 +3,7 @@ mod commandline;
 mod controller;
 mod editor;
 mod event;
+mod script;
 mod state;
 mod terminal;
 
