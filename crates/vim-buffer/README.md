@@ -857,3 +857,43 @@ fn main() {
     println!("Inclusive Content: {:?}", text_inclusive); // Returns "é"
 }
 ```
+
+### 6. Undoing Transactions and Restoring Selections
+
+```rust
+use vim_buffer::{BufferManager, ByteOffset, EditOrigin, SelectionSet, SelectionId};
+use text::Selection;
+
+fn main() {
+    let mut manager = BufferManager::new();
+    let mut buffer = manager.create("original text");
+
+    // 1. Establish selections and perform an edit
+    let anchor = buffer.as_text_buffer().anchor_before(0);
+    let original_selections = SelectionSet::from_selections(
+        SelectionId::new(1),
+        vec![Selection {
+            id: 1,
+            start: anchor,
+            end: anchor,
+            reversed: false,
+            goal: text::SelectionGoal::None,
+        }]
+    ).unwrap();
+
+    let mut transaction = buffer.transaction(EditOrigin::User);
+    transaction.insert(Some(SelectionId::new(1)), ByteOffset(0), "edited ");
+    transaction.commit(Some(original_selections)).unwrap();
+
+    // 2. Perform an undo
+    if let Some(outcome) = buffer.undo().unwrap() {
+        // Retrieve the restored selections from the undo outcome
+        let restored_selections = outcome.selections.unwrap();
+        println!(
+            "Buffer reverted to: {:?}",
+            buffer.snapshot().chunks().collect::<String>()
+        );
+        println!("Restored selection count: {}", restored_selections.len());
+    }
+}
+```
