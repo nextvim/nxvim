@@ -8,8 +8,8 @@ use vim_ui::{Anchor, BufferedRenderer, FloatingConfig, RelativeTo, Ui};
 
 use crate::{
     controller::InputController,
+    editor,
     event::handle_key_event,
-    presentation,
     state::{AppState, PopupWindows, TabPage, editor_rect},
     terminal::TerminalSession,
 };
@@ -24,7 +24,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     while state.running {
         let current_size = terminal.size()?;
         state.resize_ui(current_size);
-        presentation::draw(&mut state, current_size, &mut renderer)?;
+        editor::draw(&mut state, current_size, &mut renderer)?;
         renderer.flush(&mut output)?;
         output.flush()?;
 
@@ -47,6 +47,9 @@ fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::E
     let third = buffers
         .create("This is buffer 3.\nIt represents another open file.")
         .id();
+    let command_buffer_id = buffers.create("").id();
+    let mut command_selections = vim_buffer::SelectionSet::new();
+    command_selections.add(buffers.get(command_buffer_id)?.as_text_buffer(), 0);
     let tabs = vec![
         TabPage::new("nxvim_welcome", first, buffers.get(first)?),
         TabPage::new("buffer_two", second, buffers.get(second)?),
@@ -59,19 +62,6 @@ fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::E
         .expect("initial editor window")
         .set_draw_border(false);
 
-    let command_line = ui.create_floating_window(
-        "Command Line",
-        FloatingConfig {
-            relative_to: RelativeTo::Editor,
-            anchor: Anchor::BottomLeft,
-            row: 0,
-            col: 0,
-            width: screen.width,
-            height: 1,
-            zindex: 100,
-            border: false,
-        },
-    );
     let autocomplete = ui.create_floating_window(
         "Completions",
         FloatingConfig {
@@ -98,7 +88,6 @@ fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::E
             border: true,
         },
     );
-    ui.set_window_visible(command_line, false)?;
     ui.set_window_visible(autocomplete, false)?;
     ui.set_window_visible(dialog, false)?;
 
@@ -108,12 +97,14 @@ fn initial_state(screen: vim_ui::Rect) -> Result<AppState, Box<dyn std::error::E
         active_tab_index: 0,
         mode: Mode::Normal,
         running: true,
-        command_line: String::new(),
+        command_buffer_id,
+        command_selections,
+        command_return_focus: editor_id,
+        command_line_focused: false,
         controller: InputController::new(Mode::Normal),
         ui,
         window_tabs: [(editor_id, 0)].into_iter().collect(),
         popups: PopupWindows {
-            command_line,
             autocomplete,
             dialog,
         },

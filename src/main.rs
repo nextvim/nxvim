@@ -1,7 +1,8 @@
 mod app;
+mod commandline;
 mod controller;
+mod editor;
 mod event;
-mod presentation;
 mod state;
 mod terminal;
 
