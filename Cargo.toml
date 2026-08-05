@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    # "crates/vim-buffer",
+    "crates/vim-buffer",
     "crates/vim-formatter",
     "crates/vim-input",
     "crates/vim-regex",
     "crates/vim-script",
-    # "crates/vim-ui",
+    "crates/vim-ui",
 ]
 exclude = ["crates/zed"]
 
@@ -51,7 +51,7 @@ tree-sitter-zig = "1.1.2"
 
 unicode-segmentation = "1.12.0"
 util = { path = "crates/zed/crates/util" }
-# vim-buffer = { path = "crates/vim-buffer" }
+	vim-buffer = { path = "crates/vim-buffer" }
 vim-formatter = { path = "crates/vim-formatter" }
 vim-input = { path = "crates/vim-input" }
 vim-regex = { path = "crates/vim-regex" }

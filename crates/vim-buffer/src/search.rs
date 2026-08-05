@@ -239,8 +239,10 @@ impl TextSearch for str {
     }
 }
 
+#[allow(dead_code)]
 pub struct Search {}
 impl Search {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {}
     }
