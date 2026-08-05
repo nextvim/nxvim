@@ -62,15 +62,15 @@ impl TabPage {
 pub struct DisplayState {
     pub map: Option<DisplayMap>,
     pub folds: Vec<Fold>,
-    pub latest_task_id: Arc<AtomicU64>,
-    pub pending_task_id: Option<TaskId>,
-    pub requested_buffer_id: Option<u64>,
-    pub applied_buffer_id: Option<u64>,
-    pub requested_changedtick: Option<u64>,
-    pub applied_changedtick: Option<u64>,
-    pub requested_wrap_width: Option<u32>,
-    pub requested_inner_height: Option<u16>,
-    pub requested_buffer_window: Option<std::ops::Range<u32>>,
+    // pub latest_task_id: Arc<AtomicU64>,
+    // pub pending_task_id: Option<TaskId>,
+    // pub requested_buffer_id: Option<u64>,
+    // pub applied_buffer_id: Option<u64>,
+    // pub requested_changedtick: Option<u64>,
+    // pub applied_changedtick: Option<u64>,
+    // pub requested_wrap_width: Option<u32>,
+    // pub requested_inner_height: Option<u16>,
+    // pub requested_buffer_window: Option<std::ops::Range<u32>>,
     pub syncedtick: Option<u64>,
 }
 
@@ -79,15 +79,15 @@ impl DisplayState {
         Self {
             map: None,
             folds: Vec::new(),
-            latest_task_id: Arc::new(AtomicU64::new(0)),
-            pending_task_id: None,
-            requested_buffer_id: None,
-            applied_buffer_id: None,
-            requested_changedtick: None,
-            applied_changedtick: None,
-            requested_wrap_width: None,
-            requested_inner_height: None,
-            requested_buffer_window: None,
+            // latest_task_id: Arc::new(AtomicU64::new(0)),
+            // pending_task_id: None,
+            // requested_buffer_id: None,
+            // applied_buffer_id: None,
+            // requested_changedtick: None,
+            // applied_changedtick: None,
+            // requested_wrap_width: None,
+            // requested_inner_height: None,
+            // requested_buffer_window: None,
             syncedtick: None,
         }
     }
@@ -95,7 +95,7 @@ impl DisplayState {
     pub fn set_folds(&mut self, folds: Vec<Fold>) {
         if self.folds != folds {
             self.folds = folds;
-            self.requested_changedtick = None;
+            // self.requested_changedtick = None;
         }
     }
 

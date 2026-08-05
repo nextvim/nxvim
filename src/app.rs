@@ -33,22 +33,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         renderer.flush(&mut output)?;
         output.flush()?;
 
-        let rendering_pending = state.services.highlights.borrow().is_highlighting()
-            || state
-                .display_states
-                .values()
-                .any(|display| display.pending_task_id.is_some());
-        let poll_timeout = if rendering_pending {
-            Duration::from_millis(16)
-        } else {
-            Duration::from_millis(100)
-        };
+        let poll_timeout = Duration::from_millis(16);
         if event::poll(poll_timeout)?
             && let Event::Key(key) = event::read()?
             && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
         {
             handle_key_event(&mut state, key, current_size.height as usize - 3)?;
         }
+
+        state.services.poll();
     }
 
     terminal.restore()?;

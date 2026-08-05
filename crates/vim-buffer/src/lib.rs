@@ -19,7 +19,7 @@ mod mutator;
 mod options;
 mod outcome;
 mod position;
-mod search;
+pub mod search;
 mod selection;
 mod selection_set;
 mod snapshot;

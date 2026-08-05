@@ -132,15 +132,10 @@ impl SeekTarget<'_, TransformSummary, Dimensions<WrapPoint, Point>> for Point {
 
 impl WrapMap {
     pub fn new(buffer: BufferSnapshot, wrap_width: Option<u32>) -> Self {
-        let row_count = buffer.row_count();
-        Self::new_windowed(buffer, wrap_width, 0..row_count)
-    }
-
-    pub fn new_windowed(buffer: BufferSnapshot, wrap_width: Option<u32>, rows: Range<u32>) -> Self {
         Self {
             wrap_width,
             snapshot: WrapSnapshot {
-                transforms: build_windowed_transforms(&buffer, wrap_width, rows),
+                transforms: build_transforms(&buffer, wrap_width),
                 buffer,
                 wrap_width,
             },
@@ -197,32 +192,6 @@ impl WrapMap {
 
 fn build_transforms(buffer: &BufferSnapshot, wrap_width: Option<u32>) -> SumTree<Transform> {
     build_row_transforms(buffer, wrap_width, 0..buffer.row_count())
-}
-
-fn build_windowed_transforms(
-    buffer: &BufferSnapshot,
-    wrap_width: Option<u32>,
-    rows: Range<u32>,
-) -> SumTree<Transform> {
-    let row_count = buffer.row_count();
-    let start = rows.start.min(row_count);
-    let end = rows.end.max(start).min(row_count);
-    let mut transforms = SumTree::default();
-    if start > 0 {
-        push_isomorphic(&mut transforms, Point::new(start, 0));
-    }
-    let window = build_row_transforms(buffer, wrap_width, start..end);
-    for transform in window.iter() {
-        transforms.push(transform.clone(), ());
-    }
-    if end < row_count {
-        let max_point = buffer.max_point();
-        let suffix_start = Point::new(end, 0);
-        if max_point > suffix_start {
-            push_isomorphic(&mut transforms, max_point - suffix_start);
-        }
-    }
-    transforms
 }
 
 fn build_row_transforms(

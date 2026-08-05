@@ -1,6 +1,6 @@
 use clock::ReplicaId;
 use std::ops::Range;
-use text::{Buffer, BufferId, BufferSnapshot, Point};
+use text::{Bias, Buffer, BufferId, BufferSnapshot, Point, ToPoint};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fold {
@@ -67,6 +67,7 @@ impl FoldMap {
                     folded_range: current_fold..next_fold,
                     is_fold: false,
                 });
+                current_orig = fold.start;
                 current_fold = next_fold;
             }
 
