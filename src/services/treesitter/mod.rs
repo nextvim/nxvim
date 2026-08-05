@@ -147,8 +147,18 @@ pub(crate) fn parse_snapshot(
     grammar: Grammar,
     snapshot: text::BufferSnapshot,
 ) -> ParseTaskResult {
+    parse_snapshot_cancellable(buffer_id, changedtick, grammar, snapshot, || false)
+}
+
+pub(crate) fn parse_snapshot_cancellable(
+    buffer_id: u64,
+    changedtick: u64,
+    grammar: Grammar,
+    snapshot: text::BufferSnapshot,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> ParseTaskResult {
     let result = TreeSitterParser::new(grammar)
-        .and_then(|mut parser| parser.parse(&snapshot, None))
+        .and_then(|mut parser| parser.parse_cancellable(&snapshot, None, &mut is_cancelled))
         .map_err(|error| error.to_string());
     ParseTaskResult {
         buffer_id,

@@ -41,7 +41,19 @@ impl BackgroundResult {
     }
 }
 
-type Job = Box<dyn FnOnce() -> Box<dyn Any + Send> + Send>;
+type Job = Box<dyn FnOnce() -> Option<Box<dyn Any + Send>> + Send>;
+
+#[derive(Clone)]
+pub struct CancellationToken {
+    task_id: TaskId,
+    latest_task_id: Arc<AtomicU64>,
+}
+
+impl CancellationToken {
+    pub fn is_cancelled(&self) -> bool {
+        self.latest_task_id.load(Ordering::Acquire) > self.task_id.0
+    }
+}
 
 struct BackgroundTask {
     task_id: TaskId,
@@ -90,12 +102,25 @@ impl BackgroundWorker {
         T: Any + Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
+        self.spawn_cancellable_task(latest_task_id, move |_| Some(job()))
+    }
+
+    /// Schedules cooperatively cancellable work in a related task sequence.
+    pub fn spawn_cancellable_task<T, F>(&self, latest_task_id: Arc<AtomicU64>, job: F) -> TaskId
+    where
+        T: Any + Send + 'static,
+        F: FnOnce(CancellationToken) -> Option<T> + Send + 'static,
+    {
         let task_id = TaskId(self.next_task_id.fetch_add(1, Ordering::Relaxed));
         latest_task_id.store(task_id.0, Ordering::Release);
+        let token = CancellationToken {
+            task_id,
+            latest_task_id: latest_task_id.clone(),
+        };
         let task = BackgroundTask {
             task_id,
             latest_task_id,
-            job: Box::new(move || Box::new(job())),
+            job: Box::new(move || job(token).map(|output| Box::new(output) as Box<dyn Any + Send>)),
         };
         let _ = self.task_tx.send(WorkerMessage::Run(task));
         task_id
@@ -130,7 +155,9 @@ fn run_worker(task_rx: mpsc::Receiver<WorkerMessage>, result_tx: mpsc::Sender<Ba
         if is_obsolete(&task) {
             continue;
         }
-        let output = (task.job)();
+        let Some(output) = (task.job)() else {
+            continue;
+        };
         if task.latest_task_id.load(Ordering::Acquire) > task.task_id.0 {
             continue;
         }
@@ -175,6 +202,28 @@ mod tests {
 
         assert_eq!(result.task_id, task_id);
         assert_eq!(result.downcast::<String>().unwrap(), "done");
+    }
+
+    #[test]
+    fn cancels_running_cooperative_jobs() {
+        let worker = BackgroundWorker::new();
+        let sequence = worker.cancellation_sequence();
+        let (started_tx, started_rx) = mpsc::channel();
+        worker.spawn_cancellable_task(sequence.clone(), move |cancel| {
+            started_tx.send(()).unwrap();
+            while !cancel.is_cancelled() {
+                thread::yield_now();
+            }
+            None::<u32>
+        });
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let latest = worker.spawn_task(sequence, || 2_u32);
+        let result = receive(&worker);
+
+        assert_eq!(result.task_id, latest);
+        assert_eq!(result.downcast::<u32>().unwrap(), 2);
+        assert!(worker.try_recv().is_none());
     }
 
     #[test]

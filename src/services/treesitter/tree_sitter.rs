@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Range;
+use std::ops::{ControlFlow, Range};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use text::BufferSnapshot;
 use tree_sitter::{
-    LanguageError, Node, Parser, Point, Query, QueryCursor, QueryError, StreamingIterator, Tree,
+    LanguageError, Node, ParseOptions, Parser, Point, Query, QueryCursor, QueryError,
+    StreamingIterator, Tree,
 };
 
 use super::grammars::Grammar;
@@ -725,6 +726,15 @@ impl TreeSitterParser {
         snapshot: &BufferSnapshot,
         old_tree: Option<&SyntaxTree>,
     ) -> Result<SyntaxTree, ParseError> {
+        self.parse_cancellable(snapshot, old_tree, || false)
+    }
+
+    pub fn parse_cancellable(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        old_tree: Option<&SyntaxTree>,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<SyntaxTree, ParseError> {
         let rope = snapshot.as_rope();
         let mut chunks = rope.chunks_in_range(0..rope.len());
         let old_tree = old_tree
@@ -739,7 +749,13 @@ impl TreeSitterParser {
                     chunks.next().unwrap_or("").as_bytes()
                 },
                 old_tree,
-                None,
+                Some(ParseOptions::new().progress_callback(&mut |_| {
+                    if is_cancelled() {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })),
             )
             .ok_or(ParseError::Cancelled)?;
 

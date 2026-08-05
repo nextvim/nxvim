@@ -1,5 +1,7 @@
 use text::{ToOffset, ToPoint};
-use vim_buffer::{BufferId, BufferManager, ByteOffset, EditOrigin, Point, SelectionSet, TextRange};
+use vim_buffer::{
+    BufferId, BufferManager, ByteOffset, EditOrigin, Point, SelectionExt, SelectionSet, TextRange,
+};
 use vim_input::{Action, Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
 
 use crate::services::clipboard::{Clipboard, ClipboardKind};
@@ -228,14 +230,37 @@ pub fn execute_action(
         | Action::SetToInsert
         | Action::SetToAppend
         | Action::SetToAppendEndOfLine
-        | Action::SetToVisual
-        | Action::SetToVisualLine
-        | Action::SetToVisualBlock
-        | Action::SetToCommand
+        | Action::Clear => {
+            let buffer = buffers.get(active_buffer_id)?.as_text_buffer();
+            selections.end_line();
+            selections.end_block();
+            selections.clear(buffer);
+            true
+        }
+        Action::SetToVisual => {
+            let buffer = buffers.get(active_buffer_id)?.as_text_buffer();
+            selections.end_line();
+            selections.end_block();
+            selections.clear(buffer);
+            true
+        }
+        Action::SetToVisualLine => {
+            let buffer = buffers.get(active_buffer_id)?.as_text_buffer();
+            selections.end_block();
+            selections.begin_line(buffer);
+            true
+        }
+        Action::SetToVisualBlock => {
+            let buffer = buffers.get(active_buffer_id)?.as_text_buffer();
+            selections.end_line();
+            selections.clear(buffer);
+            selections.begin_block(buffer);
+            true
+        }
+        Action::SetToCommand
         | Action::SetToCommandSearchForward
         | Action::SetToCommandSearchBackward
-        | Action::NoOp
-        | Action::Clear => true,
+        | Action::NoOp => true,
         Action::InsertText(text) => {
             insert_text_at_selections(buffers, active_buffer_id, selections, text)?;
             true
@@ -378,6 +403,13 @@ fn character_text_at_selections(
     let buffer = buffers.get(buffer_id)?.as_text_buffer();
     let mut text = String::new();
     for selection in selections.selections() {
+        if selection.head() != selection.tail() {
+            for range in selection.edit_ranges(&snapshot, true)? {
+                text.extend(snapshot.text_for_range(range)?);
+            }
+            continue;
+        }
+
         let point = selection.head().to_point(buffer);
         let Some(cursor) = get_byte_offset(&snapshot, point.row as usize, point.column as usize)
         else {
@@ -535,6 +567,17 @@ fn delete_chars_at_selections(
     let mut ranges = Vec::with_capacity(selections.len());
     let mut targets = Vec::with_capacity(selections.len());
     for selection in selections.selections() {
+        if selection.head() != selection.tail() {
+            for range in selection.edit_ranges(&snapshot, true)? {
+                targets.push((
+                    selection.clone(),
+                    buffer.anchor_at(range.start.0, sum_tree::Bias::Left),
+                ));
+                ranges.push(range);
+            }
+            continue;
+        }
+
         let point = selection.head().to_point(buffer);
         let row = point.row as usize;
         let column = point.column as usize;
@@ -772,6 +815,59 @@ mod tests {
     }
 
     #[test]
+    fn control_v_and_control_w_control_v_resolve_to_distinct_actions() {
+        use crossterm::event::{KeyCode as CrosstermKeyCode, KeyEvent, KeyModifiers};
+
+        let control = KeyModifiers::CONTROL;
+        let mut controller = InputController::new(Mode::Normal);
+        assert_eq!(
+            controller.feed_crossterm_key(KeyEvent::new(CrosstermKeyCode::Char('v'), control,)),
+            Some(ControllerAction::Execute {
+                action: Action::SetToVisualBlock,
+                register: None,
+            })
+        );
+
+        controller.set_mode(Mode::Normal);
+        assert_eq!(
+            controller.feed_crossterm_key(KeyEvent::new(CrosstermKeyCode::Char('w'), control,)),
+            Some(ControllerAction::Pending)
+        );
+        assert_eq!(
+            controller.feed_crossterm_key(KeyEvent::new(CrosstermKeyCode::Char('v'), control,)),
+            Some(ControllerAction::Execute {
+                action: Action::SplitVertical { file_path: None },
+                register: None,
+            })
+        );
+    }
+
+    #[test]
+    fn leaving_visual_mode_collapses_the_selection() {
+        let (mut buffers, buffer_id, mut selections, mut clipboard) = setup("abc");
+        execute(
+            Action::MoveRight {
+                count: 2,
+                select: true,
+            },
+            &mut buffers,
+            buffer_id,
+            &mut selections,
+            &mut clipboard,
+        );
+        assert!(selections.has_selection(buffers.get(buffer_id).unwrap().as_text_buffer()));
+
+        execute(
+            Action::SetToNormal,
+            &mut buffers,
+            buffer_id,
+            &mut selections,
+            &mut clipboard,
+        );
+        assert!(!selections.has_selection(buffers.get(buffer_id).unwrap().as_text_buffer()));
+    }
+
+    #[test]
     fn deleting_and_putting_a_character_uses_the_clipboard() {
         let (mut buffers, buffer_id, mut selections, mut clipboard) = setup("abc");
 
@@ -793,6 +889,31 @@ mod tests {
             &mut clipboard,
         );
         assert_eq!(buffer_text(&buffers, buffer_id), "bac");
+    }
+
+    #[test]
+    fn delete_char_deletes_the_entire_selection_in_both_directions() {
+        for reversed in [false, true] {
+            let (mut buffers, buffer_id, mut selections, mut clipboard) = setup("abcde");
+            let buffer = buffers.get(buffer_id).unwrap().as_text_buffer();
+            selections.selections[0].start = buffer.anchor_before(if reversed { 2 } else { 0 });
+            selections.selections[0].end = buffer.anchor_before(if reversed { 0 } else { 2 });
+            selections.selections[0].reversed = reversed;
+
+            execute(
+                Action::DeleteChar { count: 1 },
+                &mut buffers,
+                buffer_id,
+                &mut selections,
+                &mut clipboard,
+            );
+
+            assert_eq!(clipboard.text(), "abc");
+            assert_eq!(buffer_text(&buffers, buffer_id), "de");
+            let buffer = buffers.get(buffer_id).unwrap().as_text_buffer();
+            assert_eq!(selections.primary().head().to_offset(buffer), 0);
+            assert_eq!(selections.primary().tail().to_offset(buffer), 0);
+        }
     }
 
     #[test]

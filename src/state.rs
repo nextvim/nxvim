@@ -69,6 +69,7 @@ pub struct DisplayState {
     pub requested_changedtick: Option<u64>,
     pub applied_changedtick: Option<u64>,
     pub requested_wrap_width: Option<u32>,
+    pub requested_inner_height: Option<u16>,
 }
 
 impl DisplayState {
@@ -83,6 +84,7 @@ impl DisplayState {
             requested_changedtick: None,
             applied_changedtick: None,
             requested_wrap_width: None,
+            requested_inner_height: None,
         }
     }
 

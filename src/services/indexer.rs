@@ -315,8 +315,22 @@ pub(crate) fn index_buffer(
     source_key: String,
     snapshot: BufferSnapshot,
 ) -> IndexTaskResult {
+    index_buffer_cancellable(buffer_id, changedtick, source_key, snapshot, || false)
+        .expect("non-cancellable indexing cannot be cancelled")
+}
+
+pub(crate) fn index_buffer_cancellable(
+    buffer_id: u64,
+    changedtick: u64,
+    source_key: String,
+    snapshot: BufferSnapshot,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Option<IndexTaskResult> {
     let mut keywords = HashMap::new();
     for row in 0..snapshot.row_count() {
+        if is_cancelled() {
+            return None;
+        }
         let Ok(line_len) = snapshot.line_len(row) else {
             continue;
         };
@@ -338,12 +352,12 @@ pub(crate) fn index_buffer(
             keywords.insert(row, row_keywords);
         }
     }
-    IndexTaskResult {
+    Some(IndexTaskResult {
         buffer_id,
         changedtick,
         source_key,
         keywords,
-    }
+    })
 }
 
 fn words(text: &str) -> impl Iterator<Item = &str> {

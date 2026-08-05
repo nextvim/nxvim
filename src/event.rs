@@ -25,12 +25,6 @@ pub fn handle_key_event(
         commandline::handle_key_event(state, key, viewport_height)?;
         return Ok(());
     }
-    if state.mode == Mode::Normal
-        && key.modifiers.contains(KeyModifiers::CONTROL)
-        && handle_window_key(state, key.code)?
-    {
-        return Ok(());
-    }
 
     state.sync_active_tab_to_focus();
     let Some(controller_action) = state.controller.feed_crossterm_key(key) else {
@@ -134,6 +128,7 @@ fn dispatch_controller_action(
         handle_unresolved_action(state, &action)?;
     } else {
         let tab = &mut state.tabs[active_tab_index];
+        let action = action.with_select(state.mode.is_visual());
         if controller::execute_action(
             &action,
             &mut state.buffers,
@@ -144,6 +139,14 @@ fn dispatch_controller_action(
             viewport_height,
             &mut state.services.clipboard.borrow_mut(),
         )? {
+            if is_motion(&action) {
+                let buffer = state.buffers.get(tab.active_buffer_id)?.as_text_buffer();
+                match state.mode {
+                    Mode::VisualLine => tab.selections.sync_line(buffer),
+                    Mode::VisualBlock => tab.selections.sync_block(buffer),
+                    _ => {}
+                }
+            }
             state.mode = state.controller.mode();
         } else {
             handle_unresolved_action(state, &action)?;
@@ -151,6 +154,29 @@ fn dispatch_controller_action(
     }
     state.services.clipboard.borrow().release();
     Ok(())
+}
+
+fn is_motion(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::MoveLeft { .. }
+            | Action::MoveRight { .. }
+            | Action::MoveUp { .. }
+            | Action::MoveDown { .. }
+            | Action::MoveToWord { .. }
+            | Action::MoveToPreviousWord { .. }
+            | Action::MoveToWordEnd { .. }
+            | Action::MoveToPreviousWordEnd { .. }
+            | Action::MoveToStartOfLine { .. }
+            | Action::MoveToStartOfLineNonSpace { .. }
+            | Action::MoveToEndOfLine { .. }
+            | Action::MoveToStartOfPreviousLine { .. }
+            | Action::MoveToEndOfPreviousLine { .. }
+            | Action::MoveToStartOfNextLine { .. }
+            | Action::MoveToEndOfNextLine { .. }
+            | Action::MoveToStartOfDocument { .. }
+            | Action::MoveToEndOfDocument { .. }
+    )
 }
 
 pub(crate) fn execute_command(
@@ -173,23 +199,6 @@ pub(crate) fn execute_command(
         }
     }
     Ok(())
-}
-
-fn handle_window_key(
-    state: &mut AppState,
-    code: KeyCode,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let handled = match code {
-        KeyCode::Char('v') => split_focused(state, SplitAxis::Columns)?,
-        KeyCode::Char('s') => split_focused(state, SplitAxis::Rows)?,
-        KeyCode::Char('h') => focus_direction(state, NavigationDirection::Left)?,
-        KeyCode::Char('j') => focus_direction(state, NavigationDirection::Down)?,
-        KeyCode::Char('k') => focus_direction(state, NavigationDirection::Up)?,
-        KeyCode::Char('l') => focus_direction(state, NavigationDirection::Right)?,
-        KeyCode::Char('x') => close_focused(state)?,
-        _ => false,
-    };
-    Ok(handled)
 }
 
 fn split_focused(

@@ -354,13 +354,23 @@ impl SelectionSet {
 
     pub fn is_selected(&self, row: u32, column: u32, buffer: &Buffer) -> (bool, bool, bool) {
         // Returns (selected_cell, selected_line, at_cursor_head)
+        let mut at_cursor_head = false;
         for cursor in self.selections.iter() {
             let head = cursor.head();
             let tail = cursor.tail();
-            let (start, end, normalized) = if head.cmp(&tail, buffer) == Ordering::Less {
-                (head.to_point(buffer), tail.to_point(buffer), false)
+            let ordering = head.cmp(&tail, buffer);
+            let head_point = head.to_point(buffer);
+            at_cursor_head |= row == head_point.row && column == head_point.column;
+
+            // A collapsed selection is a cursor, not selected text.
+            if ordering == Ordering::Equal {
+                continue;
+            }
+
+            let (start, end, normalized) = if ordering == Ordering::Less {
+                (head_point, tail.to_point(buffer), false)
             } else {
-                (tail.to_point(buffer), head.to_point(buffer), true)
+                (tail.to_point(buffer), head_point, true)
             };
 
             // If row is outside this selection's vertical bounds, try next selection
@@ -391,10 +401,10 @@ impl SelectionSet {
                     row == start.row && column == start.column
                 };
                 let selected_line = true; // row is within [start.row, end.row]
-                return (true, selected_line, at_head);
+                return (true, selected_line, at_cursor_head || at_head);
             }
         }
-        (false, false, false)
+        (false, false, at_cursor_head)
     }
 
     pub fn has_selection(&self, buffer: &Buffer) -> bool {

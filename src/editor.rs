@@ -14,11 +14,11 @@ use vim_ui::{
 
 use crate::{
     commandline,
-    display::DisplayMap,
+    display::{DisplayMap, display_map::DisplayPoint},
     event::command_completions,
     services::{
-        indexer::{IndexTaskResult, index_buffer},
-        treesitter::{Grammar, ParseTaskResult, parse_snapshot},
+        indexer::{IndexTaskResult, index_buffer_cancellable},
+        treesitter::{Grammar, ParseTaskResult, parse_snapshot_cancellable},
     },
     state::AppState,
 };
@@ -109,6 +109,7 @@ struct DisplayTaskResult {
     buffer_id: u64,
     changedtick: u64,
     wrap_width: u32,
+    inner_height: u16,
     map: DisplayMap,
 }
 
@@ -146,6 +147,7 @@ fn poll_display_tasks(state: &mut AppState) {
                 && display.requested_buffer_id == Some(completed.buffer_id)
                 && display.requested_changedtick == Some(completed.changedtick)
                 && display.requested_wrap_width == Some(completed.wrap_width)
+                && display.requested_inner_height == Some(completed.inner_height)
             {
                 display.map = Some(completed.map);
                 display.applied_buffer_id = Some(completed.buffer_id);
@@ -172,6 +174,32 @@ fn poll_display_tasks(state: &mut AppState) {
                 .apply_task_result(task_id, completed);
         }
     }
+}
+
+fn parse_tasks_needed(state: &AppState) -> bool {
+    let mut seen = HashSet::new();
+    state.tabs.iter().any(|tab| {
+        let buffer_id = tab.active_buffer_id.get();
+        if !seen.insert(buffer_id) {
+            return false;
+        }
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            return false;
+        };
+        let Some(grammar) = buffer
+            .path()
+            .and_then(|path| path.to_str())
+            .and_then(Grammar::from_path)
+        else {
+            return false;
+        };
+        let changedtick = buffer.snapshot().changedtick().get();
+        state
+            .services
+            .treesitter
+            .borrow()
+            .should_parse(buffer_id, changedtick, grammar)
+    })
 }
 
 fn schedule_parse_tasks(state: &AppState) {
@@ -201,18 +229,44 @@ fn schedule_parse_tasks(state: &AppState) {
             treesitter.begin_parse(buffer_id, changedtick, grammar)
         };
         let raw_snapshot = snapshot.into_inner();
-        let task_id = state
-            .services
-            .background_worker
-            .spawn_task(latest_task_id, move || {
-                parse_snapshot(buffer_id, changedtick, grammar, raw_snapshot)
-            });
+        let task_id = state.services.background_worker.spawn_cancellable_task(
+            latest_task_id,
+            move |cancel| {
+                let result = parse_snapshot_cancellable(
+                    buffer_id,
+                    changedtick,
+                    grammar,
+                    raw_snapshot,
+                    || cancel.is_cancelled(),
+                );
+                (!cancel.is_cancelled()).then_some(result)
+            },
+        );
         state
             .services
             .treesitter
             .borrow_mut()
             .set_pending_task(buffer_id, task_id);
     }
+}
+
+fn index_tasks_needed(state: &AppState) -> bool {
+    let mut seen = HashSet::new();
+    state.tabs.iter().any(|tab| {
+        let buffer_id = tab.active_buffer_id.get();
+        if !seen.insert(buffer_id) {
+            return false;
+        }
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            return false;
+        };
+        let changedtick = buffer.snapshot().changedtick().get();
+        state
+            .services
+            .indexer
+            .borrow()
+            .should_index(buffer_id, changedtick)
+    })
 }
 
 fn schedule_index_tasks(state: &AppState) {
@@ -238,18 +292,47 @@ fn schedule_index_tasks(state: &AppState) {
             }
             indexer.begin_index(buffer_id, changedtick)
         };
-        let task_id = state
-            .services
-            .background_worker
-            .spawn_task(latest_task_id, move || {
-                index_buffer(buffer_id, changedtick, source_key, snapshot)
-            });
+        let task_id = state.services.background_worker.spawn_cancellable_task(
+            latest_task_id,
+            move |cancel| {
+                index_buffer_cancellable(buffer_id, changedtick, source_key, snapshot, || {
+                    cancel.is_cancelled()
+                })
+            },
+        );
         state
             .services
             .indexer
             .borrow_mut()
             .set_pending_task(buffer_id, task_id);
     }
+}
+
+fn display_tasks_needed(state: &AppState) -> bool {
+    state.window_tabs.iter().any(|(&window_id, &tab_index)| {
+        let Some(rect) = state.ui.computed_layout().get_rect(window_id) else {
+            return false;
+        };
+        let draws_border = state
+            .ui
+            .window(window_id)
+            .is_some_and(|window| window.draws_border());
+        let inner = if draws_border { rect.inner(1) } else { rect };
+        let wrap_width = inner.width.saturating_sub(4) as u32;
+        let Some(tab) = state.tabs.get(tab_index) else {
+            return false;
+        };
+        let Ok(buffer) = state.buffers.get(tab.active_buffer_id) else {
+            return false;
+        };
+        let Some(display) = state.display_states.get(&window_id) else {
+            return false;
+        };
+        display.requested_buffer_id != Some(tab.active_buffer_id.get())
+            || display.requested_changedtick != Some(buffer.snapshot().changedtick().get())
+            || display.requested_wrap_width != Some(wrap_width)
+            || display.requested_inner_height != Some(inner.height)
+    })
 }
 
 fn schedule_display_tasks(state: &mut AppState) {
@@ -263,11 +346,16 @@ fn schedule_display_tasks(state: &mut AppState) {
                 .window(window_id)
                 .is_some_and(|window| window.draws_border());
             let inner = if draws_border { rect.inner(1) } else { rect };
-            Some((window_id, tab_index, inner.width.saturating_sub(4) as u32))
+            Some((
+                window_id,
+                tab_index,
+                inner.width.saturating_sub(4) as u32,
+                inner.height,
+            ))
         })
         .collect();
 
-    for (window_id, tab_index, wrap_width) in windows {
+    for (window_id, tab_index, wrap_width, inner_height) in windows {
         let Some(tab) = state.tabs.get(tab_index) else {
             continue;
         };
@@ -283,6 +371,7 @@ fn schedule_display_tasks(state: &mut AppState) {
         if display.requested_buffer_id == Some(buffer_id)
             && display.requested_changedtick == Some(changedtick)
             && display.requested_wrap_width == Some(wrap_width)
+            && display.requested_inner_height == Some(inner_height)
         {
             continue;
         }
@@ -295,25 +384,36 @@ fn schedule_display_tasks(state: &mut AppState) {
         display.requested_buffer_id = Some(buffer_id);
         display.requested_changedtick = Some(changedtick);
         display.requested_wrap_width = Some(wrap_width);
+        display.requested_inner_height = Some(inner_height);
         let folds = display.folds.clone();
         let latest_task_id = display.latest_task_id.clone();
         let raw_snapshot = snapshot.into_inner();
-        let task_id = state
-            .services
-            .background_worker
-            .spawn_task(latest_task_id, move || {
+        let task_id = state.services.background_worker.spawn_cancellable_task(
+            latest_task_id,
+            move |cancel| {
+                if cancel.is_cancelled() {
+                    return None;
+                }
                 let mut map = DisplayMap::new(raw_snapshot.clone(), Some(wrap_width));
+                if cancel.is_cancelled() {
+                    return None;
+                }
                 if !folds.is_empty() {
                     map.fold(folds, raw_snapshot);
                 }
-                DisplayTaskResult {
+                if cancel.is_cancelled() {
+                    return None;
+                }
+                Some(DisplayTaskResult {
                     window_id,
                     buffer_id,
                     changedtick,
                     wrap_width,
+                    inner_height,
                     map,
-                }
-            });
+                })
+            },
+        );
         display.pending_task_id = Some(task_id);
     }
 }
@@ -388,13 +488,40 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
         let first_row =
             (snapshot.scroll_y as usize).min(snapshot.row_count().saturating_sub(1) as usize);
         let end_row = (first_row + inner.height as usize).min(snapshot.row_count() as usize);
-        let style = vim_ui::Style::default();
+        let default_style = vim_ui::Style::default();
         let rows = (first_row..end_row)
             .map(|display_row| {
                 let text = snapshot.line_text(display_row as u32);
                 let buffer_row = snapshot.buffer_row_for_display_row(display_row as u32);
                 let continuation = display_row > 0
                     && snapshot.buffer_row_for_display_row(display_row as u32 - 1) == buffer_row;
+
+                let mut spans = Vec::<TextSpan>::new();
+                for (display_column, character) in text.char_indices() {
+                    let point = snapshot.display_point_to_point(DisplayPoint::new(
+                        display_row as u32,
+                        display_column as u32,
+                    ));
+                    let (selected, _, at_cursor_head) = tab.selections.is_selected(
+                        point.row,
+                        point.column,
+                        buffer.as_text_buffer(),
+                    );
+                    let mut span_style = default_style;
+                    if selected || at_cursor_head {
+                        span_style.bg = Some(Color::DarkGrey);
+                    }
+
+                    if let Some(span) = spans.last_mut().filter(|span| span.style == span_style) {
+                        span.text.push(character);
+                    } else {
+                        spans.push(TextSpan {
+                            text: character.to_string(),
+                            style: span_style,
+                        });
+                    }
+                }
+
                 DisplayRow {
                     buffer_row: Some(buffer_row),
                     kind: if text.contains('⋯') {
@@ -410,10 +537,10 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                         } else {
                             format!("{:>3} ", buffer_row + 1)
                         },
-                        style,
+                        style: default_style,
                     }),
-                    spans: vec![TextSpan { text, style }],
-                    fill_style: style,
+                    spans,
+                    fill_style: default_style,
                 }
             })
             .collect();
@@ -444,7 +571,7 @@ fn build_text_models(state: &AppState) -> HashMap<WindowId, TextViewModel> {
                     visible: cursor_visible,
                 }),
                 scrollbar: None,
-                default_style: style,
+                default_style,
             },
         );
     }
@@ -482,9 +609,15 @@ pub fn draw(state: &mut AppState, area: Rect, renderer: &mut BufferedRenderer) -
             },
         );
     }
-    schedule_display_tasks(state);
-    schedule_index_tasks(state);
-    schedule_parse_tasks(state);
+    if display_tasks_needed(state) {
+        schedule_display_tasks(state);
+    }
+    if index_tasks_needed(state) {
+        schedule_index_tasks(state);
+    }
+    if parse_tasks_needed(state) {
+        schedule_parse_tasks(state);
+    }
     scroll_display_maps_to_cursors(state);
     let active_id = UiBufferId::new(state.tabs[active_tab].active_buffer_id.get());
     let text_models = build_text_models(state);
