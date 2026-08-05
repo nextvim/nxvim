@@ -28,6 +28,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     while state.running {
         let current_size = terminal.size()?;
         state.resize_ui(current_size);
+        editor::update(&mut state)?;
         editor::draw(&mut state, current_size, &mut renderer)?;
         renderer.flush(&mut output)?;
         output.flush()?;

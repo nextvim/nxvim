@@ -71,6 +71,7 @@ pub struct DisplayState {
     pub requested_wrap_width: Option<u32>,
     pub requested_inner_height: Option<u16>,
     pub requested_buffer_window: Option<std::ops::Range<u32>>,
+    pub syncedtick: Option<u64>,
 }
 
 impl DisplayState {
@@ -87,6 +88,7 @@ impl DisplayState {
             requested_wrap_width: None,
             requested_inner_height: None,
             requested_buffer_window: None,
+            syncedtick: None,
         }
     }
 
