@@ -81,7 +81,15 @@ impl App {
                     .buffer_manager
                     .get_buffer_display_context_mut(buffer_id, tab_id)
                 {
-                    display_context.update(snapshot, win_rect.width as u32, inner_rect.height as u32, has_border);
+                    display_context.update_async(
+                        snapshot,
+                        win_rect.width as u32,
+                        inner_rect.height as u32,
+                        has_border,
+                        buffer_id,
+                        tab_id,
+                        &self.services,
+                    );
                 } else {
                     let buffer_ref = self.buffer_manager.get_buffer(buffer_id).ok();
                     let display_context = crate::app::buffer_manager::BufferDisplayContext::new(
