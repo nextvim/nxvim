@@ -43,7 +43,7 @@ impl View for MainWindowView {
 }
 
 pub fn build_text(
-    app: &mut crate::app::App,
+    app: &crate::app::App,
     win_id: WindowId,
     buffer_id: BufferId,
     active_id: WindowId,
@@ -67,33 +67,7 @@ pub fn build_text(
     };
 
     let tab_id = crate::app::buffer_manager::TabId(1);
-    let has_context = app
-        .buffer_manager
-        .get_buffer_display_context(buffer_id, tab_id)
-        .is_some();
-    if !has_context {
-        if let Ok(buffer) = app.buffer_manager.get_buffer(buffer_id) {
-            let snapshot = buffer.snapshot().as_inner().clone();
-            let display_map = display_map::DisplayMap::new(snapshot, Some(inner_rect.width as u32));
-            let display_context = crate::app::buffer_manager::BufferDisplayContext {
-                display_map,
-                highlights: Vec::new(),
-                selections: vim_buffer::SelectionSet::new(),
-            };
-            app.buffer_manager.set_buffer_display_context(
-                buffer_id,
-                tab_id,
-                display_context,
-            );
-        }
-    } else {
-        if let Some(display_context) = app
-            .buffer_manager
-            .get_buffer_display_context_mut(buffer_id, tab_id)
-        {
-            display_context.display_map.set_wrap_width(Some(inner_rect.width as u32));
-        }
-    }
+
 
     let mut rows = Vec::new();
     if let Some(display_context) = app

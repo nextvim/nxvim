@@ -22,10 +22,7 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(tabline_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(vim_ui::views::tabline::TabLineView::new(
-            vec!["main.rs".to_string(), "lib.rs".to_string()],
-            0,
-        )));
+        w.set_view(Box::new(crate::app::views::TabLineView::new()));
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());

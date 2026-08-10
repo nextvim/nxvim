@@ -15,6 +15,21 @@ pub trait UIContext {
     fn get_colorscheme(&self) -> Option<&crate::colorscheme::ColorScheme> {
         None
     }
+    fn get_buffer_ids(&self) -> Vec<BufferId> {
+        Vec::new()
+    }
+    fn get_buffer_name(&self, _id: BufferId) -> Option<String> {
+        None
+    }
+    fn get_status_message(&self) -> Option<String> {
+        None
+    }
+    fn get_mode_name(&self) -> String {
+        "NORMAL".to_string()
+    }
+    fn get_cursor_position(&self) -> Option<(u32, u32)> {
+        None
+    }
 }
 
 pub trait View {

@@ -16,6 +16,7 @@ pub struct App {
     pub ui: ui::Ui,
     pub services: services::Services,
     pub main_window_state: Rc<RefCell<MainWindowState>>,
+    pub status_message: Option<String>,
 }
 
 impl App {
@@ -30,6 +31,59 @@ impl App {
             ui,
             services: services::Services::new(),
             main_window_state,
+            status_message: None,
+        }
+    }
+
+    pub fn update(&mut self, width: u16, height: u16) {
+        let window_buffers: Vec<(vim_ui::WindowId, vim_buffer::BufferId)> = self
+            .main_window_state
+            .borrow()
+            .window_buffers
+            .iter()
+            .map(|(&k, &v)| (k, v))
+            .collect();
+
+        let tab_id = crate::app::buffer_manager::TabId(1);
+        for (win_id, buffer_id) in window_buffers {
+            let win_rect = self
+                .ui
+                .computed_layout()
+                .get_rect(win_id)
+                .unwrap_or(vim_ui::Rect::new(0, 0, width, height));
+
+            let inner_rect = if let Some(win) = self.ui.window(win_id) {
+                if win.draws_border() {
+                    win_rect.inner(1)
+                } else {
+                    win_rect
+                }
+            } else {
+                win_rect
+            };
+
+            let snapshot = self.buffer_manager.get_buffer(buffer_id).ok().map(|buf| buf.snapshot().as_inner().clone());
+            if let Some(snapshot) = snapshot {
+                if let Some(display_context) = self
+                    .buffer_manager
+                    .get_buffer_display_context_mut(buffer_id, tab_id)
+                {
+                    display_context.display_map.sync(snapshot);
+                    display_context.display_map.set_wrap_width(Some(inner_rect.width as u32));
+                } else {
+                    let display_map = display_map::DisplayMap::new(snapshot, Some(inner_rect.width as u32));
+                    let display_context = crate::app::buffer_manager::BufferDisplayContext {
+                        display_map,
+                        highlights: Vec::new(),
+                        selections: vim_buffer::SelectionSet::new(),
+                    };
+                    self.buffer_manager.set_buffer_display_context(
+                        buffer_id,
+                        tab_id,
+                        display_context,
+                    );
+                }
+            }
         }
     }
 }
@@ -37,6 +91,11 @@ impl App {
 struct AppContext {
     text_models: std::collections::HashMap<vim_ui::WindowId, vim_ui::TextViewModel>,
     active_buffer_id: Option<vim_ui::BufferId>,
+    buffer_ids: Vec<vim_ui::BufferId>,
+    buffer_names: std::collections::HashMap<vim_ui::BufferId, String>,
+    active_cursor: Option<(u32, u32)>,
+    mode_name: String,
+    status_message: Option<String>,
 }
 
 impl vim_ui::UIContext for AppContext {
@@ -52,6 +111,21 @@ impl vim_ui::UIContext for AppContext {
     fn get_colorscheme(&self) -> Option<&vim_ui::ColorScheme> {
         None
     }
+    fn get_buffer_ids(&self) -> Vec<vim_ui::BufferId> {
+        self.buffer_ids.clone()
+    }
+    fn get_buffer_name(&self, id: vim_ui::BufferId) -> Option<String> {
+        self.buffer_names.get(&id).cloned()
+    }
+    fn get_status_message(&self) -> Option<String> {
+        self.status_message.clone()
+    }
+    fn get_mode_name(&self) -> String {
+        self.mode_name.clone()
+    }
+    fn get_cursor_position(&self) -> Option<(u32, u32)> {
+        self.active_cursor
+    }
 }
 
 impl AppContext {
@@ -59,12 +133,39 @@ impl AppContext {
         Self {
             text_models: std::collections::HashMap::new(),
             active_buffer_id: None,
+            buffer_ids: Vec::new(),
+            buffer_names: std::collections::HashMap::new(),
+            active_cursor: None,
+            mode_name: "NORMAL".to_string(),
+            status_message: None,
         }
     }
 
-    pub fn build(&mut self, app: &mut App, width: u16, height: u16) {
+    pub fn build(&mut self, app: &App, width: u16, height: u16) {
         self.text_models.clear();
         self.active_buffer_id = None;
+        self.buffer_ids.clear();
+        self.buffer_names.clear();
+        self.active_cursor = None;
+        self.mode_name = format!("{:?}", app.controller.mode()).to_uppercase();
+        self.status_message = app.status_message.clone();
+
+        // Track buffer IDs and their names
+        for id in app.buffer_manager.list() {
+            let ui_buf_id = vim_ui::BufferId::new(id.get());
+            self.buffer_ids.push(ui_buf_id);
+
+            let name = if let Ok(buf) = app.buffer_manager.get_buffer(id) {
+                buf.path()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("[No Name {}]", id.get()))
+            } else {
+                format!("[No Name {}]", id.get())
+            };
+            self.buffer_names.insert(ui_buf_id, name);
+        }
 
         let active_id = app.ui.focused_window_id();
         let window_buffers: Vec<(vim_ui::WindowId, vim_buffer::BufferId)> = app
@@ -81,6 +182,11 @@ impl AppContext {
             }
 
             let text_model = views::mainwindow::build_text(app, win_id, buffer_id, active_id, width, height);
+            if win_id == active_id {
+                if let Some(cursor) = text_model.cursor {
+                    self.active_cursor = Some((cursor.position.row + 1, cursor.position.column + 1));
+                }
+            }
             self.text_models.insert(win_id, text_model);
         }
     }
@@ -92,7 +198,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     use input::ControllerAction;
     use std::io::{Write, stdout};
     use vim_input::Action;
-    use vim_ui::{BufferedRenderer, WindowId};
+    use vim_ui::BufferedRenderer;
 
     let mut app = App::new();
     let mut terminal = TerminalSession::enter()?;
@@ -105,8 +211,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut out = stdout();
 
     // Draw the initial layout
+    app.update(rect.width, rect.height);
     let mut context = AppContext::new();
-    context.build(&mut app, rect.width, rect.height);
+    context.build(&app, rect.width, rect.height);
     app.ui.draw(&context, &mut buffered_renderer)?;
     buffered_renderer.flush(&mut out)?;
     out.flush()?;
@@ -136,13 +243,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(r) = register {
                             msg.push_str(&format!(" (reg: '{}')", r));
                         }
-
-                        if let Some(w) = app.ui.window_mut(WindowId::new(5)) {
-                            w.set_view(Box::new(vim_ui::views::statusline::StatusLineView::new(
-                                msg,
-                                "".to_string(),
-                            )));
-                        }
+                        app.status_message = Some(msg);
 
                         match action {
                             Action::NextTab { .. } => {
@@ -268,27 +369,18 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     ControllerAction::Pending => {
                         let msg = format!("Pending sequence: {}", app.controller.pending_display());
-                        if let Some(w) = app.ui.window_mut(WindowId::new(5)) {
-                            w.set_view(Box::new(vim_ui::views::statusline::StatusLineView::new(
-                                msg,
-                                "".to_string(),
-                            )));
-                        }
+                        app.status_message = Some(msg);
                     }
                     ControllerAction::Invalid => {
-                        if let Some(w) = app.ui.window_mut(WindowId::new(5)) {
-                            w.set_view(Box::new(vim_ui::views::statusline::StatusLineView::new(
-                                "Invalid sequence".to_string(),
-                                "".to_string(),
-                            )));
-                        }
+                        app.status_message = Some("Invalid sequence".to_string());
                     }
                 }
             }
 
             // Redraw layout with dynamic context
             let active_rect = app.ui.screen_rect();
-            context.build(&mut app, active_rect.width, active_rect.height);
+            app.update(active_rect.width, active_rect.height);
+            context.build(&app, active_rect.width, active_rect.height);
             app.ui.draw(&context, &mut buffered_renderer)?;
             buffered_renderer.flush(&mut out)?;
             out.flush()?;

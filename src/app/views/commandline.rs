@@ -16,12 +16,13 @@ impl View for CommandLineView {
     fn draw(
         &self,
         area: Rect,
-        _context: &dyn UIContext,
+        context: &dyn UIContext,
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
+        let content = context.get_status_message().unwrap_or_else(|| self.content.clone());
         renderer.move_to(area.x, area.y)?;
-        renderer.print(&format!(":{}", self.content))?;
-        let remaining = (area.width as usize).saturating_sub(self.content.len() + 1);
+        renderer.print(&content)?;
+        let remaining = (area.width as usize).saturating_sub(content.len());
         if remaining > 0 {
             renderer.print(&" ".repeat(remaining))?;
         }
