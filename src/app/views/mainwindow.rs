@@ -1,5 +1,6 @@
 use vim_buffer::BufferId;
 use vim_ui::{Rect, Renderer, TextView, UIContext, View, WindowId};
+use text::{Point, ToPoint};
 
 #[derive(Clone, Debug)]
 pub struct MainWindowState {
@@ -87,7 +88,11 @@ pub fn build_text(
 
             let mut spans = Vec::<vim_ui::model::TextSpan>::new();
 
-            for (col, ch) in line.chars().skip(scroll_x as usize).enumerate() {
+            let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
+            let line_len = line_chars.len();
+            for col in 0..=line_len {
+                let is_eol = col == line_len;
+                let ch = if is_eol { ' ' } else { line_chars[col] };
                 let dp = display_map::DisplayPoint::new(i, (col as u32) + scroll_x);
                 let pt = display_map_snapshot.display_point_to_point(dp);
                 let selection_state = if display_context.selections.selections.is_empty() {
@@ -97,6 +102,10 @@ pub fn build_text(
                         .selections
                         .is_selected(pt.row, pt.column, buffer.as_text_buffer())
                 };
+
+                if is_eol && !selection_state.selected_cell && !selection_state.at_cursor_head {
+                    continue;
+                }
 
                 let mut style = vim_ui::Style::default();
                 if selection_state.selected_cell || selection_state.at_cursor_head {
@@ -140,24 +149,47 @@ pub fn build_text(
     }
 
     let cursor = if win_id == active_id {
-        if let (Some(display_context), Ok(_buffer)) = (
+        if let (Some(display_context), Ok(buffer)) = (
             app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
             app.buffer_manager.get_buffer(buffer_id),
         ) {
-            let cursor_anchor = display_context.selections.primary().head();
-            let display_cursor = display_context.display_map.snapshot().anchor_to_display_point(cursor_anchor);
-            let scroll_y = display_context.display_map.scroll_y;
-            let scroll_x = display_context.display_map.scroll_x;
-            if display_cursor.row() >= scroll_y && display_cursor.row() < scroll_y + inner_rect.height as u32 {
-                let screen_row = display_cursor.row() - scroll_y;
-                let screen_col = display_cursor.column().saturating_sub(scroll_x) + 4;
+            if display_context.selections.selections.is_empty() {
                 Some(vim_ui::model::TextCursor {
-                    position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col },
+                    position: vim_ui::model::DisplayPosition { row: 0, column: 4 },
                     shape: vim_ui::model::CursorShape::Block,
                     visible: true,
                 })
             } else {
-                None
+                let cursor_anchor = display_context.selections.primary().head();
+                let display_snapshot = display_context.display_map.snapshot();
+                let original_buffer = display_snapshot.buffer_snapshot();
+                let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
+                    display_snapshot.anchor_to_display_point(cursor_anchor)
+                } else {
+                    let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
+                    let max_row = original_buffer.row_count().saturating_sub(1);
+                    let row = point.row.min(max_row);
+                    let col = if row < original_buffer.row_count() {
+                        point.column.min(original_buffer.line_len(row))
+                    } else {
+                        0
+                    };
+                    let clipped_point = Point { row, column: col };
+                    display_snapshot.point_to_display_point(clipped_point)
+                };
+                let scroll_y = display_context.display_map.scroll_y;
+                let scroll_x = display_context.display_map.scroll_x;
+                if display_cursor.row() >= scroll_y && display_cursor.row() < scroll_y + inner_rect.height as u32 {
+                    let screen_row = display_cursor.row() - scroll_y;
+                    let screen_col = display_cursor.column().saturating_sub(scroll_x) + 4;
+                    Some(vim_ui::model::TextCursor {
+                        position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col },
+                        shape: vim_ui::model::CursorShape::Block,
+                        visible: true,
+                    })
+                } else {
+                    None
+                }
             }
         } else {
             Some(vim_ui::model::TextCursor {

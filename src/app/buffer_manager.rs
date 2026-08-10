@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use vim_buffer::{BufferId, BufferManager as VimBufferManager};
+use text::ToPoint;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TabId(pub u64);
@@ -196,7 +197,8 @@ impl BufferManager {
         if !self.display_contexts.contains_key(&(id, tab_id)) {
             let buffer = self.inner.get(id)?;
             let snapshot = buffer.snapshot().as_inner().clone();
-            let display_map = display_map::DisplayMap::new(snapshot, None);
+            let end_row = 100.min(snapshot.row_count());
+            let display_map = display_map::DisplayMap::new_windowed(snapshot, None, 0..end_row);
             self.display_contexts.insert((id, tab_id), BufferDisplayContext {
                 display_map,
                 highlights: Vec::new(),
@@ -230,11 +232,19 @@ impl BufferDisplayContext {
         let border_width = if has_border { 2 } else { 0 };
         let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
 
-        let mut display_map = display_map::DisplayMap::new(snapshot, Some(wrap_width));
         let mut selections = vim_buffer::SelectionSet::new();
         if let Some(buf) = buffer {
             selections.add(buf.as_text_buffer(), 0);
         }
+        let cursor_row = if !selections.selections.is_empty() {
+            selections.primary().head().to_point(&snapshot).row
+        } else {
+            0
+        };
+        let window_size = height.max(24) * 2;
+        let end_row = (cursor_row + window_size).min(snapshot.row_count());
+
+        let mut display_map = display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
         let cursor_anchor = selections.primary().head();
         let display_cursor = display_map.snapshot().anchor_to_display_point(cursor_anchor);
         display_map.scroll_to_cursor(
@@ -268,15 +278,25 @@ impl BufferDisplayContext {
         let border_width = if has_border { 2 } else { 0 };
         let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
 
-        self.display_map.sync(snapshot);
+        let cursor_row = if !self.selections.selections.is_empty() {
+            self.selections.primary().head().to_point(&snapshot).row
+        } else {
+            0
+        };
+        let window_size = height.max(24) * 2;
+        let end_row = (cursor_row + window_size).min(snapshot.row_count());
+
+        self.display_map.sync_windowed(snapshot, 0..end_row);
         self.display_map.set_wrap_width(Some(wrap_width));
-        let cursor_anchor = self.selections.primary().head();
-        let display_cursor = self.display_map.snapshot().anchor_to_display_point(cursor_anchor);
-        self.display_map.scroll_to_cursor(
-            display_cursor,
-            height as i32,
-            wrap_width as i32,
-        );
+        if !self.selections.selections.is_empty() {
+            let cursor_anchor = self.selections.primary().head();
+            let display_cursor = self.display_map.snapshot().anchor_to_display_point(cursor_anchor);
+            self.display_map.scroll_to_cursor(
+                display_cursor,
+                height as i32,
+                wrap_width as i32,
+            );
+        }
     }
 
     pub fn update_async(
@@ -307,6 +327,14 @@ impl BufferDisplayContext {
             tab_id: Some(tab_id),
         };
         let sequence = self.sequence.clone();
+        let cursor_row = if !self.selections.selections.is_empty() {
+            self.selections.primary().head().to_point(&snapshot).row
+        } else {
+            0
+        };
+        let window_size = height.max(24) * 2;
+        let end_row = (cursor_row + window_size).min(snapshot.row_count());
+
         services.spawn_task(
             "display_map",
             sequence,
@@ -318,7 +346,7 @@ impl BufferDisplayContext {
                 let border_width = if has_border { 2 } else { 0 };
                 let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
 
-                let display_map = display_map::DisplayMap::new(snapshot, Some(wrap_width));
+                let display_map = display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
                 (display_map, height, layout_width)
             },
         );

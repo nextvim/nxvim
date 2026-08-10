@@ -159,15 +159,25 @@ impl DisplayMap {
     }
 
     pub fn sync(&mut self, buffer: BufferSnapshot) {
-        if self.original_buffer.version == buffer.version {
+        let row_count = buffer.row_count();
+        self.sync_windowed(buffer, 0..row_count);
+    }
+
+    pub fn sync_windowed(&mut self, buffer: BufferSnapshot, buffer_window: Range<u32>) {
+        if self.original_buffer.version == buffer.version && self.buffer_window == buffer_window {
             return;
         }
+        let row_count = buffer.row_count();
+        let start = buffer_window.start.min(row_count);
+        let end = buffer_window.end.max(start).min(row_count);
+        let buffer_window = start..end;
+
         self.original_buffer = buffer.clone();
-        self.buffer_window = 0..buffer.row_count();
+        self.buffer_window = buffer_window.clone();
         self.fold_map = FoldMap::new(&buffer, self.folds.clone());
         self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
         self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
-        self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
+        self.wrap_map = WrapMap::new_windowed(self.fold_map.folded_buffer().clone(), self.wrap_width, buffer_window);
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
     }
 

@@ -6,6 +6,8 @@ pub mod services;
 pub mod ui;
 pub mod views;
 
+use text::{Point, ToPoint};
+
 use crate::app::views::mainwindow::MainWindowState;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -81,14 +83,11 @@ impl App {
                     .buffer_manager
                     .get_buffer_display_context_mut(buffer_id, tab_id)
                 {
-                    display_context.update_async(
+                    display_context.update(
                         snapshot,
                         win_rect.width as u32,
                         inner_rect.height as u32,
                         has_border,
-                        buffer_id,
-                        tab_id,
-                        &self.services,
                     );
                 } else {
                     let buffer_ref = self.buffer_manager.get_buffer(buffer_id).ok();
@@ -208,10 +207,30 @@ impl App {
                         if let Ok((display_map, height, layout_width)) = result.downcast::<(display_map::DisplayMap, u32, u32)>() {
                             if let Some(tid) = owner.tab_id {
                                 if let Some(bid) = owner.buffer_id {
+                                    let current_snapshot = self.buffer_manager.get_buffer(bid).ok().map(|buf| buf.snapshot().as_inner().clone());
                                     if let Some(display_context) = self.buffer_manager.get_buffer_display_context_mut(bid, tid) {
                                         display_context.display_map = display_map;
                                         let cursor_anchor = display_context.selections.primary().head();
-                                        let display_cursor = display_context.display_map.snapshot().anchor_to_display_point(cursor_anchor);
+                                        let display_snapshot = display_context.display_map.snapshot();
+                                        let original_buffer = display_snapshot.buffer_snapshot();
+                                        let display_cursor = if let Some(ref snapshot) = current_snapshot {
+                                            if original_buffer.version == snapshot.version {
+                                                display_snapshot.anchor_to_display_point(cursor_anchor)
+                                            } else {
+                                                let point = cursor_anchor.to_point(snapshot);
+                                                let max_row = original_buffer.row_count().saturating_sub(1);
+                                                let row = point.row.min(max_row);
+                                                let col = if row < original_buffer.row_count() {
+                                                    point.column.min(original_buffer.line_len(row))
+                                                } else {
+                                                    0
+                                                };
+                                                let clipped_point = Point { row, column: col };
+                                                display_snapshot.point_to_display_point(clipped_point)
+                                            }
+                                        } else {
+                                            display_snapshot.anchor_to_display_point(cursor_anchor)
+                                        };
                                         let wrap_width = display_context.display_map.wrap_width.unwrap_or(layout_width);
                                         display_context.display_map.scroll_to_cursor(
                                             display_cursor,
