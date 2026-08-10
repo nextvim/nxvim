@@ -1530,6 +1530,7 @@ dependencies = [
  "util",
  "vim-buffer",
  "vim-clipboard",
+ "vim-colorscheme",
  "vim-formatter",
  "vim-indexer",
  "vim-input",
@@ -2990,6 +2991,13 @@ name = "vim-clipboard"
 version = "0.1.0"
 
 [[package]]
+name = "vim-colorscheme"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+]
+
+[[package]]
 name = "vim-formatter"
 version = "0.1.0"
 dependencies = [
@@ -3061,6 +3069,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "textmate",
+ "vim-colorscheme",
  "vim-formatter",
 ]
 

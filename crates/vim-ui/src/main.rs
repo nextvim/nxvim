@@ -5,10 +5,7 @@ use crossterm::{
 };
 use std::collections::HashMap;
 use std::io::{Write, stdout};
-use vim_ui::{
-    colorscheme::{ColorScheme, Metadata, Style},
-    *,
-};
+use vim_ui::*;
 
 fn create_tokyonight_scheme() -> ColorScheme {
     let metadata = Metadata {

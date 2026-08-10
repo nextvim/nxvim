@@ -12,7 +12,7 @@ pub trait UIContext {
     fn get_text_model(&self, _window_id: WindowId) -> Option<&TextViewModel> {
         None
     }
-    fn get_colorscheme(&self) -> Option<&crate::colorscheme::ColorScheme> {
+    fn get_colorscheme(&self) -> Option<&crate::ColorScheme> {
         None
     }
     fn get_buffer_ids(&self) -> Vec<BufferId> {

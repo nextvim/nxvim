@@ -1,4 +1,3 @@
-pub mod colorscheme;
 pub mod error;
 pub mod event;
 pub mod focus;
@@ -14,7 +13,7 @@ pub mod views;
 pub mod window;
 pub mod window_store;
 
-pub use colorscheme::{ColorScheme, Metadata, Style};
+pub use vim_colorscheme::{ColorScheme, Metadata, Style};
 pub use error::{UiError, UiResult};
 pub use event::{
     EventResult, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind, UiCommand, UiEvent,

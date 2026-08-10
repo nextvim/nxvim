@@ -1,5 +1,40 @@
-use crate::types::Color;
 use std::collections::HashMap;
+
+/// An enum representing the standard colors supported by a terminal colorscheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Color {
+    Reset,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    Grey,
+    DarkGrey,
+    Rgb(u8, u8, u8),
+}
+
+impl From<Color> for crossterm::style::Color {
+    fn from(color: Color) -> Self {
+        match color {
+            Color::Reset => crossterm::style::Color::Reset,
+            Color::Black => crossterm::style::Color::Black,
+            Color::Red => crossterm::style::Color::Red,
+            Color::Green => crossterm::style::Color::Green,
+            Color::Yellow => crossterm::style::Color::Yellow,
+            Color::Blue => crossterm::style::Color::Blue,
+            Color::Magenta => crossterm::style::Color::Magenta,
+            Color::Cyan => crossterm::style::Color::Cyan,
+            Color::White => crossterm::style::Color::White,
+            Color::Grey => crossterm::style::Color::Grey,
+            Color::DarkGrey => crossterm::style::Color::DarkGrey,
+            Color::Rgb(r, g, b) => crossterm::style::Color::Rgb { r, g, b },
+        }
+    }
+}
 
 /// Metadata for a color scheme.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

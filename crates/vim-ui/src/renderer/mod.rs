@@ -14,7 +14,7 @@ pub trait Renderer {
     fn set_bg(&mut self, color: Color) -> std::io::Result<()>;
     fn reset_colors(&mut self) -> std::io::Result<()>;
 
-    fn set_style(&mut self, style: crate::colorscheme::Style) -> std::io::Result<()> {
+    fn set_style(&mut self, style: crate::Style) -> std::io::Result<()> {
         self.set_fg(style.fg.unwrap_or(Color::Reset))?;
         self.set_bg(style.bg.unwrap_or(Color::Reset))
     }
@@ -36,7 +36,7 @@ pub trait Renderer {
         &mut self,
         rect: Rect,
         title: Option<&str>,
-        style: crate::colorscheme::Style,
+        style: crate::Style,
     ) -> std::io::Result<()> {
         self.set_style(style)?;
         self.draw_rect(rect)?;

@@ -56,7 +56,7 @@ impl<W: Write> Renderer for CrosstermRenderer<W> {
         execute!(self.writer, Hide)
     }
 
-    fn set_style(&mut self, style: crate::colorscheme::Style) -> std::io::Result<()> {
+    fn set_style(&mut self, style: crate::Style) -> std::io::Result<()> {
         execute!(
             self.writer,
             SetForegroundColor(style.fg.unwrap_or(Color::Reset).into()),
