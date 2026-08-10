@@ -70,10 +70,10 @@ pub fn build_text(
 
 
     let mut rows = Vec::new();
-    if let Some(display_context) = app
-        .buffer_manager
-        .get_buffer_display_context(buffer_id, tab_id)
-    {
+    if let (Some(display_context), Ok(buffer)) = (
+        app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
+        app.buffer_manager.get_buffer(buffer_id),
+    ) {
         let display_map_snapshot = display_context.display_map.snapshot();
         let row_count = display_map_snapshot.row_count();
 
@@ -87,12 +87,11 @@ pub fn build_text(
 
             for (col, ch) in line.chars().enumerate() {
                 let dp = display_map::DisplayPoint::new(i, col as u32);
-                let char_in_selection = display_context.selections.selections.iter().any(|sel| {
-                    let start_dp = display_map_snapshot.anchor_to_display_point(sel.start.clone());
-                    let end_dp = display_map_snapshot.anchor_to_display_point(sel.end.clone());
-                    let (s, e) = if start_dp <= end_dp { (start_dp, end_dp) } else { (end_dp, start_dp) };
-                    s <= dp && dp < e
-                });
+                let pt = display_map_snapshot.display_point_to_point(dp);
+                let char_in_selection = display_context
+                    .selections
+                    .is_selected(pt.row, pt.column, buffer.as_text_buffer())
+                    .selected_cell;
 
                 if char_in_selection != in_selection {
                     if !current_text.is_empty() {
