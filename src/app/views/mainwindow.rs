@@ -81,44 +81,29 @@ pub fn build_text(
             let line = display_map_snapshot.line_text(i);
             let buffer_row = display_map_snapshot.buffer_row_for_display_row(i);
 
-            let mut spans = Vec::new();
-            let mut current_text = String::new();
-            let mut in_selection = false;
+            let mut spans = Vec::<vim_ui::model::TextSpan>::new();
 
             for (col, ch) in line.chars().enumerate() {
                 let dp = display_map::DisplayPoint::new(i, col as u32);
                 let pt = display_map_snapshot.display_point_to_point(dp);
-                let char_in_selection = if display_context.selections.selections.is_empty() {
-                    false
+                let selection_state = if display_context.selections.selections.is_empty() {
+                    vim_buffer::SelectionCellState::default()
                 } else {
                     display_context
                         .selections
                         .is_selected(pt.row, pt.column, buffer.as_text_buffer())
-                        .selected_cell
                 };
 
-                if char_in_selection != in_selection {
-                    if !current_text.is_empty() {
-                        let style = if in_selection {
-                            vim_ui::Style::with_bg(vim_ui::Color::Blue)
-                        } else {
-                            vim_ui::Style::default()
-                        };
-                        spans.push(vim_ui::model::TextSpan::new(current_text, style));
-                        current_text = String::new();
-                    }
-                    in_selection = char_in_selection;
+                let mut style = vim_ui::Style::default();
+                if selection_state.selected_cell || selection_state.at_cursor_head {
+                    style.bg = Some(vim_ui::Color::Blue);
                 }
-                current_text.push(ch);
-            }
 
-            if !current_text.is_empty() {
-                let style = if in_selection {
-                    vim_ui::Style::with_bg(vim_ui::Color::Blue)
+                if let Some(span) = spans.last_mut().filter(|span| span.style == style) {
+                    span.text.push(ch);
                 } else {
-                    vim_ui::Style::default()
-                };
-                spans.push(vim_ui::model::TextSpan::new(current_text, style));
+                    spans.push(vim_ui::model::TextSpan::new(ch.to_string(), style));
+                }
             }
 
             rows.push(vim_ui::model::DisplayRow {
