@@ -15,6 +15,10 @@ pub struct BufferDisplayContext {
     pub highlights: Vec<textmate::HighlightSpan>,
     pub selections: vim_buffer::SelectionSet,
     pub sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub last_version: Option<clock::Global>,
+    pub last_layout_width: Option<u32>,
+    pub last_height: Option<u32>,
+    pub last_has_border: Option<bool>,
 }
 
 pub struct BufferManager {
@@ -198,6 +202,10 @@ impl BufferManager {
                 highlights: Vec::new(),
                 selections: vim_buffer::SelectionSet::new(),
                 sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                last_version: None,
+                last_layout_width: None,
+                last_height: None,
+                last_has_border: None,
             });
         }
 
@@ -236,10 +244,22 @@ impl BufferDisplayContext {
             highlights: Vec::new(),
             selections,
             sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_version: None,
+            last_layout_width: None,
+            last_height: None,
+            last_has_border: None,
         }
     }
 
     pub fn update(&mut self, snapshot: text::BufferSnapshot, layout_width: u32, height: u32, has_border: bool) {
+        // Obsolete any pending async updates
+        self.sequence.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+
+        self.last_version = Some(snapshot.version.clone());
+        self.last_layout_width = Some(layout_width);
+        self.last_height = Some(height);
+        self.last_has_border = Some(has_border);
+
         self.display_map.sync(snapshot);
         self.display_map.set_layout_width(Some(layout_width), has_border);
         let cursor_anchor = self.selections.primary().head();
@@ -262,6 +282,19 @@ impl BufferDisplayContext {
         tab_id: crate::app::buffer_manager::TabId,
         services: &crate::app::services::Services,
     ) {
+        if self.last_version.as_ref() == Some(&snapshot.version)
+            && self.last_layout_width == Some(layout_width)
+            && self.last_height == Some(height)
+            && self.last_has_border == Some(has_border)
+        {
+            return;
+        }
+
+        self.last_version = Some(snapshot.version.clone());
+        self.last_layout_width = Some(layout_width);
+        self.last_height = Some(height);
+        self.last_has_border = Some(has_border);
+
         let mut display_map = self.display_map.clone();
         let owner_id = crate::app::services::OwnerId {
             buffer_id: Some(buffer_id),
