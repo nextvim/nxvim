@@ -21,7 +21,7 @@ pub use event::{
 };
 pub use focus::FocusManager;
 pub use id::{BufferId, TabPageId, WindowId};
-pub use layout::{ComputedLayout, LayoutEngine, LayoutNode};
+pub use layout::{ComputedLayout, LayoutEngine, LayoutNode, SlotLayout, WindowSlot};
 pub use manager::Ui;
 pub use model::{
     BufferPosition, BufferViewModel, CursorShape, DisplayPosition, DisplayRow, DisplayRowKind,

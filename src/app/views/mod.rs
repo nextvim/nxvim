@@ -1,7 +1,7 @@
 pub mod commandline;
-pub mod statusline;
 pub mod mainwindow;
+pub mod statusline;
 
 pub use commandline::CommandLineView;
-pub use statusline::StatusLineView;
 pub use mainwindow::MainWindowView;
+pub use statusline::StatusLineView;

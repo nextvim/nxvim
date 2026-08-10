@@ -250,38 +250,13 @@ fn setup_initial_layout(
         )));
     }
 
-    ui.set_layout(LayoutNode::Split {
-        axis: SplitAxis::Rows,
-        constraints: vec![SizeConstraint::Fixed(1), SizeConstraint::Percentage(1.0)],
-        children: vec![
-            LayoutNode::Leaf {
-                window_id: tabline_id,
-            },
-            LayoutNode::Split {
-                axis: SplitAxis::Columns,
-                constraints: vec![SizeConstraint::Fixed(25), SizeConstraint::Percentage(1.0)],
-                children: vec![
-                    LayoutNode::Leaf {
-                        window_id: sidebar_id,
-                    },
-                    LayoutNode::Split {
-                        axis: SplitAxis::Rows,
-                        constraints: vec![
-                            SizeConstraint::Percentage(1.0),
-                            SizeConstraint::Fixed(1),
-                        ],
-                        children: vec![
-                            LayoutNode::Leaf {
-                                window_id: editor_id,
-                            },
-                            LayoutNode::Leaf {
-                                window_id: status_id,
-                            },
-                        ],
-                    },
-                ],
-            },
-        ],
-    })?;
+    ui.set_layout(SlotLayout {
+        top_bar: Some((tabline_id, SizeConstraint::Fixed(1))),
+        left_sidebar: Some((sidebar_id, SizeConstraint::Fixed(25))),
+        right_sidebar: None,
+        bottom_bar: None,
+        status_bar: Some((status_id, SizeConstraint::Fixed(1))),
+        center: editor_id,
+    }.build())?;
     Ok(())
 }

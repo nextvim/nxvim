@@ -1,10 +1,12 @@
-pub use vim_ui::{Ui, Rect};
+pub use vim_ui::{Rect, Ui};
 
 pub fn setup_initial_layout(
     ui: &mut Ui,
-    _main_window_state: std::rc::Rc<std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>>,
+    _main_window_state: std::rc::Rc<
+        std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>,
+    >,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use vim_ui::{LayoutNode, SizeConstraint, SplitAxis};
+    use vim_ui::SizeConstraint;
 
     // The initial window in store is WindowId::new(1)
     let left_panel_id = vim_ui::WindowId::new(1);
@@ -41,49 +43,21 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::CommandLineView::new("COMMAND LINE")));
+        w.set_view(Box::new(crate::app::views::CommandLineView::new(
+            "COMMAND LINE",
+        )));
     }
 
-    // Define layout:
-    // Root: Vertical split (Rows) into Middle (1.0) and Command Line (Fixed 1)
-    let layout = LayoutNode::Split {
-        axis: SplitAxis::Rows,
-        constraints: vec![
-            SizeConstraint::Percentage(1.0),
-            SizeConstraint::Fixed(1),
-        ],
-        children: vec![
-            // Row 1: Horizontal split (Columns) into Left, Main, and Right
-            LayoutNode::Split {
-                axis: SplitAxis::Columns,
-                constraints: vec![
-                    SizeConstraint::Fixed(30),
-                    SizeConstraint::Percentage(1.0),
-                    SizeConstraint::Fixed(30),
-                ],
-                children: vec![
-                    LayoutNode::Leaf { window_id: left_panel_id },
-                    // Main: Vertical split (Rows) into Tabline (Fixed 1), Main Window, and Statusline (Fixed 1)
-                    LayoutNode::Split {
-                        axis: SplitAxis::Rows,
-                        constraints: vec![
-                            SizeConstraint::Fixed(1),
-                            SizeConstraint::Percentage(1.0),
-                            SizeConstraint::Fixed(1),
-                        ],
-                        children: vec![
-                            LayoutNode::Leaf { window_id: tabline_id },
-                            LayoutNode::Leaf { window_id: main_id },
-                            LayoutNode::Leaf { window_id: status_id },
-                        ],
-                    },
-                    LayoutNode::Leaf { window_id: right_id },
-                ],
-            },
-            // Row 2: Command Line status
-            LayoutNode::Leaf { window_id: cmd_id },
-        ],
-    };
+    // Define layout using SlotLayout
+    let layout = vim_ui::SlotLayout {
+        top_bar: Some((tabline_id, SizeConstraint::Fixed(1))),
+        left_sidebar: Some((left_panel_id, SizeConstraint::Fixed(30))),
+        right_sidebar: Some((right_id, SizeConstraint::Fixed(30))),
+        bottom_bar: Some((cmd_id, SizeConstraint::Fixed(1))),
+        status_bar: Some((status_id, SizeConstraint::Fixed(1))),
+        center: main_id,
+    }
+    .build();
 
     ui.set_layout(layout)?;
     ui.hide_window(left_panel_id)?;
@@ -91,8 +65,6 @@ pub fn setup_initial_layout(
     ui.focus(main_id)?; // Focus the main editor window by default
     Ok(())
 }
-
-
 
 /*
 -------------------------------------------------

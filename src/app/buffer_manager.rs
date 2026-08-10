@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use std::collections::HashMap;
-use vim_buffer::{BufferManager as VimBufferManager, BufferId};
+use std::path::PathBuf;
+use vim_buffer::{BufferId, BufferManager as VimBufferManager};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TabId(pub u64);
@@ -25,7 +25,7 @@ pub struct BufferManager {
 impl BufferManager {
     pub fn new() -> Self {
         let mut inner = VimBufferManager::new();
-        
+
         let args: Vec<String> = std::env::args().skip(1).collect();
         let first_buffer_id = if args.is_empty() {
             inner.create("").id()
@@ -50,7 +50,7 @@ impl BufferManager {
             }
             first_id.unwrap_or_else(|| inner.create("").id())
         };
-        
+
         let _ = inner.set_current(first_buffer_id);
 
         Self {
@@ -83,7 +83,11 @@ impl BufferManager {
         self.inner.load(path)
     }
 
-    pub fn unload(&mut self, id: BufferId, force: bool) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
+    pub fn unload(
+        &mut self,
+        id: BufferId,
+        force: bool,
+    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
         let res = self.inner.unload(id, force);
         if res.is_ok() {
             self.contexts.remove(&id);
@@ -92,7 +96,11 @@ impl BufferManager {
         res
     }
 
-    pub fn delete(&mut self, id: BufferId, force: bool) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
+    pub fn delete(
+        &mut self,
+        id: BufferId,
+        force: bool,
+    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
         let res = self.inner.delete(id, force);
         if res.is_ok() {
             self.contexts.remove(&id);
@@ -101,7 +109,11 @@ impl BufferManager {
         res
     }
 
-    pub fn wipe(&mut self, id: BufferId, force: bool) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
+    pub fn wipe(
+        &mut self,
+        id: BufferId,
+        force: bool,
+    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
         let res = self.inner.wipe(id, force);
         if res.is_ok() {
             self.contexts.remove(&id);
@@ -118,7 +130,10 @@ impl BufferManager {
         self.inner.list()
     }
 
-    pub fn get_buffer_mut(&mut self, id: BufferId) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
+    pub fn get_buffer_mut(
+        &mut self,
+        id: BufferId,
+    ) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
         self.inner.get_mut(id)
     }
 
@@ -134,15 +149,28 @@ impl BufferManager {
         self.contexts.insert(id, context);
     }
 
-    pub fn get_buffer_display_context(&self, buffer_id: BufferId, tab_id: TabId) -> Option<&BufferDisplayContext> {
+    pub fn get_buffer_display_context(
+        &self,
+        buffer_id: BufferId,
+        tab_id: TabId,
+    ) -> Option<&BufferDisplayContext> {
         self.display_contexts.get(&(buffer_id, tab_id))
     }
 
-    pub fn get_buffer_display_context_mut(&mut self, buffer_id: BufferId, tab_id: TabId) -> Option<&mut BufferDisplayContext> {
+    pub fn get_buffer_display_context_mut(
+        &mut self,
+        buffer_id: BufferId,
+        tab_id: TabId,
+    ) -> Option<&mut BufferDisplayContext> {
         self.display_contexts.get_mut(&(buffer_id, tab_id))
     }
 
-    pub fn set_buffer_display_context(&mut self, buffer_id: BufferId, tab_id: TabId, context: BufferDisplayContext) {
+    pub fn set_buffer_display_context(
+        &mut self,
+        buffer_id: BufferId,
+        tab_id: TabId,
+        context: BufferDisplayContext,
+    ) {
         self.display_contexts.insert((buffer_id, tab_id), context);
     }
 }

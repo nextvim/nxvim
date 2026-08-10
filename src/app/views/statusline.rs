@@ -22,11 +22,11 @@ impl View for StatusLineView {
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
         renderer.move_to(area.x, area.y)?;
-        
+
         let total_width = area.width as usize;
         let left_width = self.left.chars().count();
         let right_width = self.right.chars().count();
-        
+
         if left_width + right_width >= total_width {
             let combined = format!("{}{}", self.left, self.right);
             let truncated: String = combined.chars().take(total_width).collect();

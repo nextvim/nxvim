@@ -123,7 +123,7 @@ mod tests {
     fn control_v_and_control_w_control_v_resolve_to_distinct_actions() {
         let control = CMod::CONTROL;
         let mut controller = InputController::new(Mode::Normal);
-        
+
         let event_v = Event::Key(KeyEvent::new(CKey::Char('v'), control));
         assert_eq!(
             controller.feed_event(event_v),

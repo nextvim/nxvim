@@ -1,5 +1,5 @@
-pub use vim_clipboard as clipboard;
 pub use textmate as highlight;
+pub use vim_clipboard as clipboard;
 pub use vim_indexer as indexer;
 pub use vim_macros as macros;
 pub use vim_treesitter as treesitter;

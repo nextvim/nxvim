@@ -384,3 +384,104 @@ impl LayoutEngine {
         self.root_layout.window_ids()
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WindowSlot {
+    TopBar,
+    LeftSidebar,
+    RightSidebar,
+    BottomBar,
+    StatusBar,
+    Center,
+}
+
+#[derive(Debug, Clone)]
+pub struct SlotLayout {
+    pub top_bar: Option<(WindowId, SizeConstraint)>,
+    pub left_sidebar: Option<(WindowId, SizeConstraint)>,
+    pub right_sidebar: Option<(WindowId, SizeConstraint)>,
+    pub bottom_bar: Option<(WindowId, SizeConstraint)>,
+    pub status_bar: Option<(WindowId, SizeConstraint)>,
+    pub center: WindowId,
+}
+
+impl SlotLayout {
+    pub fn build(self) -> LayoutNode {
+        // 1. Build the center area (TopBar, Center, StatusBar)
+        let mut center_children = Vec::new();
+        let mut center_constraints = Vec::new();
+
+        if let Some((id, constraint)) = self.top_bar {
+            center_children.push(LayoutNode::Leaf { window_id: id });
+            center_constraints.push(constraint);
+        }
+
+        center_children.push(LayoutNode::Leaf { window_id: self.center });
+        center_constraints.push(SizeConstraint::Percentage(1.0));
+
+        if let Some((id, constraint)) = self.status_bar {
+            center_children.push(LayoutNode::Leaf { window_id: id });
+            center_constraints.push(constraint);
+        }
+
+        let center_node = if center_children.len() > 1 {
+            LayoutNode::Split {
+                axis: SplitAxis::Rows,
+                constraints: center_constraints,
+                children: center_children,
+            }
+        } else {
+            center_children.remove(0)
+        };
+
+        // 2. Wrap center area with Left/Right sidebars
+        let mut mid_children = Vec::new();
+        let mut mid_constraints = Vec::new();
+
+        if let Some((id, constraint)) = self.left_sidebar {
+            mid_children.push(LayoutNode::Leaf { window_id: id });
+            mid_constraints.push(constraint);
+        }
+
+        mid_children.push(center_node);
+        mid_constraints.push(SizeConstraint::Percentage(1.0));
+
+        if let Some((id, constraint)) = self.right_sidebar {
+            mid_children.push(LayoutNode::Leaf { window_id: id });
+            mid_constraints.push(constraint);
+        }
+
+        let mid_node = if mid_children.len() > 1 {
+            LayoutNode::Split {
+                axis: SplitAxis::Columns,
+                constraints: mid_constraints,
+                children: mid_children,
+            }
+        } else {
+            mid_children.remove(0)
+        };
+
+        // 3. Wrap everything with the BottomBar at the very bottom
+        let mut root_children = Vec::new();
+        let mut root_constraints = Vec::new();
+
+        root_children.push(mid_node);
+        root_constraints.push(SizeConstraint::Percentage(1.0));
+
+        if let Some((id, constraint)) = self.bottom_bar {
+            root_children.push(LayoutNode::Leaf { window_id: id });
+            root_constraints.push(constraint);
+        }
+
+        if root_children.len() > 1 {
+            LayoutNode::Split {
+                axis: SplitAxis::Rows,
+                constraints: root_constraints,
+                children: root_children,
+            }
+        } else {
+            root_children.remove(0)
+        }
+    }
+}
+
