@@ -313,9 +313,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         let tab_id = crate::app::buffer_manager::TabId(1);
                         let active_buf = app.main_window_state.borrow().window_buffers.get(&active_id).copied();
                         if let Some(buf_id) = active_buf {
+                            let mut next_mode = None;
                             let _ = app.buffer_manager.with_mut(buf_id, tab_id, |buffer, context, display_context| {
-                                let _ = app.editor.execute(&action, buffer, context, display_context);
+                                if let Ok(mode) = app.editor.execute(app.controller.mode(), &action, buffer, context, display_context, &mut app.services) {
+                                    next_mode = mode;
+                                }
                             });
+                            if let Some(m) = next_mode {
+                                app.controller.set_mode(m);
+                            }
                         }
 
                         match action {
