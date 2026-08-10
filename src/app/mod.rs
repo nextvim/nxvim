@@ -1,4 +1,5 @@
 pub mod buffer_manager;
+pub mod editor;
 pub mod input;
 pub mod script;
 pub mod services;
