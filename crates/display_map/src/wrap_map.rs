@@ -149,7 +149,7 @@ impl WrapMap {
     }
 
     pub fn sync(&mut self, buffer: BufferSnapshot) {
-        if buffer.version == self.snapshot.buffer.version && self.snapshot.wrap_width == self.wrap_width {
+        if buffer.version == self.snapshot.buffer.version {
             self.snapshot.buffer = buffer;
             return;
         }

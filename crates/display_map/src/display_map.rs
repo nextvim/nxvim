@@ -25,7 +25,6 @@ impl DisplayPoint {
     }
 }
 
-#[derive(Clone)]
 pub struct DisplayMap {
     original_buffer: BufferSnapshot,
     folds: Vec<Fold>,
@@ -35,8 +34,6 @@ pub struct DisplayMap {
     wrap_map: WrapMap,
     block_map: BlockMap,
     pub wrap_width: Option<u32>,
-    pub layout_width: Option<u32>,
-    pub has_border: bool,
     pub scroll_x: u32,
     pub scroll_y: u32,
     pub visible_cols: u32,
@@ -68,7 +65,7 @@ pub struct DisplaySnapshot {
 impl DisplayMap {
     pub fn new(buffer: BufferSnapshot, wrap_width: Option<u32>) -> Self {
         let row_count = buffer.row_count();
-        Self::new_windowed(buffer, wrap_width, 0..row_count.min(1000))
+        Self::new_windowed(buffer, wrap_width, 0..row_count)
     }
 
     pub fn new_windowed(
@@ -98,8 +95,6 @@ impl DisplayMap {
             wrap_map,
             block_map,
             wrap_width,
-            layout_width: None,
-            has_border: false,
             scroll_x: 0,
             scroll_y: 0,
             visible_cols: 240,
@@ -128,12 +123,8 @@ impl DisplayMap {
         self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
         if folds_changed {
-            self.buffer_window = 0..buffer.row_count().min(1000);
-            self.wrap_map = WrapMap::new_windowed(
-                self.fold_map.folded_buffer().clone(),
-                self.wrap_width,
-                self.buffer_window.clone(),
-            );
+            self.buffer_window = 0..buffer.row_count();
+            self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
         } else {
             self.wrap_map.sync(self.fold_map.folded_buffer().clone());
         }
@@ -163,46 +154,20 @@ impl DisplayMap {
         self.wrap_map.set_wrap_width(width);
     }
 
-    pub fn set_layout_width(&mut self, layout_width: Option<u32>, has_border: bool) {
-        self.layout_width = layout_width;
-        self.has_border = has_border;
-        if let Some(w) = layout_width {
-            let digit_count = self.original_buffer.row_count().max(1).to_string().len();
-            let gutter_width = (digit_count.max(2) + 2) as u32;
-            let border_width = if has_border { 2 } else { 0 };
-            let wrap_width = w.saturating_sub(gutter_width + border_width);
-            self.wrap_width = Some(wrap_width);
-            self.wrap_map.set_wrap_width(Some(wrap_width));
-        } else {
-            self.wrap_width = None;
-            self.wrap_map.set_wrap_width(None);
-        }
-    }
-
     pub fn apply_wrap_snapshot(&mut self, snapshot: WrapSnapshot) {
         self.wrap_map.set_snapshot(snapshot);
     }
 
     pub fn sync(&mut self, buffer: BufferSnapshot) {
-        if self.original_buffer.version == buffer.version && self.buffer_window.end == buffer.row_count().min(1000) {
+        if self.original_buffer.version == buffer.version {
             return;
         }
         self.original_buffer = buffer.clone();
-        self.buffer_window = 0..buffer.row_count().min(1000);
+        self.buffer_window = 0..buffer.row_count();
         self.fold_map = FoldMap::new(&buffer, self.folds.clone());
         self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
         self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
-
-        if let Some(w) = self.layout_width {
-            let digit_count = buffer.row_count().max(1).to_string().len();
-            let gutter_width = (digit_count.max(2) + 2) as u32;
-            let border_width = if self.has_border { 2 } else { 0 };
-            let wrap_width = w.saturating_sub(gutter_width + border_width);
-            self.wrap_width = Some(wrap_width);
-            self.wrap_map.set_wrap_width(Some(wrap_width));
-        }
-
-        self.wrap_map.sync(self.fold_map.folded_buffer().clone());
+        self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
     }
 

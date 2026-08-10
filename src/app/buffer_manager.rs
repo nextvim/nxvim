@@ -225,15 +225,18 @@ impl BufferDisplayContext {
         has_border: bool,
         buffer: Option<&vim_buffer::Buffer>,
     ) -> Self {
-        let mut display_map = display_map::DisplayMap::new(snapshot, None);
-        display_map.set_layout_width(Some(layout_width), has_border);
+        let digit_count = snapshot.row_count().max(1).to_string().len();
+        let gutter_width = (digit_count.max(2) + 2) as u32;
+        let border_width = if has_border { 2 } else { 0 };
+        let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
+
+        let mut display_map = display_map::DisplayMap::new(snapshot, Some(wrap_width));
         let mut selections = vim_buffer::SelectionSet::new();
         if let Some(buf) = buffer {
             selections.add(buf.as_text_buffer(), 0);
         }
         let cursor_anchor = selections.primary().head();
         let display_cursor = display_map.snapshot().anchor_to_display_point(cursor_anchor);
-        let wrap_width = display_map.wrap_width.unwrap_or(layout_width);
         display_map.scroll_to_cursor(
             display_cursor,
             height as i32,
@@ -260,11 +263,15 @@ impl BufferDisplayContext {
         self.last_height = Some(height);
         self.last_has_border = Some(has_border);
 
+        let digit_count = snapshot.row_count().max(1).to_string().len();
+        let gutter_width = (digit_count.max(2) + 2) as u32;
+        let border_width = if has_border { 2 } else { 0 };
+        let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
+
         self.display_map.sync(snapshot);
-        self.display_map.set_layout_width(Some(layout_width), has_border);
+        self.display_map.set_wrap_width(Some(wrap_width));
         let cursor_anchor = self.selections.primary().head();
         let display_cursor = self.display_map.snapshot().anchor_to_display_point(cursor_anchor);
-        let wrap_width = self.display_map.wrap_width.unwrap_or(layout_width);
         self.display_map.scroll_to_cursor(
             display_cursor,
             height as i32,
@@ -295,7 +302,6 @@ impl BufferDisplayContext {
         self.last_height = Some(height);
         self.last_has_border = Some(has_border);
 
-        let mut display_map = self.display_map.clone();
         let owner_id = crate::app::services::OwnerId {
             buffer_id: Some(buffer_id),
             tab_id: Some(tab_id),
@@ -307,8 +313,12 @@ impl BufferDisplayContext {
             owner_id,
             crate::app::services::TaskType::DisplayMap,
             move || {
-                display_map.sync(snapshot);
-                display_map.set_layout_width(Some(layout_width), has_border);
+                let digit_count = snapshot.row_count().max(1).to_string().len();
+                let gutter_width = (digit_count.max(2) + 2) as u32;
+                let border_width = if has_border { 2 } else { 0 };
+                let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
+
+                let display_map = display_map::DisplayMap::new(snapshot, Some(wrap_width));
                 (display_map, height, layout_width)
             },
         );
