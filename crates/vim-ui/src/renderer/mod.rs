@@ -169,6 +169,9 @@ impl BufferedRenderer {
             crate::model::CursorShape::Block => SetCursorStyle::SteadyBlock,
             crate::model::CursorShape::Bar => SetCursorStyle::SteadyBar,
             crate::model::CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+            crate::model::CursorShape::BlinkingBlock => SetCursorStyle::BlinkingBlock,
+            crate::model::CursorShape::BlinkingBar => SetCursorStyle::BlinkingBar,
+            crate::model::CursorShape::BlinkingUnderline => SetCursorStyle::BlinkingUnderScore,
         };
         execute!(
             writer,

@@ -71,6 +71,7 @@ pub fn build_text(
 
 
     let mut rows = Vec::new();
+    let mut saved_cursor = None;
     if let (Some(display_context), Ok(buffer)) = (
         app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
         app.buffer_manager.get_buffer(buffer_id),
@@ -102,6 +103,21 @@ pub fn build_text(
                         .selections
                         .is_selected(pt.row, pt.column, buffer.as_text_buffer())
                 };
+
+                if win_id == active_id && selection_state.at_cursor_head {
+                    let screen_row = i - start_row;
+                    let screen_col = col as u32;
+                    let cursor_shape = if app.controller.mode() == vim_input::Mode::Insert {
+                        vim_ui::model::CursorShape::BlinkingBar
+                    } else {
+                        vim_ui::model::CursorShape::Block
+                    };
+                    saved_cursor = Some(vim_ui::model::TextCursor {
+                        position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col + 4 },
+                        shape: cursor_shape,
+                        visible: true,
+                    });
+                }
 
                 if is_eol && !selection_state.selected_cell && !selection_state.at_cursor_head {
                     continue;
@@ -149,14 +165,21 @@ pub fn build_text(
     }
 
     let cursor = if win_id == active_id {
-        if let (Some(display_context), Ok(buffer)) = (
+        if saved_cursor.is_some() {
+            saved_cursor
+        } else if let (Some(display_context), Ok(buffer)) = (
             app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
             app.buffer_manager.get_buffer(buffer_id),
         ) {
+            let cursor_shape = if app.controller.mode() == vim_input::Mode::Insert {
+                vim_ui::model::CursorShape::BlinkingBar
+            } else {
+                vim_ui::model::CursorShape::Block
+            };
             if display_context.selections.selections.is_empty() {
                 Some(vim_ui::model::TextCursor {
                     position: vim_ui::model::DisplayPosition { row: 0, column: 4 },
-                    shape: vim_ui::model::CursorShape::Block,
+                    shape: cursor_shape,
                     visible: true,
                 })
             } else {
@@ -184,7 +207,7 @@ pub fn build_text(
                     let screen_col = display_cursor.column().saturating_sub(scroll_x) + 4;
                     Some(vim_ui::model::TextCursor {
                         position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col },
-                        shape: vim_ui::model::CursorShape::Block,
+                        shape: cursor_shape,
                         visible: true,
                     })
                 } else {
@@ -192,9 +215,14 @@ pub fn build_text(
                 }
             }
         } else {
+            let cursor_shape = if app.controller.mode() == vim_input::Mode::Insert {
+                vim_ui::model::CursorShape::BlinkingBar
+            } else {
+                vim_ui::model::CursorShape::Block
+            };
             Some(vim_ui::model::TextCursor {
                 position: vim_ui::model::DisplayPosition { row: 0, column: 4 },
-                shape: vim_ui::model::CursorShape::Block,
+                shape: cursor_shape,
                 visible: true,
             })
         }

@@ -112,6 +112,9 @@ pub enum CursorShape {
     Block,
     Bar,
     Underline,
+    BlinkingBlock,
+    BlinkingBar,
+    BlinkingUnderline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

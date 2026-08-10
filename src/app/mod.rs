@@ -379,7 +379,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     buffered_renderer.flush(&mut out)?;
     out.flush()?;
 
-    loop {
+    'main_loop: loop {
         if app.services.poll() {
             app.update_tasks();
         }

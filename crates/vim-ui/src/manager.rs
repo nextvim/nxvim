@@ -315,6 +315,10 @@ impl Ui {
                 None
             }
         });
+        let cursor_shape = context.get_text_model(focused_id)
+            .and_then(|model| model.cursor)
+            .map(|cursor| cursor.shape)
+            .unwrap_or(crate::model::CursorShape::Block);
 
         for (id, config) in floating_windows {
             if self.window_store.get(id).is_some_and(|w| w.is_visible()) {
@@ -329,7 +333,9 @@ impl Ui {
         }
 
         if let Some((x, y)) = cursor_pos {
-            renderer.move_to(x, y)?;
+            renderer.show_cursor(x, y, cursor_shape)?;
+        } else {
+            renderer.hide_cursor()?;
         }
         Ok(())
     }
