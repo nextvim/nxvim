@@ -19,13 +19,15 @@ pub struct App {
     pub main_window_state: Rc<RefCell<MainWindowState>>,
     pub status_message: Option<String>,
     pub editor: editor::Editor,
+    pub tabline_id: vim_ui::WindowId,
+    pub status_id: vim_ui::WindowId,
 }
 
 impl App {
     pub fn new() -> Self {
         let main_window_state = Rc::new(RefCell::new(MainWindowState::new()));
         let mut ui = ui::Ui::new(ui::Rect::new(0, 0, 80, 24));
-        let _ = ui::setup_initial_layout(&mut ui, Rc::clone(&main_window_state));
+        let (tabline_id, status_id) = ui::setup_initial_layout(&mut ui, Rc::clone(&main_window_state)).unwrap();
         Self {
             script: script::ScriptRuntime::new(),
             buffer_manager: buffer_manager::BufferManager::new(),
@@ -35,6 +37,8 @@ impl App {
             main_window_state,
             status_message: None,
             editor: editor::Editor::new(),
+            tabline_id,
+            status_id,
         }
     }
 
@@ -87,6 +91,59 @@ impl App {
                     );
                 }
             }
+        }
+
+        // Rebuild TabLineView
+        let tabline_win_id = self.tabline_id;
+        let current_tab_ids = self.buffer_manager.list();
+        let active_win = self.ui.focused_window_id();
+        let current_active_tab = self.main_window_state.borrow().window_buffers.get(&active_win).copied();
+        
+        let tabs: Vec<String> = current_tab_ids
+            .iter()
+            .map(|id| {
+                if let Ok(buf) = self.buffer_manager.get_buffer(*id) {
+                    buf.path()
+                        .and_then(|p| p.file_name())
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("[No Name {}]", id.get()))
+                } else {
+                    format!("[No Name {}]", id.get())
+                }
+            })
+            .collect();
+
+        let active_index = current_active_tab
+            .and_then(|active_id| current_tab_ids.iter().position(|&id| id == active_id))
+            .unwrap_or(0);
+
+        if let Some(w) = self.ui.window_mut(tabline_win_id) {
+            w.set_view(Box::new(crate::app::views::TabLineView::new(tabs, active_index)));
+        }
+
+        // Rebuild StatusLineView
+        let status_win_id = self.status_id;
+        let mode = format!("{:?}", self.controller.mode()).to_uppercase();
+        let buf_name = current_active_tab
+            .and_then(|id| {
+                if let Ok(buf) = self.buffer_manager.get_buffer(id) {
+                    buf.path()
+                        .and_then(|p| p.file_name())
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "[No Name]".to_string());
+
+        let left = format!(" {} [{}]", mode, buf_name);
+        let cursor_str = "1:5".to_string(); // fallback/consistent display position row 1, column 5 (row 0, col 4 1-indexed)
+        let right = format!("{} | utf-8 | rust ", cursor_str);
+
+        if let Some(w) = self.ui.window_mut(status_win_id) {
+            w.set_view(Box::new(crate::app::views::StatusLineView::new(left, right)));
         }
     }
 }

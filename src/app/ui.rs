@@ -5,7 +5,7 @@ pub fn setup_initial_layout(
     _main_window_state: std::rc::Rc<
         std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>,
     >,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(vim_ui::WindowId, vim_ui::WindowId), Box<dyn std::error::Error>> {
     use vim_ui::SizeConstraint;
 
     // The initial window in store is WindowId::new(1)
@@ -22,7 +22,7 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(tabline_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::TabLineView::new()));
+        w.set_view(Box::new(crate::app::views::TabLineView::new(Vec::new(), 0)));
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
@@ -60,7 +60,7 @@ pub fn setup_initial_layout(
     ui.hide_window(left_panel_id)?;
     ui.hide_window(right_id)?;
     ui.focus(main_id)?; // Focus the main editor window by default
-    Ok(())
+    Ok((tabline_id, status_id))
 }
 
 /*
