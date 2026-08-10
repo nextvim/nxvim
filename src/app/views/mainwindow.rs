@@ -88,10 +88,14 @@ pub fn build_text(
             for (col, ch) in line.chars().enumerate() {
                 let dp = display_map::DisplayPoint::new(i, col as u32);
                 let pt = display_map_snapshot.display_point_to_point(dp);
-                let char_in_selection = display_context
-                    .selections
-                    .is_selected(pt.row, pt.column, buffer.as_text_buffer())
-                    .selected_cell;
+                let char_in_selection = if display_context.selections.selections.is_empty() {
+                    false
+                } else {
+                    display_context
+                        .selections
+                        .is_selected(pt.row, pt.column, buffer.as_text_buffer())
+                        .selected_cell
+                };
 
                 if char_in_selection != in_selection {
                     if !current_text.is_empty() {
