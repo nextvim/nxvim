@@ -647,6 +647,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "display_map"
+version = "0.1.0"
+dependencies = [
+ "clock",
+ "collections",
+ "parking_lot",
+ "rand 0.8.7",
+ "serde",
+ "smallvec",
+ "sum_tree",
+ "text",
+ "unicode-segmentation",
+ "util",
+ "vim-buffer",
+ "ztracing",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

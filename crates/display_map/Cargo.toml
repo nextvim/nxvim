@@ -1,0 +1,23 @@
+[package]
+name = "display_map"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+collections = { path = "../zed/crates/collections" }
+sum_tree = { path = "../zed/crates/sum_tree" }
+text = { path = "../zed/crates/text" }
+util = { path = "../zed/crates/util" }
+ztracing = { path = "../zed/crates/ztracing" }
+clock = { path = "../zed/crates/clock" }
+
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+smallvec = "1.13"
+unicode-segmentation = "1.12"
+
+[dev-dependencies]
+rand = "0.8.5"
+vim-buffer = { path = "../vim-buffer" }
