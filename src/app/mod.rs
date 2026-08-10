@@ -18,6 +18,7 @@ pub struct App {
     pub services: services::Services,
     pub main_window_state: Rc<RefCell<MainWindowState>>,
     pub status_message: Option<String>,
+    pub editor: editor::Editor,
 }
 
 impl App {
@@ -33,6 +34,7 @@ impl App {
             services: services::Services::new(),
             main_window_state,
             status_message: None,
+            editor: editor::Editor::new(),
         }
     }
 
@@ -245,6 +247,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                             msg.push_str(&format!(" (reg: '{}')", r));
                         }
                         app.status_message = Some(msg);
+
+                        let active_id = app.ui.focused_window_id();
+                        let tab_id = crate::app::buffer_manager::TabId(1);
+                        let active_buf = app.main_window_state.borrow().window_buffers.get(&active_id).copied();
+                        if let Some(buf_id) = active_buf {
+                            let _ = app.buffer_manager.with_mut(buf_id, tab_id, |buffer, context, display_context| {
+                                let _ = app.editor.execute(&action, buffer, context, display_context);
+                            });
+                        }
 
                         match action {
                             Action::NextTab { .. } => {

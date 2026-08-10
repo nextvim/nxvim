@@ -173,4 +173,32 @@ impl BufferManager {
     ) {
         self.display_contexts.insert((buffer_id, tab_id), context);
     }
+
+    pub fn with_mut<F, R>(&mut self, id: BufferId, tab_id: TabId, f: F) -> Result<R, vim_buffer::BufferError>
+    where
+        F: FnOnce(&mut vim_buffer::Buffer, &mut BufferContext, &mut BufferDisplayContext) -> R,
+    {
+        if !self.contexts.contains_key(&id) {
+            self.contexts.insert(id, BufferContext {
+                treesitter: Err("Not loaded".to_string()),
+                index: Err("Not loaded".to_string()),
+            });
+        }
+        if !self.display_contexts.contains_key(&(id, tab_id)) {
+            let buffer = self.inner.get(id)?;
+            let snapshot = buffer.snapshot().as_inner().clone();
+            let display_map = display_map::DisplayMap::new(snapshot, None);
+            self.display_contexts.insert((id, tab_id), BufferDisplayContext {
+                display_map,
+                highlights: Vec::new(),
+                selections: vim_buffer::SelectionSet::new(),
+            });
+        }
+
+        let buffer = self.inner.get_mut(id)?;
+        let context = self.contexts.get_mut(&id).unwrap();
+        let display_context = self.display_contexts.get_mut(&(id, tab_id)).unwrap();
+
+        Ok(f(buffer, context, display_context))
+    }
 }
