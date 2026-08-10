@@ -1,0 +1,19 @@
+[package]
+name = "vim-treesitter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+background-worker = { path = "../background_worker" }
+vim-buffer = { path = "../vim-buffer" }
+text = { path = "../zed/crates/text" }
+rope = { path = "../zed/crates/rope" }
+tree-sitter = "0.26"
+tree-sitter-asm = "0.24.0"
+tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.1"
+tree-sitter-rust = "0.24"
+tree-sitter-zig = "1.1.2"
+
+[dev-dependencies]
+clock = { path = "../zed/crates/clock" }

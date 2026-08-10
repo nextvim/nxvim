@@ -1518,6 +1518,7 @@ dependencies = [
  "sum_tree",
  "syntect",
  "text",
+ "textmate",
  "toml",
  "tree-sitter",
  "tree-sitter-asm",
@@ -1528,10 +1529,14 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "vim-buffer",
+ "vim-clipboard",
  "vim-formatter",
+ "vim-indexer",
  "vim-input",
+ "vim-macros",
  "vim-regex",
  "vim-script",
+ "vim-treesitter",
  "vim-ui",
 ]
 
@@ -2543,6 +2548,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "textmate"
+version = "0.1.0"
+dependencies = [
+ "background-worker",
+ "clock",
+ "rope",
+ "syntect",
+ "text",
+ "vim-buffer",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2969,10 +2986,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "vim-clipboard"
+version = "0.1.0"
+
+[[package]]
 name = "vim-formatter"
 version = "0.1.0"
 dependencies = [
  "unicode-width",
+]
+
+[[package]]
+name = "vim-indexer"
+version = "0.1.0"
+dependencies = [
+ "background-worker",
+ "serde",
+ "vim-buffer",
 ]
 
 [[package]]
@@ -2981,6 +3011,13 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "smallvec",
+]
+
+[[package]]
+name = "vim-macros"
+version = "0.1.0"
+dependencies = [
+ "vim-input",
 ]
 
 [[package]]
@@ -3001,11 +3038,29 @@ name = "vim-script"
 version = "0.1.0"
 
 [[package]]
+name = "vim-treesitter"
+version = "0.1.0"
+dependencies = [
+ "background-worker",
+ "clock",
+ "rope",
+ "text",
+ "tree-sitter",
+ "tree-sitter-asm",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-rust",
+ "tree-sitter-zig",
+ "vim-buffer",
+]
+
+[[package]]
 name = "vim-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossterm",
+ "textmate",
  "vim-formatter",
 ]
 

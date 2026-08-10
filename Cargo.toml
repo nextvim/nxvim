@@ -9,6 +9,11 @@ members = [
     "crates/vim-ui",
     "crates/display_map",
     "crates/background_worker",
+    "crates/vim-clipboard",
+    "crates/vim-indexer",
+    "crates/vim-macros",
+    "crates/textmate",
+    "crates/vim-treesitter",
 ]
 exclude = ["crates/zed"]
 
@@ -55,9 +60,14 @@ tree-sitter-zig = "1.1.2"
 
 unicode-segmentation = "1.12.0"
 util = { path = "crates/zed/crates/util" }
-	vim-buffer = { path = "crates/vim-buffer" }
+vim-buffer = { path = "crates/vim-buffer" }
 vim-formatter = { path = "crates/vim-formatter" }
 vim-input = { path = "crates/vim-input" }
 vim-regex = { path = "crates/vim-regex" }
 vim-script = { path = "crates/vim-script" }
 vim-ui = { path = "crates/vim-ui" }
+vim-clipboard = { path = "crates/vim-clipboard" }
+vim-indexer = { path = "crates/vim-indexer" }
+vim-macros = { path = "crates/vim-macros" }
+textmate = { path = "crates/textmate" }
+vim-treesitter = { path = "crates/vim-treesitter" }

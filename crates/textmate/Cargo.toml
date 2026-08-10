@@ -1,0 +1,14 @@
+[package]
+name = "textmate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+vim-buffer = { path = "../vim-buffer" }
+background-worker = { path = "../background_worker" }
+rope = { path = "../zed/crates/rope" }
+text = { path = "../zed/crates/text" }
+syntect = { git = "https://github.com/trishume/syntect" }
+
+[dev-dependencies]
+clock = { path = "../zed/crates/clock" }

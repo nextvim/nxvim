@@ -7,3 +7,4 @@ edition = "2024"
 crossterm = "0.29"
 anyhow = "1.0"
 vim-formatter = { path = "../vim-formatter" }
+textmate = { path = "../textmate" }

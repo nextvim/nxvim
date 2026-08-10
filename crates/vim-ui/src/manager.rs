@@ -179,6 +179,14 @@ impl Ui {
         Ok(())
     }
 
+    pub fn show_window(&mut self, id: WindowId) -> UiResult<()> {
+        self.set_window_visible(id, true)
+    }
+
+    pub fn hide_window(&mut self, id: WindowId) -> UiResult<()> {
+        self.set_window_visible(id, false)
+    }
+
     pub fn split_focused(&mut self, axis: SplitAxis) -> UiResult<WindowId> {
         let focused_id = self.focus_manager.focused_id();
         if !self.layout_engine.contains_leaf(focused_id) {

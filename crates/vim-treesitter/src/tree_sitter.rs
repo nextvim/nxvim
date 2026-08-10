@@ -9,7 +9,7 @@ use tree_sitter::{
     StreamingIterator, Tree,
 };
 
-use super::grammars::Grammar;
+use crate::grammars::Grammar;
 
 /// Named declaration-like nodes that form meaningful editor scopes.
 pub const SCOPE_KINDS: &[&str] = &[

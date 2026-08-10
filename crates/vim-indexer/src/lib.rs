@@ -106,7 +106,7 @@ impl Trie {
 }
 
 #[derive(Debug)]
-pub(crate) struct IndexTaskResult {
+pub struct IndexTaskResult {
     pub buffer_id: u64,
     pub changedtick: u64,
     pub source_key: String,
@@ -143,13 +143,13 @@ impl Indexer {
         }
     }
 
-    pub(crate) fn should_index(&self, buffer_id: u64, changedtick: u64) -> bool {
+    pub fn should_index(&self, buffer_id: u64, changedtick: u64) -> bool {
         self.requests
             .get(&buffer_id)
             .is_none_or(|request| request.changedtick != changedtick)
     }
 
-    pub(crate) fn begin_index(&mut self, buffer_id: u64, changedtick: u64) -> Arc<AtomicU64> {
+    pub fn begin_index(&mut self, buffer_id: u64, changedtick: u64) -> Arc<AtomicU64> {
         let request = self
             .requests
             .entry(buffer_id)
@@ -162,13 +162,13 @@ impl Indexer {
         request.latest_task_id.clone()
     }
 
-    pub(crate) fn set_pending_task(&mut self, buffer_id: u64, task_id: TaskId) {
+    pub fn set_pending_task(&mut self, buffer_id: u64, task_id: TaskId) {
         if let Some(request) = self.requests.get_mut(&buffer_id) {
             request.pending_task_id = Some(task_id);
         }
     }
 
-    pub(crate) fn apply_task_result(&mut self, task_id: TaskId, result: IndexTaskResult) -> bool {
+    pub fn apply_task_result(&mut self, task_id: TaskId, result: IndexTaskResult) -> bool {
         let Some(request) = self.requests.get_mut(&result.buffer_id) else {
             return false;
         };
@@ -309,7 +309,7 @@ impl Default for Indexer {
     }
 }
 
-pub(crate) fn index_buffer(
+pub fn index_buffer(
     buffer_id: u64,
     changedtick: u64,
     source_key: String,
@@ -319,7 +319,7 @@ pub(crate) fn index_buffer(
         .expect("non-cancellable indexing cannot be cancelled")
 }
 
-pub(crate) fn index_buffer_cancellable(
+pub fn index_buffer_cancellable(
     buffer_id: u64,
     changedtick: u64,
     source_key: String,

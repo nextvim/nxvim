@@ -128,7 +128,7 @@ pub fn parse_scopes_cancellable(
 }
 
 #[derive(Debug)]
-pub(crate) struct HighlightTaskResult {
+pub struct HighlightTaskResult {
     pub buffer_id: u64,
     pub changedtick: u64,
     pub start_row: u32,
@@ -161,7 +161,7 @@ impl HighlightService {
         }
     }
 
-    pub(crate) fn should_highlight(
+    pub fn should_highlight(
         &self,
         buffer_id: u64,
         changedtick: u64,
@@ -182,7 +182,7 @@ impl HighlightService {
         })
     }
 
-    pub(crate) fn begin_highlight(&mut self, buffer_id: u64, changedtick: u64) -> Arc<AtomicU64> {
+    pub fn begin_highlight(&mut self, buffer_id: u64, changedtick: u64) -> Arc<AtomicU64> {
         let state = self
             .buffers
             .entry(buffer_id)
@@ -200,7 +200,7 @@ impl HighlightService {
         Arc::new(AtomicU64::new(0))
     }
 
-    pub(crate) fn set_pending_task(
+    pub fn set_pending_task(
         &mut self,
         buffer_id: u64,
         task_id: TaskId,
@@ -220,7 +220,7 @@ impl HighlightService {
         }
     }
 
-    pub(crate) fn apply_task_result(
+    pub fn apply_task_result(
         &mut self,
         task_id: TaskId,
         completed: HighlightTaskResult,

@@ -12,7 +12,7 @@ pub use grammars::Grammar;
 pub use tree_sitter::{SyntaxNode, SyntaxTree, TreeSitterParser};
 
 #[derive(Debug)]
-pub(crate) struct ParseTaskResult {
+pub struct ParseTaskResult {
     pub buffer_id: u64,
     pub changedtick: u64,
     pub grammar: Grammar,
@@ -41,13 +41,13 @@ impl TreeSitterService {
         }
     }
 
-    pub(crate) fn should_parse(&self, buffer_id: u64, changedtick: u64, grammar: Grammar) -> bool {
+    pub fn should_parse(&self, buffer_id: u64, changedtick: u64, grammar: Grammar) -> bool {
         self.buffers.get(&buffer_id).is_none_or(|state| {
             state.grammar != grammar || state.requested_changedtick != changedtick
         })
     }
 
-    pub(crate) fn begin_parse(
+    pub fn begin_parse(
         &mut self,
         buffer_id: u64,
         changedtick: u64,
@@ -75,13 +75,13 @@ impl TreeSitterService {
         state.latest_task_id.clone()
     }
 
-    pub(crate) fn set_pending_task(&mut self, buffer_id: u64, task_id: TaskId) {
+    pub fn set_pending_task(&mut self, buffer_id: u64, task_id: TaskId) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.pending_task_id = Some(task_id);
         }
     }
 
-    pub(crate) fn apply_task_result(
+    pub fn apply_task_result(
         &mut self,
         task_id: TaskId,
         completed: ParseTaskResult,
@@ -142,7 +142,7 @@ impl Default for TreeSitterService {
     }
 }
 
-pub(crate) fn parse_snapshot(
+pub fn parse_snapshot(
     buffer_id: u64,
     changedtick: u64,
     grammar: Grammar,
@@ -151,7 +151,7 @@ pub(crate) fn parse_snapshot(
     parse_snapshot_cancellable(buffer_id, changedtick, grammar, snapshot, || false)
 }
 
-pub(crate) fn parse_snapshot_cancellable(
+pub fn parse_snapshot_cancellable(
     buffer_id: u64,
     changedtick: u64,
     grammar: Grammar,
