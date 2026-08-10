@@ -128,8 +128,12 @@ impl DisplayMap {
         self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
         if folds_changed {
-            self.buffer_window = 0..buffer.row_count();
-            self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
+            self.buffer_window = 0..buffer.row_count().min(1000);
+            self.wrap_map = WrapMap::new_windowed(
+                self.fold_map.folded_buffer().clone(),
+                self.wrap_width,
+                self.buffer_window.clone(),
+            );
         } else {
             self.wrap_map.sync(self.fold_map.folded_buffer().clone());
         }
@@ -180,11 +184,11 @@ impl DisplayMap {
     }
 
     pub fn sync(&mut self, buffer: BufferSnapshot) {
-        if self.original_buffer.version == buffer.version && self.buffer_window.end == buffer.row_count() {
+        if self.original_buffer.version == buffer.version && self.buffer_window.end == buffer.row_count().min(1000) {
             return;
         }
         self.original_buffer = buffer.clone();
-        self.buffer_window = 0..buffer.row_count();
+        self.buffer_window = 0..buffer.row_count().min(1000);
         self.fold_map = FoldMap::new(&buffer, self.folds.clone());
         self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
         self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
