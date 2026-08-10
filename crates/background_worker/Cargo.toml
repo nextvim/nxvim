@@ -1,0 +1,9 @@
+[package]
+name = "background-worker"
+version = "0.1.0"
+edition = "2024"
+license = "Vim"
+description = "Generic background worker and manager"
+publish = false
+
+[dependencies]

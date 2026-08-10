@@ -3,8 +3,9 @@ use display_map::{DisplayMap, Fold};
 use crate::{
     controller::InputController,
     script::ScriptRuntime,
-    services::{Services, background::TaskId},
+    services::Services,
 };
+use background_worker::TaskId;
 use text::{ToOffset, ToPoint};
 use vim_buffer::{Buffer, BufferError, BufferId, BufferManager, Point, SelectionSet};
 use vim_input::Mode;

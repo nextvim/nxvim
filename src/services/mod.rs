@@ -1,4 +1,3 @@
-pub mod background;
 pub mod clipboard;
 pub mod highlight;
 pub mod indexer;
@@ -7,7 +6,7 @@ pub mod treesitter;
 
 use std::cell::RefCell;
 
-use background::BackgroundWorker;
+use background_worker::BackgroundWorker;
 use clipboard::Clipboard;
 use highlight::HighlightService;
 use indexer::Indexer;
@@ -28,8 +27,8 @@ pub struct Services {
 impl Services {
     pub fn new() -> Self {
         Self {
-            background_worker: BackgroundWorker::new(),
-            highlight_worker: BackgroundWorker::new(),
+            background_worker: BackgroundWorker::new("background"),
+            highlight_worker: BackgroundWorker::new("highlight"),
             highlights: RefCell::new(HighlightService::new()),
             clipboard: RefCell::new(Clipboard::new()),
             indexer: RefCell::new(Indexer::new()),

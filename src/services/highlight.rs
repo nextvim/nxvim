@@ -4,8 +4,7 @@ use std::{
 };
 
 use vim_buffer::BufferId;
-
-use super::background::TaskId;
+use background_worker::TaskId;
 use std::{path::Path, sync::OnceLock};
 use rope::Point;
 use syntect::{

@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
@@ -10,6 +11,7 @@ pub struct TaskId(pub u64);
 /// A value produced by a completed background task.
 pub struct BackgroundResult {
     pub task_id: TaskId,
+    pub worker_name: String,
     output: Box<dyn Any + Send>,
 }
 
@@ -18,6 +20,7 @@ impl std::fmt::Debug for BackgroundResult {
         formatter
             .debug_struct("BackgroundResult")
             .field("task_id", &self.task_id)
+            .field("worker_name", &self.worker_name)
             .field("output_type_id", &self.output.as_ref().type_id())
             .finish()
     }
@@ -31,10 +34,13 @@ impl BackgroundResult {
 
     /// Extracts the result when its concrete type is `T`.
     pub fn downcast<T: Any + Send>(self) -> Result<T, Self> {
+        let task_id = self.task_id;
+        let worker_name = self.worker_name.clone();
         match self.output.downcast::<T>() {
             Ok(output) => Ok(*output),
             Err(output) => Err(Self {
-                task_id: self.task_id,
+                task_id,
+                worker_name,
                 output,
             }),
         }
@@ -66,8 +72,9 @@ enum WorkerMessage {
     Shutdown,
 }
 
-/// A dedicated thread for CPU-bound work that must not block the UI thread.
+/// A dedicated thread for CPU-bound work.
 pub struct BackgroundWorker {
+    name: String,
     task_tx: mpsc::Sender<WorkerMessage>,
     result_rx: mpsc::Receiver<BackgroundResult>,
     next_task_id: AtomicU64,
@@ -75,20 +82,29 @@ pub struct BackgroundWorker {
 }
 
 impl BackgroundWorker {
-    pub fn new() -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
         let (task_tx, task_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
+        
+        let thread_name = format!("worker-{}", name);
+        let worker_name_clone = name.clone();
         let worker_thread = thread::Builder::new()
-            .name("nxvim-background".into())
-            .spawn(move || run_worker(task_rx, result_tx))
+            .name(thread_name)
+            .spawn(move || run_worker(worker_name_clone, task_rx, result_tx))
             .expect("failed to spawn background worker");
 
         Self {
+            name,
             task_tx,
             result_rx,
             next_task_id: AtomicU64::new(1),
             worker_thread: Some(worker_thread),
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Creates a cancellation sequence shared by a related stream of tasks.
@@ -132,12 +148,6 @@ impl BackgroundWorker {
     }
 }
 
-impl Default for BackgroundWorker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Drop for BackgroundWorker {
     fn drop(&mut self) {
         let _ = self.task_tx.send(WorkerMessage::Shutdown);
@@ -147,7 +157,11 @@ impl Drop for BackgroundWorker {
     }
 }
 
-fn run_worker(task_rx: mpsc::Receiver<WorkerMessage>, result_tx: mpsc::Sender<BackgroundResult>) {
+fn run_worker(
+    worker_name: String,
+    task_rx: mpsc::Receiver<WorkerMessage>,
+    result_tx: mpsc::Sender<BackgroundResult>,
+) {
     while let Ok(message) = task_rx.recv() {
         let WorkerMessage::Run(task) = message else {
             break;
@@ -164,6 +178,7 @@ fn run_worker(task_rx: mpsc::Receiver<WorkerMessage>, result_tx: mpsc::Sender<Ba
         if result_tx
             .send(BackgroundResult {
                 task_id: task.task_id,
+                worker_name: worker_name.clone(),
                 output,
             })
             .is_err()
@@ -177,10 +192,85 @@ fn is_obsolete(task: &BackgroundTask) -> bool {
     task.latest_task_id.load(Ordering::Acquire) > task.task_id.0
 }
 
+/// A trait for receiving completed task results.
+pub trait WorkerResultHandler {
+    fn handle_result(&mut self, result: BackgroundResult);
+}
+
+/// A manager that coordinates multiple named background workers and dispatches their results.
+#[derive(Default)]
+pub struct WorkerManager {
+    workers: HashMap<String, BackgroundWorker>,
+}
+
+impl WorkerManager {
+    pub fn new() -> Self {
+        Self {
+            workers: HashMap::new(),
+        }
+    }
+
+    /// Registers a new worker if it does not already exist.
+    pub fn add_worker(&mut self, name: &str) {
+        self.workers.entry(name.to_string()).or_insert_with(|| BackgroundWorker::new(name));
+    }
+
+    /// Gets a reference to a worker by name.
+    pub fn worker(&self, name: &str) -> Option<&BackgroundWorker> {
+        self.workers.get(name)
+    }
+
+    /// Spawns a task on a specific worker.
+    pub fn spawn_task<T, F>(&self, worker_name: &str, sequence: Arc<AtomicU64>, job: F) -> Option<TaskId>
+    where
+        T: Any + Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        self.workers.get(worker_name).map(|w| w.spawn_task(sequence, job))
+    }
+
+    /// Spawns a cancellable task on a specific worker.
+    pub fn spawn_cancellable_task<T, F>(
+        &self,
+        worker_name: &str,
+        sequence: Arc<AtomicU64>,
+        job: F,
+    ) -> Option<TaskId>
+    where
+        T: Any + Send + 'static,
+        F: FnOnce(CancellationToken) -> Option<T> + Send + 'static,
+    {
+        self.workers.get(worker_name).map(|w| w.spawn_cancellable_task(sequence, job))
+    }
+
+    /// Polls all managed workers for finished tasks, sending them to the handler.
+    /// Returns the number of results handled in this poll cycle.
+    pub fn poll(&self, handler: &mut dyn WorkerResultHandler) -> usize {
+        let mut count = 0;
+        for worker in self.workers.values() {
+            while let Some(result) = worker.try_recv() {
+                handler.handle_result(result);
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    struct TestHandler {
+        results: Vec<BackgroundResult>,
+    }
+
+    impl WorkerResultHandler for TestHandler {
+        fn handle_result(&mut self, result: BackgroundResult) {
+            self.results.push(result);
+        }
+    }
 
     fn receive(worker: &BackgroundWorker) -> BackgroundResult {
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -195,18 +285,19 @@ mod tests {
 
     #[test]
     fn runs_jobs_and_returns_typed_results() {
-        let worker = BackgroundWorker::new();
+        let worker = BackgroundWorker::new("test-worker");
         let sequence = worker.cancellation_sequence();
         let task_id = worker.spawn_task(sequence, || String::from("done"));
         let result = receive(&worker);
 
         assert_eq!(result.task_id, task_id);
+        assert_eq!(result.worker_name, "test-worker");
         assert_eq!(result.downcast::<String>().unwrap(), "done");
     }
 
     #[test]
     fn cancels_running_cooperative_jobs() {
-        let worker = BackgroundWorker::new();
+        let worker = BackgroundWorker::new("cancellation-worker");
         let sequence = worker.cancellation_sequence();
         let (started_tx, started_rx) = mpsc::channel();
         worker.spawn_cancellable_task(sequence.clone(), move |cancel| {
@@ -228,7 +319,7 @@ mod tests {
 
     #[test]
     fn skips_queued_obsolete_jobs() {
-        let worker = BackgroundWorker::new();
+        let worker = BackgroundWorker::new("obsolete-worker");
         let blocker = worker.cancellation_sequence();
         worker.spawn_task(blocker, || thread::sleep(Duration::from_millis(30)));
 
@@ -245,5 +336,36 @@ mod tests {
         assert_eq!(result.task_id, latest);
         assert_eq!(result.downcast::<u32>().unwrap(), 2);
         assert!(worker.try_recv().is_none());
+    }
+
+    #[test]
+    fn manager_polls_multiple_workers_and_dispatches_to_handler() {
+        let mut manager = WorkerManager::new();
+        manager.add_worker("worker-1");
+        manager.add_worker("worker-2");
+
+        let seq_1 = manager.worker("worker-1").unwrap().cancellation_sequence();
+        let seq_2 = manager.worker("worker-2").unwrap().cancellation_sequence();
+
+        let t1 = manager.spawn_task("worker-1", seq_1, || 10_i32).unwrap();
+        let t2 = manager.spawn_task("worker-2", seq_2, || String::from("hello")).unwrap();
+
+        // Wait a bit to ensure they run and complete
+        thread::sleep(Duration::from_millis(50));
+
+        let mut handler = TestHandler { results: Vec::new() };
+        let count = manager.poll(&mut handler);
+
+        assert_eq!(count, 2);
+        assert_eq!(handler.results.len(), 2);
+
+        // Find results
+        let r1 = handler.results.iter().find(|r| r.task_id == t1 && r.worker_name == "worker-1").unwrap();
+        assert_eq!(r1.worker_name, "worker-1");
+        assert_eq!(*r1.downcast_ref::<i32>().unwrap(), 10);
+
+        let r2 = handler.results.iter().find(|r| r.task_id == t2 && r.worker_name == "worker-2").unwrap();
+        assert_eq!(r2.worker_name, "worker-2");
+        assert_eq!(r2.downcast_ref::<String>().unwrap(), "hello");
     }
 }

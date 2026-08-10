@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
-use super::background::TaskId;
+use background_worker::TaskId;
 
 pub use grammars::Grammar;
 pub use tree_sitter::{SyntaxNode, SyntaxTree, TreeSitterParser};

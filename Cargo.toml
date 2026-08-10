@@ -8,6 +8,7 @@ members = [
     "crates/vim-script",
     "crates/vim-ui",
     "crates/display_map",
+    "crates/background_worker",
 ]
 exclude = ["crates/zed"]
 
@@ -27,6 +28,7 @@ collections = { path = "crates/zed/crates/collections" }
 color-eyre = "0.6.5"
 crossterm = "0.29"
 display_map = { path = "crates/display_map" }
+background-worker = { path = "crates/background_worker" }
 
 libloading = "0.9.0"
 log = "0.4"

@@ -5,7 +5,7 @@ use std::{
 
 use vim_buffer::{BufferSnapshot, ByteOffset, TextRange};
 
-use super::background::TaskId;
+use background_worker::TaskId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IndexSource {
