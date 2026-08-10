@@ -2,7 +2,7 @@ pub use vim_ui::{Ui, Rect};
 
 pub fn setup_initial_layout(
     ui: &mut Ui,
-    main_window_state: std::rc::Rc<std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>>,
+    _main_window_state: std::rc::Rc<std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use vim_ui::{LayoutNode, SizeConstraint, SplitAxis};
 
@@ -27,7 +27,7 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
-        w.set_view(Box::new(crate::app::views::MainWindowView::new(main_window_state)));
+        w.set_view(Box::new(crate::app::views::MainWindowView::new(main_id)));
         w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
     }
     if let Some(w) = ui.window_mut(right_id) {

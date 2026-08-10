@@ -56,102 +56,97 @@ impl vim_ui::UIContext for SimpleContext {
 }
 
 fn build_context(app: &App, width: u16, height: u16) -> SimpleContext {
-    let main_window_id = vim_ui::WindowId::new(3); // MAIN WINDOW
-    let main_rect = app
-        .ui
-        .computed_layout()
-        .get_rect(main_window_id)
-        .unwrap_or(vim_ui::Rect::new(0, 0, width, height));
-
-    let mut tab_layouts = Vec::new();
-    let state = app.main_window_state.borrow();
-    state.tree.compute_layout(main_rect, &mut tab_layouts);
-
     let mut text_models = std::collections::HashMap::new();
     let mut active_buffer_id = None;
 
-    for (tab_id, tab_rect) in tab_layouts {
-        if let Some(tab) = state.tree.find_tab(tab_id) {
-            let buffer_id = tab.current_buffer_id;
-            if tab_id == state.active_tab_id {
-                active_buffer_id = Some(vim_ui::BufferId::new(buffer_id.get()));
-            }
+    let active_id = app.ui.focused_window_id();
+    let state = app.main_window_state.borrow();
 
-            let mut rows = Vec::new();
-            if let Ok(buffer) = app.buffer_manager.get_buffer(buffer_id) {
-                let snapshot = buffer.snapshot();
-                let row_count = snapshot.row_count();
+    for (&win_id, &buffer_id) in &state.window_buffers {
+        if win_id == active_id {
+            active_buffer_id = Some(vim_ui::BufferId::new(buffer_id.get()));
+        }
 
-                for i in 0..row_count {
-                    let line_len = snapshot.line_len(i).unwrap_or(0);
-                    let start = snapshot
-                        .point_to_offset(vim_buffer::Point::new(i, 0))
-                        .unwrap()
-                        .0;
-                    let end = snapshot
-                        .point_to_offset(vim_buffer::Point::new(i, line_len))
-                        .unwrap()
-                        .0;
-                    let line: String = snapshot
-                        .as_inner()
-                        .as_rope()
-                        .chunks_in_range(start..end)
-                        .collect();
+        let mut rows = Vec::new();
+        if let Ok(buffer) = app.buffer_manager.get_buffer(buffer_id) {
+            let snapshot = buffer.snapshot();
+            let row_count = snapshot.row_count();
 
-                    rows.push(vim_ui::model::DisplayRow {
-                        buffer_row: Some(i),
-                        kind: vim_ui::model::DisplayRowKind::Buffer,
-                        gutter: Some(vim_ui::model::GutterCell {
-                            text: format!(" {:2} ", i + 1),
-                            style: vim_ui::Style::default(),
-                        }),
-                        spans: vec![vim_ui::model::TextSpan::new(
-                            line,
-                            vim_ui::Style::default(),
-                        )],
-                        fill_style: vim_ui::Style::default(),
-                    });
-                }
-            }
+            for i in 0..row_count {
+                let line_len = snapshot.line_len(i).unwrap_or(0);
+                let start = snapshot
+                    .point_to_offset(vim_buffer::Point::new(i, 0))
+                    .unwrap()
+                    .0;
+                let end = snapshot
+                    .point_to_offset(vim_buffer::Point::new(i, line_len))
+                    .unwrap()
+                    .0;
+                let line: String = snapshot
+                    .as_inner()
+                    .as_rope()
+                    .chunks_in_range(start..end)
+                    .collect();
 
-            if rows.is_empty() {
                 rows.push(vim_ui::model::DisplayRow {
-                    buffer_row: Some(0),
+                    buffer_row: Some(i),
                     kind: vim_ui::model::DisplayRowKind::Buffer,
                     gutter: Some(vim_ui::model::GutterCell {
-                        text: "  1 ".to_string(),
+                        text: format!(" {:2} ", i + 1),
                         style: vim_ui::Style::default(),
                     }),
                     spans: vec![vim_ui::model::TextSpan::new(
-                        "".to_string(),
+                        line,
                         vim_ui::Style::default(),
                     )],
                     fill_style: vim_ui::Style::default(),
                 });
             }
-
-            let cursor = if tab_id == state.active_tab_id {
-                Some(vim_ui::model::TextCursor {
-                    position: vim_ui::model::DisplayPosition { row: 0, column: 4 }, // after 4-character gutter
-                    shape: vim_ui::model::CursorShape::Block,
-                    visible: true,
-                })
-            } else {
-                None
-            };
-
-            let text_model = vim_ui::TextViewModel {
-                viewport_width: tab_rect.width,
-                viewport_height: tab_rect.height,
-                rows,
-                selections: vec![],
-                cursor,
-                scrollbar: None,
-                default_style: vim_ui::Style::default(),
-            };
-
-            text_models.insert(vim_ui::WindowId::new(tab_id.0), text_model);
         }
+
+        if rows.is_empty() {
+            rows.push(vim_ui::model::DisplayRow {
+                buffer_row: Some(0),
+                kind: vim_ui::model::DisplayRowKind::Buffer,
+                gutter: Some(vim_ui::model::GutterCell {
+                    text: "  1 ".to_string(),
+                    style: vim_ui::Style::default(),
+                }),
+                spans: vec![vim_ui::model::TextSpan::new(
+                    "".to_string(),
+                    vim_ui::Style::default(),
+                )],
+                fill_style: vim_ui::Style::default(),
+            });
+        }
+
+        let win_rect = app
+            .ui
+            .computed_layout()
+            .get_rect(win_id)
+            .unwrap_or(vim_ui::Rect::new(0, 0, width, height));
+
+        let cursor = if win_id == active_id {
+            Some(vim_ui::model::TextCursor {
+                position: vim_ui::model::DisplayPosition { row: 0, column: 4 }, // after 4-character gutter
+                shape: vim_ui::model::CursorShape::Block,
+                visible: true,
+            })
+        } else {
+            None
+        };
+
+        let text_model = vim_ui::TextViewModel {
+            viewport_width: win_rect.width,
+            viewport_height: win_rect.height,
+            rows,
+            selections: vec![],
+            cursor,
+            scrollbar: None,
+            default_style: vim_ui::Style::default(),
+        };
+
+        text_models.insert(win_id, text_model);
     }
 
     SimpleContext {
@@ -167,7 +162,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     use std::io::{stdout, Write};
     use vim_input::Action;
     use vim_ui::{BufferedRenderer, WindowId};
-    use crate::app::buffer_manager::TabId;
 
     let mut app = App::new();
     let mut terminal = TerminalSession::enter()?;
@@ -223,79 +217,73 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         match action {
                             Action::NextTab { .. } => {
                                 let buffers = app.buffer_manager.list();
-                                let active_id = {
-                                    let state = app.main_window_state.borrow();
-                                    state.active_tab_id
-                                };
+                                let active_id = app.ui.focused_window_id();
                                 let mut state = app.main_window_state.borrow_mut();
-                                if let Some(tab) = state.tree.find_tab_mut(active_id) {
-                                    tab.switch_next(&buffers);
+                                if let Some(buf_id) = state.window_buffers.get_mut(&active_id) {
+                                    if !buffers.is_empty() {
+                                        if let Some(pos) = buffers.iter().position(|&id| id == *buf_id) {
+                                            let next_pos = (pos + 1) % buffers.len();
+                                            *buf_id = buffers[next_pos];
+                                        } else {
+                                            *buf_id = buffers[0];
+                                        }
+                                    }
                                 }
                             }
                             Action::PreviousTab { .. } => {
                                 let buffers = app.buffer_manager.list();
-                                let active_id = {
-                                    let state = app.main_window_state.borrow();
-                                    state.active_tab_id
-                                };
+                                let active_id = app.ui.focused_window_id();
                                 let mut state = app.main_window_state.borrow_mut();
-                                if let Some(tab) = state.tree.find_tab_mut(active_id) {
-                                    tab.switch_prev(&buffers);
+                                if let Some(buf_id) = state.window_buffers.get_mut(&active_id) {
+                                    if !buffers.is_empty() {
+                                        if let Some(pos) = buffers.iter().position(|&id| id == *buf_id) {
+                                            let prev_pos = if pos == 0 { buffers.len() - 1 } else { pos - 1 };
+                                            *buf_id = buffers[prev_pos];
+                                        } else {
+                                            *buf_id = buffers[0];
+                                        }
+                                    }
                                 }
                             }
                             Action::SplitHorizontal { .. } => {
-                                let next_id = {
-                                    let mut state = app.main_window_state.borrow_mut();
-                                    state.next_tab_id += 1;
-                                    TabId(state.next_tab_id)
-                                };
-                                let active_id = {
-                                    let state = app.main_window_state.borrow();
-                                    state.active_tab_id
-                                };
-                                let current_buf = {
-                                    let mut state = app.main_window_state.borrow_mut();
-                                    state
-                                        .tree
-                                        .find_tab_mut(active_id)
-                                        .map(|t| t.current_buffer_id)
-                                        .unwrap_or(vim_buffer::BufferId::new(1).unwrap())
-                                };
-                                let mut state = app.main_window_state.borrow_mut();
-                                state.tree.split_tab(
-                                    active_id,
-                                    next_id,
-                                    vim_ui::SplitAxis::Rows,
-                                    current_buf,
-                                );
-                                state.active_tab_id = next_id;
+                                let active_id = app.ui.focused_window_id();
+                                let current_buf = app.main_window_state.borrow()
+                                    .window_buffers
+                                    .get(&active_id)
+                                    .copied()
+                                    .unwrap_or(vim_buffer::BufferId::new(1).unwrap());
+                                
+                                if let Ok(new_win_id) = app.ui.split_focused(vim_ui::SplitAxis::Rows) {
+                                    if let Some(w) = app.ui.window_mut(new_win_id) {
+                                        w.set_title("MAIN WINDOW".to_string());
+                                        w.set_view(Box::new(crate::app::views::MainWindowView::new(new_win_id)));
+                                        w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
+                                    }
+                                    app.main_window_state.borrow_mut()
+                                        .window_buffers
+                                        .insert(new_win_id, current_buf);
+                                    let _ = app.ui.focus(new_win_id);
+                                }
                             }
                             Action::SplitVertical { .. } => {
-                                let next_id = {
-                                    let mut state = app.main_window_state.borrow_mut();
-                                    state.next_tab_id += 1;
-                                    TabId(state.next_tab_id)
-                                };
-                                let active_id = {
-                                    let state = app.main_window_state.borrow();
-                                    state.active_tab_id
-                                };
-                                let current_buf = {
-                                    let mut state = app.main_window_state.borrow_mut();
-                                    state
-                                        .tree
-                                        .find_tab_mut(active_id)
-                                        .map(|t| t.current_buffer_id)
-                                        .unwrap_or(vim_buffer::BufferId::new(1).unwrap())
-                                };
-                                let mut state = app.main_window_state.borrow_mut();
-                                state.tree.split_tab(
-                                    active_id,
-                                    next_id,
-                                    vim_ui::SplitAxis::Columns,
-                                    current_buf,
-                                );
-                                state.active_tab_id = next_id;
+                                let active_id = app.ui.focused_window_id();
+                                let current_buf = app.main_window_state.borrow()
+                                    .window_buffers
+                                    .get(&active_id)
+                                    .copied()
+                                    .unwrap_or(vim_buffer::BufferId::new(1).unwrap());
+                                
+                                if let Ok(new_win_id) = app.ui.split_focused(vim_ui::SplitAxis::Columns) {
+                                    if let Some(w) = app.ui.window_mut(new_win_id) {
+                                        w.set_title("MAIN WINDOW".to_string());
+                                        w.set_view(Box::new(crate::app::views::MainWindowView::new(new_win_id)));
+                                        w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
+                                    }
+                                    app.main_window_state.borrow_mut()
+                                        .window_buffers
+                                        .insert(new_win_id, current_buf);
+                                    let _ = app.ui.focus(new_win_id);
+                                }
                             }
                             Action::Quit => {
                                 break;
