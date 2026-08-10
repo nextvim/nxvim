@@ -285,6 +285,26 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     let _ = app.ui.focus(new_win_id);
                                 }
                             }
+                            Action::FocusLeftWindow => {
+                                if let Some(neighbor) = app.ui.find_neighbor(vim_ui::NavigationDirection::Left) {
+                                    let _ = app.ui.focus(neighbor);
+                                }
+                            }
+                            Action::FocusRightWindow => {
+                                if let Some(neighbor) = app.ui.find_neighbor(vim_ui::NavigationDirection::Right) {
+                                    let _ = app.ui.focus(neighbor);
+                                }
+                            }
+                            Action::FocusUpWindow => {
+                                if let Some(neighbor) = app.ui.find_neighbor(vim_ui::NavigationDirection::Up) {
+                                    let _ = app.ui.focus(neighbor);
+                                }
+                            }
+                            Action::FocusDownWindow => {
+                                if let Some(neighbor) = app.ui.find_neighbor(vim_ui::NavigationDirection::Down) {
+                                    let _ = app.ui.focus(neighbor);
+                                }
+                            }
                             Action::Quit => {
                                 break;
                             }
