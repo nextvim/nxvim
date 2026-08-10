@@ -81,6 +81,43 @@ pub fn build_text(
             let line = display_map_snapshot.line_text(i);
             let buffer_row = display_map_snapshot.buffer_row_for_display_row(i);
 
+            let mut spans = Vec::new();
+            let mut current_text = String::new();
+            let mut in_selection = false;
+
+            for (col, ch) in line.chars().enumerate() {
+                let dp = display_map::DisplayPoint::new(i, col as u32);
+                let char_in_selection = display_context.selections.selections.iter().any(|sel| {
+                    let start_dp = display_map_snapshot.anchor_to_display_point(sel.start.clone());
+                    let end_dp = display_map_snapshot.anchor_to_display_point(sel.end.clone());
+                    let (s, e) = if start_dp <= end_dp { (start_dp, end_dp) } else { (end_dp, start_dp) };
+                    s <= dp && dp < e
+                });
+
+                if char_in_selection != in_selection {
+                    if !current_text.is_empty() {
+                        let style = if in_selection {
+                            vim_ui::Style::with_bg(vim_ui::Color::Blue)
+                        } else {
+                            vim_ui::Style::default()
+                        };
+                        spans.push(vim_ui::model::TextSpan::new(current_text, style));
+                        current_text = String::new();
+                    }
+                    in_selection = char_in_selection;
+                }
+                current_text.push(ch);
+            }
+
+            if !current_text.is_empty() {
+                let style = if in_selection {
+                    vim_ui::Style::with_bg(vim_ui::Color::Blue)
+                } else {
+                    vim_ui::Style::default()
+                };
+                spans.push(vim_ui::model::TextSpan::new(current_text, style));
+            }
+
             rows.push(vim_ui::model::DisplayRow {
                 buffer_row: Some(buffer_row),
                 kind: vim_ui::model::DisplayRowKind::Buffer,
@@ -88,7 +125,7 @@ pub fn build_text(
                     text: format!(" {:2} ", buffer_row + 1),
                     style: vim_ui::Style::default(),
                 }),
-                spans: vec![vim_ui::model::TextSpan::new(line, vim_ui::Style::default())],
+                spans,
                 fill_style: vim_ui::Style::default(),
             });
         }
