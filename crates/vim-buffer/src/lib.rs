@@ -46,7 +46,7 @@ pub use search::{TextSearch, compile};
 pub use selection::SelectionExt;
 pub use selection_set::{SelectionCellState, SelectionCollection, SelectionSet};
 pub use snapshot::{BufferSnapshot, TextChunks};
-pub use text::{OffsetUtf16, Point, PointUtf16};
+pub use text::{OffsetUtf16, Point, PointUtf16, Selection, Anchor};
 pub use transaction::Transaction;
 pub use undo::{UndoNode, UndoTree};
 

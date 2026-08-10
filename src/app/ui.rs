@@ -1,6 +1,9 @@
-pub use vim_ui::{Ui, Rect, WindowId, Anchor, RelativeTo, FloatingConfig, BufferedRenderer};
+pub use vim_ui::{Ui, Rect};
 
-pub fn setup_initial_layout(ui: &mut Ui) -> Result<(), Box<dyn std::error::Error>> {
+pub fn setup_initial_layout(
+    ui: &mut Ui,
+    main_window_state: std::rc::Rc<std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use vim_ui::{LayoutNode, SizeConstraint, SplitAxis};
 
     // The initial window in store is WindowId::new(1)
@@ -24,24 +27,24 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<(), Box<dyn std::error::Error
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
-        w.set_view(Box::new(vim_ui::TextView::new(main_id)));
+        w.set_view(Box::new(crate::app::views::MainWindowView::new(main_window_state)));
+        w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
     }
     if let Some(w) = ui.window_mut(right_id) {
         w.set_title("RIGHT PANEL".to_string());
     }
     if let Some(w) = ui.window_mut(status_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(vim_ui::views::statusline::StatusLineView::new(
+        w.set_view(Box::new(crate::app::views::StatusLineView::new(
             "main.rs".to_string(),
             "utf-8 | rust".to_string(),
         )));
+        w.set_controller(Box::new(crate::app::controllers::StatusLineController::new()));
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(vim_ui::views::statusline::StatusLineView::new(
-            "COMMAND LINE".to_string(),
-            "".to_string(),
-        )));
+        w.set_view(Box::new(crate::app::views::CommandLineView::new("COMMAND LINE")));
+        w.set_controller(Box::new(crate::app::controllers::CommandLineController::new()));
     }
 
     // Define layout:
