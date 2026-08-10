@@ -79,10 +79,14 @@ impl App {
                     display_context.display_map.set_wrap_width(Some(inner_rect.width as u32));
                 } else {
                     let display_map = display_map::DisplayMap::new(snapshot, Some(inner_rect.width as u32));
+                    let mut selections = vim_buffer::SelectionSet::new();
+                    if let Ok(buf) = self.buffer_manager.get_buffer(buffer_id) {
+                        selections.add(buf.as_text_buffer(), 0);
+                    }
                     let display_context = crate::app::buffer_manager::BufferDisplayContext {
                         display_map,
                         highlights: Vec::new(),
-                        selections: vim_buffer::SelectionSet::new(),
+                        selections,
                     };
                     self.buffer_manager.set_buffer_display_context(
                         buffer_id,
