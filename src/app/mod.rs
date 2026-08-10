@@ -3,7 +3,6 @@ pub mod buffer_manager;
 pub mod input;
 pub mod ui;
 pub mod services;
-pub mod controllers;
 pub mod views;
 
 use std::rc::Rc;
@@ -257,7 +256,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(w) = app.ui.window_mut(new_win_id) {
                                         w.set_title("MAIN WINDOW".to_string());
                                         w.set_view(Box::new(crate::app::views::MainWindowView::new(new_win_id)));
-                                        w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
                                     }
                                     app.main_window_state.borrow_mut()
                                         .window_buffers
@@ -277,7 +275,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(w) = app.ui.window_mut(new_win_id) {
                                         w.set_title("MAIN WINDOW".to_string());
                                         w.set_view(Box::new(crate::app::views::MainWindowView::new(new_win_id)));
-                                        w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
                                     }
                                     app.main_window_state.borrow_mut()
                                         .window_buffers

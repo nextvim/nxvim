@@ -28,7 +28,6 @@ pub fn setup_initial_layout(
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
         w.set_view(Box::new(crate::app::views::MainWindowView::new(main_id)));
-        w.set_controller(Box::new(crate::app::controllers::MainWindowController::new()));
     }
     if let Some(w) = ui.window_mut(right_id) {
         w.set_title("RIGHT PANEL".to_string());
@@ -39,12 +38,10 @@ pub fn setup_initial_layout(
             "main.rs".to_string(),
             "utf-8 | rust".to_string(),
         )));
-        w.set_controller(Box::new(crate::app::controllers::StatusLineController::new()));
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
         w.set_view(Box::new(crate::app::views::CommandLineView::new("COMMAND LINE")));
-        w.set_controller(Box::new(crate::app::controllers::CommandLineController::new()));
     }
 
     // Define layout:
