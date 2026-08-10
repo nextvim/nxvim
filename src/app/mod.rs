@@ -196,7 +196,25 @@ impl App {
                             }
                         }
                     }
-                    TaskType::DisplayMap => {}
+                    TaskType::DisplayMap => {
+                        if let Ok((display_map, height, layout_width)) = result.downcast::<(display_map::DisplayMap, u32, u32)>() {
+                            if let Some(tid) = owner.tab_id {
+                                if let Some(bid) = owner.buffer_id {
+                                    if let Some(display_context) = self.buffer_manager.get_buffer_display_context_mut(bid, tid) {
+                                        display_context.display_map = display_map;
+                                        let cursor_anchor = display_context.selections.primary().head();
+                                        let display_cursor = display_context.display_map.snapshot().anchor_to_display_point(cursor_anchor);
+                                        let wrap_width = display_context.display_map.wrap_width.unwrap_or(layout_width);
+                                        display_context.display_map.scroll_to_cursor(
+                                            display_cursor,
+                                            height as i32,
+                                            wrap_width as i32,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -14,6 +14,7 @@ pub struct BufferDisplayContext {
     pub display_map: display_map::DisplayMap,
     pub highlights: Vec<textmate::HighlightSpan>,
     pub selections: vim_buffer::SelectionSet,
+    pub sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 pub struct BufferManager {
@@ -196,6 +197,7 @@ impl BufferManager {
                 display_map,
                 highlights: Vec::new(),
                 selections: vim_buffer::SelectionSet::new(),
+                sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             });
         }
 
@@ -233,6 +235,7 @@ impl BufferDisplayContext {
             display_map,
             highlights: Vec::new(),
             selections,
+            sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -246,6 +249,35 @@ impl BufferDisplayContext {
             display_cursor,
             height as i32,
             wrap_width as i32,
+        );
+    }
+
+    pub fn update_async(
+        &mut self,
+        snapshot: text::BufferSnapshot,
+        layout_width: u32,
+        height: u32,
+        has_border: bool,
+        buffer_id: vim_buffer::BufferId,
+        tab_id: crate::app::buffer_manager::TabId,
+        services: &crate::app::services::Services,
+    ) {
+        let mut display_map = self.display_map.clone();
+        let owner_id = crate::app::services::OwnerId {
+            buffer_id: Some(buffer_id),
+            tab_id: Some(tab_id),
+        };
+        let sequence = self.sequence.clone();
+        services.spawn_task(
+            "display_map",
+            sequence,
+            owner_id,
+            crate::app::services::TaskType::DisplayMap,
+            move || {
+                display_map.sync(snapshot);
+                display_map.set_layout_width(Some(layout_width), has_border);
+                (display_map, height, layout_width)
+            },
         );
     }
 }

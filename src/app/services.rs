@@ -34,8 +34,10 @@ pub struct Services {
 
 impl Services {
     pub fn new() -> Self {
+        let mut background_workers = background_worker::WorkerManager::new();
+        background_workers.add_worker("display_map");
         Self {
-            background_workers: background_worker::WorkerManager::new(),
+            background_workers,
             clipboard: clipboard::Clipboard::new(),
             highlight: highlight::HighlightService::new(),
             indexer: indexer::Indexer::new(),

@@ -25,6 +25,7 @@ impl DisplayPoint {
     }
 }
 
+#[derive(Clone)]
 pub struct DisplayMap {
     original_buffer: BufferSnapshot,
     folds: Vec<Fold>,
