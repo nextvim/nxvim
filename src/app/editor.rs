@@ -37,10 +37,6 @@ impl Editor {
             services,
         );
 
-        // Sync the display map immediately with the new snapshot
-        let new_snapshot = buffer.snapshot().as_inner().clone();
-        buffer_display_context.display_map.sync(new_snapshot);
-
         Ok(new_mode)
     }
 

@@ -174,6 +174,10 @@ impl BufferManager {
         self.display_contexts.insert((buffer_id, tab_id), context);
     }
 
+    pub fn display_contexts_mut(&mut self) -> &mut HashMap<(BufferId, TabId), BufferDisplayContext> {
+        &mut self.display_contexts
+    }
+
     pub fn with_mut<F, R>(&mut self, id: BufferId, tab_id: TabId, f: F) -> Result<R, vim_buffer::BufferError>
     where
         F: FnOnce(&mut vim_buffer::Buffer, &mut BufferContext, &mut BufferDisplayContext) -> R,
@@ -200,5 +204,48 @@ impl BufferManager {
         let display_context = self.display_contexts.get_mut(&(id, tab_id)).unwrap();
 
         Ok(f(buffer, context, display_context))
+    }
+}
+
+impl BufferDisplayContext {
+    pub fn new(
+        snapshot: text::BufferSnapshot,
+        layout_width: u32,
+        height: u32,
+        has_border: bool,
+        buffer: Option<&vim_buffer::Buffer>,
+    ) -> Self {
+        let mut display_map = display_map::DisplayMap::new(snapshot, None);
+        display_map.set_layout_width(Some(layout_width), has_border);
+        let mut selections = vim_buffer::SelectionSet::new();
+        if let Some(buf) = buffer {
+            selections.add(buf.as_text_buffer(), 0);
+        }
+        let cursor_anchor = selections.primary().head();
+        let display_cursor = display_map.snapshot().anchor_to_display_point(cursor_anchor);
+        let wrap_width = display_map.wrap_width.unwrap_or(layout_width);
+        display_map.scroll_to_cursor(
+            display_cursor,
+            height as i32,
+            wrap_width as i32,
+        );
+        Self {
+            display_map,
+            highlights: Vec::new(),
+            selections,
+        }
+    }
+
+    pub fn update(&mut self, snapshot: text::BufferSnapshot, layout_width: u32, height: u32, has_border: bool) {
+        self.display_map.sync(snapshot);
+        self.display_map.set_layout_width(Some(layout_width), has_border);
+        let cursor_anchor = self.selections.primary().head();
+        let display_cursor = self.display_map.snapshot().anchor_to_display_point(cursor_anchor);
+        let wrap_width = self.display_map.wrap_width.unwrap_or(layout_width);
+        self.display_map.scroll_to_cursor(
+            display_cursor,
+            height as i32,
+            wrap_width as i32,
+        );
     }
 }

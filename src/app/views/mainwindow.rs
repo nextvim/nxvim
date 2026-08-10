@@ -66,7 +66,7 @@ pub fn build_text(
         win_rect
     };
 
-    let tab_id = crate::app::buffer_manager::TabId(1);
+    let tab_id = crate::app::buffer_manager::TabId(win_id.get());
 
 
     let mut rows = Vec::new();
@@ -76,15 +76,19 @@ pub fn build_text(
     ) {
         let display_map_snapshot = display_context.display_map.snapshot();
         let row_count = display_map_snapshot.row_count();
+        let scroll_y = display_map_snapshot.scroll_y;
+        let scroll_x = display_map_snapshot.scroll_x;
+        let start_row = scroll_y;
+        let end_row = (scroll_y + inner_rect.height as u32).min(row_count);
 
-        for i in 0..row_count {
+        for i in start_row..end_row {
             let line = display_map_snapshot.line_text(i);
             let buffer_row = display_map_snapshot.buffer_row_for_display_row(i);
 
             let mut spans = Vec::<vim_ui::model::TextSpan>::new();
 
-            for (col, ch) in line.chars().enumerate() {
-                let dp = display_map::DisplayPoint::new(i, col as u32);
+            for (col, ch) in line.chars().skip(scroll_x as usize).enumerate() {
+                let dp = display_map::DisplayPoint::new(i, (col as u32) + scroll_x);
                 let pt = display_map_snapshot.display_point_to_point(dp);
                 let selection_state = if display_context.selections.selections.is_empty() {
                     vim_buffer::SelectionCellState::default()
@@ -136,11 +140,32 @@ pub fn build_text(
     }
 
     let cursor = if win_id == active_id {
-        Some(vim_ui::model::TextCursor {
-            position: vim_ui::model::DisplayPosition { row: 0, column: 4 }, // after 4-character gutter
-            shape: vim_ui::model::CursorShape::Block,
-            visible: true,
-        })
+        if let (Some(display_context), Ok(_buffer)) = (
+            app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
+            app.buffer_manager.get_buffer(buffer_id),
+        ) {
+            let cursor_anchor = display_context.selections.primary().head();
+            let display_cursor = display_context.display_map.snapshot().anchor_to_display_point(cursor_anchor);
+            let scroll_y = display_context.display_map.scroll_y;
+            let scroll_x = display_context.display_map.scroll_x;
+            if display_cursor.row() >= scroll_y && display_cursor.row() < scroll_y + inner_rect.height as u32 {
+                let screen_row = display_cursor.row() - scroll_y;
+                let screen_col = display_cursor.column().saturating_sub(scroll_x) + 4;
+                Some(vim_ui::model::TextCursor {
+                    position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col },
+                    shape: vim_ui::model::CursorShape::Block,
+                    visible: true,
+                })
+            } else {
+                None
+            }
+        } else {
+            Some(vim_ui::model::TextCursor {
+                position: vim_ui::model::DisplayPosition { row: 0, column: 4 },
+                shape: vim_ui::model::CursorShape::Block,
+                visible: true,
+            })
+        }
     } else {
         None
     };

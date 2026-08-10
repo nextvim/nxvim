@@ -51,8 +51,8 @@ impl App {
             .map(|(&k, &v)| (k, v))
             .collect();
 
-        let tab_id = crate::app::buffer_manager::TabId(1);
         for (win_id, buffer_id) in window_buffers {
+            let tab_id = crate::app::buffer_manager::TabId(win_id.get());
             let win_rect = self
                 .ui
                 .computed_layout()
@@ -69,25 +69,28 @@ impl App {
                 win_rect
             };
 
+            let has_border = if let Some(win) = self.ui.window(win_id) {
+                win.draws_border()
+            } else {
+                false
+            };
+
             let snapshot = self.buffer_manager.get_buffer(buffer_id).ok().map(|buf| buf.snapshot().as_inner().clone());
             if let Some(snapshot) = snapshot {
                 if let Some(display_context) = self
                     .buffer_manager
                     .get_buffer_display_context_mut(buffer_id, tab_id)
                 {
-                    display_context.display_map.sync(snapshot);
-                    display_context.display_map.set_wrap_width(Some(inner_rect.width as u32));
+                    display_context.update(snapshot, win_rect.width as u32, inner_rect.height as u32, has_border);
                 } else {
-                    let display_map = display_map::DisplayMap::new(snapshot, Some(inner_rect.width as u32));
-                    let mut selections = vim_buffer::SelectionSet::new();
-                    if let Ok(buf) = self.buffer_manager.get_buffer(buffer_id) {
-                        selections.add(buf.as_text_buffer(), 0);
-                    }
-                    let display_context = crate::app::buffer_manager::BufferDisplayContext {
-                        display_map,
-                        highlights: Vec::new(),
-                        selections,
-                    };
+                    let buffer_ref = self.buffer_manager.get_buffer(buffer_id).ok();
+                    let display_context = crate::app::buffer_manager::BufferDisplayContext::new(
+                        snapshot,
+                        win_rect.width as u32,
+                        inner_rect.height as u32,
+                        has_border,
+                        buffer_ref,
+                    );
                     self.buffer_manager.set_buffer_display_context(
                         buffer_id,
                         tab_id,
@@ -149,6 +152,55 @@ impl App {
         if let Some(w) = self.ui.window_mut(status_win_id) {
             w.set_view(Box::new(crate::app::views::StatusLineView::new(left, right)));
         }
+    }
+
+    pub fn update_tasks(&mut self) {
+        let results = std::mem::take(&mut self.services.results);
+        for result in results {
+            let metadata = self.services.task_metadata.lock().unwrap().remove(&result.task_id);
+            if let Some((owner, task_type)) = metadata {
+                use crate::app::services::TaskType;
+                match task_type {
+                    TaskType::Treesitter => {
+                        if let Ok(data) = result.downcast::<Result<vim_treesitter::SyntaxTree, String>>() {
+                            if let Some(bid) = owner.buffer_id {
+                                if let Some(context) = self.buffer_manager.get_buffer_context_mut(bid) {
+                                    context.treesitter = data;
+                                }
+                            }
+                        }
+                    }
+                    TaskType::Indexer => {
+                        if let Ok(data) = result.downcast::<Result<vim_indexer::IndexTaskResult, String>>() {
+                            if let Some(bid) = owner.buffer_id {
+                                if let Some(context) = self.buffer_manager.get_buffer_context_mut(bid) {
+                                    context.index = data;
+                                }
+                            }
+                        }
+                    }
+                    TaskType::Highlight => {
+                        if let Ok(data) = result.downcast::<Vec<textmate::HighlightSpan>>() {
+                            if let Some(tid) = owner.tab_id {
+                                if let Some(bid) = owner.buffer_id {
+                                    if let Some(display_context) = self.buffer_manager.get_buffer_display_context_mut(bid, tid) {
+                                        display_context.highlights = data;
+                                    }
+                                } else {
+                                    for (&(_bid, t), display_context) in self.buffer_manager.display_contexts_mut() {
+                                        if t == tid {
+                                            display_context.highlights = data.clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TaskType::DisplayMap => {}
+                }
+            }
+        }
+        self.services.results.clear();
     }
 }
 
@@ -283,6 +335,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     out.flush()?;
 
     loop {
+        if app.services.poll() {
+            app.update_tasks();
+        }
+
         let current_rect = app.ui.screen_rect();
         if let Ok(new_rect) = terminal.size() {
             if new_rect != current_rect {
@@ -310,7 +366,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         app.status_message = Some(msg);
 
                         let active_id = app.ui.focused_window_id();
-                        let tab_id = crate::app::buffer_manager::TabId(1);
+                        let tab_id = crate::app::buffer_manager::TabId(active_id.get());
                         let active_buf = app.main_window_state.borrow().window_buffers.get(&active_id).copied();
                         if let Some(buf_id) = active_buf {
                             let mut next_mode = None;
