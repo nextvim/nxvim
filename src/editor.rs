@@ -14,9 +14,10 @@ use vim_ui::{
     UIContext, View, WindowId,
 };
 
+use display_map::{DisplayMap, DisplayPoint};
+
 use crate::{
     commandline,
-    display::{DisplayMap, display_map::DisplayPoint},
     event::command_completions,
     services::{
         highlight::{HighlightService, HighlightTaskResult},
@@ -367,7 +368,7 @@ fn schedule_highlight_tasks(state: &AppState) {
                 .services
                 .highlight_worker
                 .spawn_cancellable_task(latest_task_id, move |cancel| {
-                    let parsed = crate::display::highlight::parse_scopes_cancellable(
+                    let parsed = crate::services::highlight::parse_scopes_cancellable(
                         &raw_snapshot,
                         changedtick,
                         Some(&file_path),

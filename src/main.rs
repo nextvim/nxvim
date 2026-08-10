@@ -1,7 +1,6 @@
 mod app;
 mod commandline;
 mod controller;
-mod display;
 mod editor;
 mod event;
 mod script;

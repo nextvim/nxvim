@@ -1500,6 +1500,7 @@ dependencies = [
  "collections",
  "color-eyre",
  "crossterm",
+ "display_map",
  "libloading 0.9.0",
  "log",
  "onig",

@@ -1,6 +1,7 @@
+use display_map::{DisplayMap, Fold};
+
 use crate::{
     controller::InputController,
-    display::{DisplayMap, Fold},
     script::ScriptRuntime,
     services::{Services, background::TaskId},
 };
