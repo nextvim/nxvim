@@ -2,9 +2,6 @@ pub use vim_ui::{Rect, Ui};
 
 pub fn setup_initial_layout(
     ui: &mut Ui,
-    _main_window_state: std::rc::Rc<
-        std::cell::RefCell<crate::app::views::mainwindow::MainWindowState>,
-    >,
 ) -> Result<(vim_ui::WindowId, vim_ui::WindowId), Box<dyn std::error::Error>> {
     use vim_ui::SizeConstraint;
 

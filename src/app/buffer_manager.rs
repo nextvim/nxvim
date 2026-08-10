@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use vim_buffer::{BufferId, BufferManager as VimBufferManager};
 use text::ToPoint;
+use vim_buffer::{BufferId, BufferManager as VimBufferManager};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TabId(pub u64);
@@ -26,6 +26,7 @@ pub struct BufferManager {
     inner: VimBufferManager,
     contexts: HashMap<BufferId, BufferContext>,
     display_contexts: HashMap<(BufferId, TabId), BufferDisplayContext>,
+    pub window_buffers: HashMap<vim_ui::WindowId, BufferId>,
 }
 
 impl BufferManager {
@@ -59,10 +60,14 @@ impl BufferManager {
 
         let _ = inner.set_current(first_buffer_id);
 
+        let mut window_buffers = HashMap::new();
+        window_buffers.insert(vim_ui::WindowId::new(3), first_buffer_id);
+
         Self {
             inner,
             contexts: HashMap::new(),
             display_contexts: HashMap::new(),
+            window_buffers,
         }
     }
 
@@ -180,35 +185,48 @@ impl BufferManager {
         self.display_contexts.insert((buffer_id, tab_id), context);
     }
 
-    pub fn display_contexts_mut(&mut self) -> &mut HashMap<(BufferId, TabId), BufferDisplayContext> {
+    pub fn display_contexts_mut(
+        &mut self,
+    ) -> &mut HashMap<(BufferId, TabId), BufferDisplayContext> {
         &mut self.display_contexts
     }
 
-    pub fn with_mut<F, R>(&mut self, id: BufferId, tab_id: TabId, f: F) -> Result<R, vim_buffer::BufferError>
+    pub fn with_mut<F, R>(
+        &mut self,
+        id: BufferId,
+        tab_id: TabId,
+        f: F,
+    ) -> Result<R, vim_buffer::BufferError>
     where
         F: FnOnce(&mut vim_buffer::Buffer, &mut BufferContext, &mut BufferDisplayContext) -> R,
     {
         if !self.contexts.contains_key(&id) {
-            self.contexts.insert(id, BufferContext {
-                treesitter: Err("Not loaded".to_string()),
-                index: Err("Not loaded".to_string()),
-            });
+            self.contexts.insert(
+                id,
+                BufferContext {
+                    treesitter: Err("Not loaded".to_string()),
+                    index: Err("Not loaded".to_string()),
+                },
+            );
         }
         if !self.display_contexts.contains_key(&(id, tab_id)) {
             let buffer = self.inner.get(id)?;
             let snapshot = buffer.snapshot().as_inner().clone();
             let end_row = 100.min(snapshot.row_count());
             let display_map = display_map::DisplayMap::new_windowed(snapshot, None, 0..end_row);
-            self.display_contexts.insert((id, tab_id), BufferDisplayContext {
-                display_map,
-                highlights: Vec::new(),
-                selections: vim_buffer::SelectionSet::new(),
-                sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-                last_version: None,
-                last_layout_width: None,
-                last_height: None,
-                last_has_border: None,
-            });
+            self.display_contexts.insert(
+                (id, tab_id),
+                BufferDisplayContext {
+                    display_map,
+                    highlights: Vec::new(),
+                    selections: vim_buffer::SelectionSet::new(),
+                    sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    last_version: None,
+                    last_layout_width: None,
+                    last_height: None,
+                    last_has_border: None,
+                },
+            );
         }
 
         let buffer = self.inner.get_mut(id)?;
@@ -244,14 +262,13 @@ impl BufferDisplayContext {
         let window_size = height.max(24) * 2;
         let end_row = (cursor_row + window_size).min(snapshot.row_count());
 
-        let mut display_map = display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
+        let mut display_map =
+            display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
         let cursor_anchor = selections.primary().head();
-        let display_cursor = display_map.snapshot().anchor_to_display_point(cursor_anchor);
-        display_map.scroll_to_cursor(
-            display_cursor,
-            height as i32,
-            wrap_width as i32,
-        );
+        let display_cursor = display_map
+            .snapshot()
+            .anchor_to_display_point(cursor_anchor);
+        display_map.scroll_to_cursor(display_cursor, height as i32, wrap_width as i32);
         Self {
             display_map,
             highlights: Vec::new(),
@@ -264,9 +281,16 @@ impl BufferDisplayContext {
         }
     }
 
-    pub fn update(&mut self, snapshot: text::BufferSnapshot, layout_width: u32, height: u32, has_border: bool) {
+    pub fn update(
+        &mut self,
+        snapshot: text::BufferSnapshot,
+        layout_width: u32,
+        height: u32,
+        has_border: bool,
+    ) {
         // Obsolete any pending async updates
-        self.sequence.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+        self.sequence
+            .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
 
         self.last_version = Some(snapshot.version.clone());
         self.last_layout_width = Some(layout_width);
@@ -290,12 +314,12 @@ impl BufferDisplayContext {
         self.display_map.set_wrap_width(Some(wrap_width));
         if !self.selections.selections.is_empty() {
             let cursor_anchor = self.selections.primary().head();
-            let display_cursor = self.display_map.snapshot().anchor_to_display_point(cursor_anchor);
-            self.display_map.scroll_to_cursor(
-                display_cursor,
-                height as i32,
-                wrap_width as i32,
-            );
+            let display_cursor = self
+                .display_map
+                .snapshot()
+                .anchor_to_display_point(cursor_anchor);
+            self.display_map
+                .scroll_to_cursor(display_cursor, height as i32, wrap_width as i32);
         }
     }
 
@@ -346,7 +370,8 @@ impl BufferDisplayContext {
                 let border_width = if has_border { 2 } else { 0 };
                 let wrap_width = layout_width.saturating_sub(gutter_width + border_width);
 
-                let display_map = display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
+                let display_map =
+                    display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
                 (display_map, height, layout_width)
             },
         );

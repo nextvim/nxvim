@@ -1,20 +1,6 @@
+use text::{Point, ToPoint};
 use vim_buffer::BufferId;
 use vim_ui::{Rect, Renderer, TextView, UIContext, View, WindowId};
-use text::{Point, ToPoint};
-
-#[derive(Clone, Debug)]
-pub struct MainWindowState {
-    pub window_buffers: std::collections::HashMap<WindowId, BufferId>,
-}
-
-impl MainWindowState {
-    pub fn new() -> Self {
-        let mut window_buffers = std::collections::HashMap::new();
-        // The initial editor window is WindowId::new(3)
-        window_buffers.insert(WindowId::new(3), BufferId::new(1).unwrap());
-        Self { window_buffers }
-    }
-}
 
 pub struct MainWindowView {
     inner: TextView,
@@ -69,11 +55,11 @@ pub fn build_text(
 
     let tab_id = crate::app::buffer_manager::TabId(win_id.get());
 
-
     let mut rows = Vec::new();
     let mut saved_cursor = None;
     if let (Some(display_context), Ok(buffer)) = (
-        app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
+        app.buffer_manager
+            .get_buffer_display_context(buffer_id, tab_id),
         app.buffer_manager.get_buffer(buffer_id),
     ) {
         let display_map_snapshot = display_context.display_map.snapshot();
@@ -99,9 +85,11 @@ pub fn build_text(
                 let selection_state = if display_context.selections.selections.is_empty() {
                     vim_buffer::SelectionCellState::default()
                 } else {
-                    display_context
-                        .selections
-                        .is_selected(pt.row, pt.column, buffer.as_text_buffer())
+                    display_context.selections.is_selected(
+                        pt.row,
+                        pt.column,
+                        buffer.as_text_buffer(),
+                    )
                 };
 
                 if win_id == active_id && selection_state.at_cursor_head {
@@ -186,23 +174,26 @@ pub fn build_text(
                 let cursor_anchor = display_context.selections.primary().head();
                 let display_snapshot = display_context.display_map.snapshot();
                 let original_buffer = display_snapshot.buffer_snapshot();
-                let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
-                    display_snapshot.anchor_to_display_point(cursor_anchor)
-                } else {
-                    let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
-                    let max_row = original_buffer.row_count().saturating_sub(1);
-                    let row = point.row.min(max_row);
-                    let col = if row < original_buffer.row_count() {
-                        point.column.min(original_buffer.line_len(row))
+                let display_cursor =
+                    if original_buffer.version == buffer.snapshot().as_inner().version {
+                        display_snapshot.anchor_to_display_point(cursor_anchor)
                     } else {
-                        0
+                        let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
+                        let max_row = original_buffer.row_count().saturating_sub(1);
+                        let row = point.row.min(max_row);
+                        let col = if row < original_buffer.row_count() {
+                            point.column.min(original_buffer.line_len(row))
+                        } else {
+                            0
+                        };
+                        let clipped_point = Point { row, column: col };
+                        display_snapshot.point_to_display_point(clipped_point)
                     };
-                    let clipped_point = Point { row, column: col };
-                    display_snapshot.point_to_display_point(clipped_point)
-                };
                 let scroll_y = display_context.display_map.scroll_y;
                 let scroll_x = display_context.display_map.scroll_x;
-                if display_cursor.row() >= scroll_y && display_cursor.row() < scroll_y + inner_rect.height as u32 {
+                if display_cursor.row() >= scroll_y
+                    && display_cursor.row() < scroll_y + inner_rect.height as u32
+                {
                     let screen_row = display_cursor.row() - scroll_y;
                     let screen_col = display_cursor.column().saturating_sub(scroll_x) + 4;
                     Some(vim_ui::model::TextCursor {

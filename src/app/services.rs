@@ -1,5 +1,5 @@
-use vim_buffer::BufferId;
 use crate::app::buffer_manager::TabId;
+use vim_buffer::BufferId;
 
 pub use textmate as highlight;
 pub use vim_clipboard as clipboard;
@@ -29,7 +29,8 @@ pub struct Services {
     pub macros: macros::MacroRecorder,
     pub treesitter: treesitter::TreeSitterService,
     pub results: Vec<background_worker::BackgroundResult>,
-    pub task_metadata: std::sync::Mutex<std::collections::HashMap<background_worker::TaskId, (OwnerId, TaskType)>>,
+    pub task_metadata:
+        std::sync::Mutex<std::collections::HashMap<background_worker::TaskId, (OwnerId, TaskType)>>,
 }
 
 impl Services {
@@ -78,8 +79,13 @@ impl Services {
         T: std::any::Any + Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        let task_id = self.background_workers.spawn_task(worker_name, sequence, job)?;
-        self.task_metadata.lock().unwrap().insert(task_id, (owner_id, task_type));
+        let task_id = self
+            .background_workers
+            .spawn_task(worker_name, sequence, job)?;
+        self.task_metadata
+            .lock()
+            .unwrap()
+            .insert(task_id, (owner_id, task_type));
         Some(task_id)
     }
 
@@ -95,8 +101,13 @@ impl Services {
         T: std::any::Any + Send + 'static,
         F: FnOnce(background_worker::CancellationToken) -> Option<T> + Send + 'static,
     {
-        let task_id = self.background_workers.spawn_cancellable_task(worker_name, sequence, job)?;
-        self.task_metadata.lock().unwrap().insert(task_id, (owner_id, task_type));
+        let task_id = self
+            .background_workers
+            .spawn_cancellable_task(worker_name, sequence, job)?;
+        self.task_metadata
+            .lock()
+            .unwrap()
+            .insert(task_id, (owner_id, task_type));
         Some(task_id)
     }
 }

@@ -19,7 +19,9 @@ impl View for CommandLineView {
         context: &dyn UIContext,
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
-        let content = context.get_status_message().unwrap_or_else(|| self.content.clone());
+        let content = context
+            .get_status_message()
+            .unwrap_or_else(|| self.content.clone());
         renderer.move_to(area.x, area.y)?;
         renderer.print(&content)?;
         let remaining = (area.width as usize).saturating_sub(content.len());

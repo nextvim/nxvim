@@ -1,5 +1,5 @@
-use vim_ui::{Rect, Renderer, UIContext, View};
 use vim_ui::views::tabline::TabLineView as VimTabLineView;
+use vim_ui::{Rect, Renderer, UIContext, View};
 
 pub struct TabLineView {
     inner: VimTabLineView,
