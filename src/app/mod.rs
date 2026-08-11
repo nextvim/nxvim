@@ -411,7 +411,7 @@ impl AppContext {
             }
 
             let text_model =
-                views::mainwindow::build_text(app, win_id, buffer_id, active_id, width, height);
+                views::textview::build_text(app, win_id, buffer_id, active_id, width, height);
             if win_id == active_id {
                 if let Some(cursor) = text_model.cursor {
                     self.active_cursor =
@@ -713,9 +713,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 {
                                     if let Some(w) = app.ui.window_mut(new_win_id) {
                                         w.set_title("MAIN WINDOW".to_string());
-                                        w.set_view(Box::new(
-                                            crate::app::views::MainWindowView::new(new_win_id),
-                                        ));
+                                        w.set_view(Box::new(crate::app::views::TextView::new(
+                                            new_win_id,
+                                        )));
                                     }
                                     app.buffer_manager
                                         .window_buffers
@@ -733,9 +733,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 {
                                     if let Some(w) = app.ui.window_mut(new_win_id) {
                                         w.set_title("MAIN WINDOW".to_string());
-                                        w.set_view(Box::new(
-                                            crate::app::views::MainWindowView::new(new_win_id),
-                                        ));
+                                        w.set_view(Box::new(crate::app::views::TextView::new(
+                                            new_win_id,
+                                        )));
                                     }
                                     app.buffer_manager
                                         .window_buffers

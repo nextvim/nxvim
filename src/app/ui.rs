@@ -23,7 +23,7 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
-        w.set_view(Box::new(crate::app::views::MainWindowView::new(main_id)));
+        w.set_view(Box::new(crate::app::views::TextView::new(main_id)));
     }
     if let Some(w) = ui.window_mut(right_id) {
         w.set_title("RIGHT PANEL".to_string());

@@ -1,20 +1,20 @@
 use text::{Point, ToPoint};
 use vim_buffer::BufferId;
-use vim_ui::{Rect, Renderer, TextView, UIContext, View, WindowId};
+use vim_ui::{Rect, Renderer, UIContext, View, WindowId};
 
-pub struct MainWindowView {
-    inner: TextView,
+pub struct TextView {
+    inner: vim_ui::TextView,
 }
 
-impl MainWindowView {
+impl TextView {
     pub const fn new(window_id: WindowId) -> Self {
         Self {
-            inner: TextView::new(window_id),
+            inner: vim_ui::TextView::new(window_id),
         }
     }
 }
 
-impl View for MainWindowView {
+impl View for TextView {
     fn draw(
         &self,
         area: Rect,
