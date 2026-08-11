@@ -42,6 +42,59 @@ impl Editor {
         Ok(new_mode)
     }
 
+    pub fn enter_mode(
+        &self,
+        mode: Mode,
+        previous_mode: Mode,
+        buffer: &mut Buffer,
+        buffer_context: &mut BufferContext,
+        buffer_display_context: &mut BufferDisplayContext,
+    ) {
+        if previous_mode == mode {
+            buffer_display_context
+                .selections
+                .clear_selections(buffer.as_text_buffer());
+            return;
+        }
+
+        if previous_mode == Mode::VisualBlock {
+            buffer_display_context.selections.end_block();
+        }
+        if previous_mode == Mode::VisualLine {
+            buffer_display_context.selections.end_line();
+        }
+
+        if mode == Mode::VisualBlock {
+            buffer_display_context
+                .selections
+                .begin_block(buffer.as_text_buffer());
+        }
+        if mode == Mode::VisualLine {
+            buffer_display_context
+                .selections
+                .begin_line(buffer.as_text_buffer());
+        }
+    }
+
+    pub fn sync(
+        &self,
+        mode: Mode,
+        buffer: &mut Buffer,
+        buffer_context: &mut BufferContext,
+        buffer_display_context: &mut BufferDisplayContext,
+    ) {
+        if mode == Mode::VisualBlock {
+            buffer_display_context
+                .selections
+                .sync_block(buffer.as_text_buffer());
+        }
+        if mode == Mode::VisualLine {
+            buffer_display_context
+                .selections
+                .sync_line(buffer.as_text_buffer());
+        }
+    }
+
     fn apply_action(
         &self,
         mode: Mode,
@@ -98,6 +151,13 @@ impl Editor {
                 return None;
             }
             Action::SetToNormal => {
+                self.enter_mode(
+                    Mode::Normal,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Normal);
             }
             Action::SetToInsert => {
@@ -116,12 +176,26 @@ impl Editor {
                         );
                     }
                 }
+                self.enter_mode(
+                    Mode::Insert,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Insert);
             }
             Action::SetToAppendEndOfLine => {
                 buffer_display_context
                     .selections
                     .move_to_end_of_line(false, buffer.as_text_buffer());
+                self.enter_mode(
+                    Mode::Insert,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Insert);
             }
             Action::SetToOpenLineBelow { count } => {
@@ -165,6 +239,13 @@ impl Editor {
                 buffer_display_context
                     .selections
                     .update(buffer.as_text_buffer(), &next);
+                self.enter_mode(
+                    Mode::Insert,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Insert);
             }
             Action::SetToOpenLineAbove { count } => {
@@ -208,21 +289,56 @@ impl Editor {
                 buffer_display_context
                     .selections
                     .update(buffer.as_text_buffer(), &next);
+                self.enter_mode(
+                    Mode::Insert,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Insert);
             }
             Action::SetToVisual => {
+                self.enter_mode(
+                    Mode::Visual,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Visual);
             }
             Action::SetToInsertStartOfLineNonSpace => {
                 buffer_display_context
                     .selections
                     .move_to_start_of_line_non_space(false, buffer.as_text_buffer());
+                self.enter_mode(
+                    Mode::Insert,
+                    mode,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::Insert);
             }
             Action::SetToVisualLine => {
+                self.enter_mode(
+                    Mode::VisualLine,
+                    Mode::Normal,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::VisualLine);
             }
             Action::SetToVisualBlock => {
+                self.enter_mode(
+                    Mode::VisualBlock,
+                    Mode::Normal,
+                    buffer,
+                    buffer_context,
+                    buffer_display_context,
+                );
                 return Some(Mode::VisualBlock);
             }
             Action::SetToCommand
@@ -236,26 +352,24 @@ impl Editor {
             }
             Action::MarkJump { ch, select } => {
                 if let Some(anchor) = buffer.marks().get(*ch) {
-                    let cursors = buffer_display_context.selections.selections.clone();
-                    for cursor in cursors.iter() {
-                        let start = if *select {
-                            cursor.start.clone()
-                        } else {
-                            anchor.clone()
-                        };
-                        let new_selection = Selection {
-                            id: cursor.id,
-                            start,
-                            end: anchor.clone(),
-                            reversed: *select
-                                && (buffer.as_text_buffer().offset_for_anchor(&anchor)
-                                    < buffer.as_text_buffer().offset_for_anchor(&cursor.start)),
-                            goal: SelectionGoal::None,
-                        };
-                        buffer_display_context
-                            .selections
-                            .update(buffer.as_text_buffer(), &new_selection);
-                    }
+                    let primary = buffer_display_context.selections.primary();
+                    let start = if *select {
+                        primary.start.clone()
+                    } else {
+                        anchor.clone()
+                    };
+                    let new_selection = Selection {
+                        id: primary.id,
+                        start: start.clone(),
+                        end: anchor.clone(),
+                        reversed: *select
+                            && (buffer.as_text_buffer().offset_for_anchor(&anchor)
+                                < buffer.as_text_buffer().offset_for_anchor(&primary.start)),
+                        goal: SelectionGoal::None,
+                    };
+                    buffer_display_context
+                        .selections
+                        .update(buffer.as_text_buffer(), &new_selection);
                 }
             }
             Action::MoveLeft { count, select } => {
@@ -1132,6 +1246,8 @@ impl Editor {
             }
             _ => {}
         }
+
+        self.sync(mode, buffer, buffer_context, buffer_display_context);
 
         let mut recursive_mode = None;
         if next_action != Action::NoOp {
