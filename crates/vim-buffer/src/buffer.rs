@@ -5,6 +5,7 @@ use crate::{
 };
 use clock::ReplicaId;
 use std::{num::NonZeroU64, path::Path, sync::Arc, time::Duration};
+use text::Anchor;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BufferId(NonZeroU64);
@@ -189,6 +190,15 @@ impl Buffer {
         let snapshot = self.snapshot();
         let offset = snapshot.validate_offset(offset)?;
         let anchor = self.text.anchor_before(offset);
+        self.marks.set(name, anchor)?;
+        Ok(())
+    }
+
+    pub fn set_mark_anchor(
+        &mut self,
+        name: char,
+        anchor: Anchor,
+    ) -> Result<(), crate::BufferError> {
         self.marks.set(name, anchor)?;
         Ok(())
     }

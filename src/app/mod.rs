@@ -7,6 +7,7 @@ pub mod ui;
 pub mod views;
 
 use text::{Point, ToOffset, ToPoint};
+use vim_input::Action;
 
 pub struct App {
     pub script: script::ScriptRuntime,
@@ -184,7 +185,8 @@ impl App {
             })
             .unwrap_or_else(|| "[No Name]".to_string());
 
-        let left = format!(" {} [{}]", mode, buf_name);
+        // let left = format!(" {} [{}]", mode, buf_name);
+        let left = format!("{:?}", self.status_message);
         let cursor_str = "1:5".to_string(); // fallback/consistent display position row 1, column 5 (row 0, col 4 1-indexed)
         let right = format!("{} | utf-8 | rust ", cursor_str);
 

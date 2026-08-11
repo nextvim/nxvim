@@ -230,6 +230,34 @@ impl Editor {
             | Action::SetToCommandSearchBackward => {
                 return Some(Mode::Command);
             }
+            Action::MarkSet { ch } => {
+                let head = buffer_display_context.selections.primary().head();
+                _ = buffer.set_mark_anchor(*ch, head);
+            }
+            Action::MarkJump { ch, select } => {
+                if let Some(anchor) = buffer.marks().get(*ch) {
+                    let cursors = buffer_display_context.selections.selections.clone();
+                    for cursor in cursors.iter() {
+                        let start = if *select {
+                            cursor.start.clone()
+                        } else {
+                            anchor.clone()
+                        };
+                        let new_selection = Selection {
+                            id: cursor.id,
+                            start,
+                            end: anchor.clone(),
+                            reversed: *select
+                                && (buffer.as_text_buffer().offset_for_anchor(&anchor)
+                                    < buffer.as_text_buffer().offset_for_anchor(&cursor.start)),
+                            goal: SelectionGoal::None,
+                        };
+                        buffer_display_context
+                            .selections
+                            .update(buffer.as_text_buffer(), &new_selection);
+                    }
+                }
+            }
             Action::MoveLeft { count, select } => {
                 buffer_display_context.selections.move_left(
                     *select,

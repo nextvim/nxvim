@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use text::ToPoint;
 use vim_buffer::{BufferId, BufferManager as VimBufferManager};
+use vim_ui::Anchor;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TabId(pub u64);
@@ -327,6 +328,7 @@ impl BufferDisplayContext {
         }
     }
 
+    /*
     pub fn update_async(
         &mut self,
         snapshot: text::BufferSnapshot,
@@ -380,4 +382,5 @@ impl BufferDisplayContext {
             },
         );
     }
+    */
 }
