@@ -69,3 +69,4 @@ impl MarkSet {
 fn is_buffer_mark(name: char) -> bool {
     name.is_ascii_lowercase() || matches!(name, '\'' | '[' | ']' | '<' | '>' | '^' | '.')
 }
+

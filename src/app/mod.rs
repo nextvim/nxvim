@@ -77,6 +77,7 @@ impl App {
             .map(|(&k, &v)| (k, v))
             .collect();
 
+        // Rebuild the text models
         for (win_id, buffer_id) in window_buffers {
             let tab_id = crate::app::buffer_manager::TabId(win_id.get());
             let win_rect = self
@@ -449,6 +450,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     buffered_renderer.flush(&mut out)?;
     out.flush()?;
 
+    let mut should_redraw = true;
+
     'main_loop: loop {
         if app.services.poll() {
             app.update_tasks();
@@ -496,6 +499,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let new_rect = vim_ui::Rect::new(0, 0, w, h);
                 app.ui.resize(new_rect);
                 buffered_renderer.resize(w, h);
+                should_redraw = true;
             }
 
             if let Some(resolved) = app.controller.feed_event(ev) {
@@ -504,6 +508,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(ref resolved) = resolved_action {
+            should_redraw = true;
             match resolved {
                 ControllerAction::Execute { action, register } => {
                     let mut msg = format!("[{:?}] Action: {:?}", app.controller.mode(), action);
@@ -599,6 +604,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                         .window(current_id)
                                         .map_or(false, |w| w.title() == "COMMAND LINE");
                                     if is_current_cmd {
+                                        app.controller.set_mode(vim_input::Mode::Normal);
                                         let mut focused = false;
                                         if let Some(prev_id) = app.ui.focus_manager().previous_id()
                                         {
@@ -787,7 +793,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if resolved_action.is_some() {
+        if should_redraw {
             // Redraw layout with dynamic context
             let active_rect = app.ui.screen_rect();
             app.update(active_rect.width, active_rect.height);
