@@ -2,10 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use text::ToPoint;
 use vim_buffer::{BufferId, BufferManager as VimBufferManager};
-use vim_ui::Anchor;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TabId(pub u64);
+use vim_ui::WindowId;
 
 pub struct BufferContext {
     pub treesitter: Result<vim_treesitter::SyntaxTree, String>,
@@ -26,7 +23,7 @@ pub struct BufferDisplayContext {
 pub struct BufferManager {
     inner: VimBufferManager,
     contexts: HashMap<BufferId, BufferContext>,
-    display_contexts: HashMap<(BufferId, TabId), BufferDisplayContext>,
+    display_contexts: HashMap<(BufferId, WindowId), BufferDisplayContext>,
     pub window_buffers: HashMap<vim_ui::WindowId, BufferId>,
 }
 
@@ -168,38 +165,39 @@ impl BufferManager {
     pub fn get_buffer_display_context(
         &self,
         buffer_id: BufferId,
-        tab_id: TabId,
+        window_id: WindowId,
     ) -> Option<&BufferDisplayContext> {
-        self.display_contexts.get(&(buffer_id, tab_id))
+        self.display_contexts.get(&(buffer_id, window_id))
     }
 
     pub fn get_buffer_display_context_mut(
         &mut self,
         buffer_id: BufferId,
-        tab_id: TabId,
+        window_id: WindowId,
     ) -> Option<&mut BufferDisplayContext> {
-        self.display_contexts.get_mut(&(buffer_id, tab_id))
+        self.display_contexts.get_mut(&(buffer_id, window_id))
     }
 
     pub fn set_buffer_display_context(
         &mut self,
         buffer_id: BufferId,
-        tab_id: TabId,
+        window_id: WindowId,
         context: BufferDisplayContext,
     ) {
-        self.display_contexts.insert((buffer_id, tab_id), context);
+        self.display_contexts
+            .insert((buffer_id, window_id), context);
     }
 
     pub fn display_contexts_mut(
         &mut self,
-    ) -> &mut HashMap<(BufferId, TabId), BufferDisplayContext> {
+    ) -> &mut HashMap<(BufferId, WindowId), BufferDisplayContext> {
         &mut self.display_contexts
     }
 
     pub fn with_mut<F, R>(
         &mut self,
         id: BufferId,
-        tab_id: TabId,
+        window_id: WindowId,
         f: F,
     ) -> Result<R, vim_buffer::BufferError>
     where
@@ -214,13 +212,13 @@ impl BufferManager {
                 },
             );
         }
-        if !self.display_contexts.contains_key(&(id, tab_id)) {
+        if !self.display_contexts.contains_key(&(id, window_id)) {
             let buffer = self.inner.get(id)?;
             let snapshot = buffer.snapshot().as_inner().clone();
             let end_row = 100.min(snapshot.row_count());
             let display_map = display_map::DisplayMap::new_windowed(snapshot, None, 0..end_row);
             self.display_contexts.insert(
-                (id, tab_id),
+                (id, window_id),
                 BufferDisplayContext {
                     display_map,
                     highlights: Vec::new(),
@@ -236,7 +234,7 @@ impl BufferManager {
 
         let buffer = self.inner.get_mut(id)?;
         let context = self.contexts.get_mut(&id).unwrap();
-        let display_context = self.display_contexts.get_mut(&(id, tab_id)).unwrap();
+        let display_context = self.display_contexts.get_mut(&(id, window_id)).unwrap();
 
         Ok(f(buffer, context, display_context))
     }
@@ -336,7 +334,7 @@ impl BufferDisplayContext {
         height: u32,
         has_border: bool,
         buffer_id: vim_buffer::BufferId,
-        tab_id: crate::app::buffer_manager::TabId,
+        window_id: crate::app::buffer_manager::WindowId,
         services: &crate::app::services::Services,
     ) {
         if self.last_version.as_ref() == Some(&snapshot.version)
@@ -354,7 +352,7 @@ impl BufferDisplayContext {
 
         let owner_id = crate::app::services::OwnerId {
             buffer_id: Some(buffer_id),
-            tab_id: Some(tab_id),
+            window_id: Some(window_id),
         };
         let sequence = self.sequence.clone();
         let cursor_row = if !self.selections.selections.is_empty() {

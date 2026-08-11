@@ -53,13 +53,11 @@ pub fn build_text(
         win_rect
     };
 
-    let tab_id = crate::app::buffer_manager::TabId(win_id.get());
-
     let mut rows = Vec::new();
     let mut saved_cursor = None;
     if let (Some(display_context), Ok(buffer)) = (
         app.buffer_manager
-            .get_buffer_display_context(buffer_id, tab_id),
+            .get_buffer_display_context(buffer_id, win_id),
         app.buffer_manager.get_buffer(buffer_id),
     ) {
         let display_map_snapshot = display_context.display_map.snapshot();
@@ -160,7 +158,7 @@ pub fn build_text(
             saved_cursor
         } else if let (Some(display_context), Ok(buffer)) = (
             app.buffer_manager
-                .get_buffer_display_context(buffer_id, tab_id),
+                .get_buffer_display_context(buffer_id, win_id),
             app.buffer_manager.get_buffer(buffer_id),
         ) {
             let cursor_shape = if app.controller.mode() == vim_input::Mode::Insert {

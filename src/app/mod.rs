@@ -79,7 +79,6 @@ impl App {
 
         // Rebuild the text models
         for (win_id, buffer_id) in window_buffers {
-            let tab_id = crate::app::buffer_manager::TabId(win_id.get());
             let win_rect = self
                 .ui
                 .computed_layout()
@@ -110,7 +109,7 @@ impl App {
             if let Some(snapshot) = snapshot {
                 if let Some(display_context) = self
                     .buffer_manager
-                    .get_buffer_display_context_mut(buffer_id, tab_id)
+                    .get_buffer_display_context_mut(buffer_id, win_id)
                 {
                     display_context.update(
                         snapshot,
@@ -129,7 +128,7 @@ impl App {
                     );
                     self.buffer_manager.set_buffer_display_context(
                         buffer_id,
-                        tab_id,
+                        win_id,
                         display_context,
                     );
                 }
@@ -138,11 +137,11 @@ impl App {
 
         // Rebuild TabLineView
         let tabline_win_id = self.tabline_id;
-        let current_tab_ids = self.buffer_manager.listed();
+        let current_win_ids = self.buffer_manager.listed();
         let active_win = self.ui.focused_window_id();
         let current_active_tab = self.buffer_manager.window_buffers.get(&active_win).copied();
 
-        let tabs: Vec<String> = current_tab_ids
+        let tabs: Vec<String> = current_win_ids
             .iter()
             .map(|id| {
                 if let Ok(buf) = self.buffer_manager.get_buffer(*id) {
@@ -158,7 +157,7 @@ impl App {
             .collect();
 
         let active_index = current_active_tab
-            .and_then(|active_id| current_tab_ids.iter().position(|&id| id == active_id))
+            .and_then(|active_id| current_win_ids.iter().position(|&id| id == active_id))
             .unwrap_or(0);
 
         if let Some(w) = self.ui.window_mut(tabline_win_id) {
@@ -235,7 +234,7 @@ impl App {
                     }
                     TaskType::Highlight => {
                         if let Ok(data) = result.downcast::<Vec<textmate::HighlightSpan>>() {
-                            if let Some(tid) = owner.tab_id {
+                            if let Some(tid) = owner.window_id {
                                 if let Some(bid) = owner.buffer_id {
                                     if let Some(display_context) =
                                         self.buffer_manager.get_buffer_display_context_mut(bid, tid)
@@ -258,7 +257,7 @@ impl App {
                         if let Ok((display_map, height, layout_width)) =
                             result.downcast::<(display_map::DisplayMap, u32, u32)>()
                         {
-                            if let Some(tid) = owner.tab_id {
+                            if let Some(tid) = owner.window_id {
                                 if let Some(bid) = owner.buffer_id {
                                     let current_snapshot = self
                                         .buffer_manager
@@ -518,13 +517,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     app.status_message = Some(msg);
 
                     let active_id = app.ui.focused_window_id();
-                    let tab_id = crate::app::buffer_manager::TabId(active_id.get());
                     let active_buf = app.buffer_manager.window_buffers.get(&active_id).copied();
                     if let Some(buf_id) = active_buf {
                         let mut next_mode = None;
                         let _ = app.buffer_manager.with_mut(
                             buf_id,
-                            tab_id,
+                            active_id,
                             |buffer, context, display_context| {
                                 if let Ok(mode) = app.editor.execute(
                                     app.controller.mode(),
@@ -636,10 +634,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                 let active_buf =
                                     app.buffer_manager.window_buffers.get(&active_id).copied();
                                 if let Some(buf_id) = active_buf {
-                                    let tab_id = crate::app::buffer_manager::TabId(active_id.get());
                                     if let (Some(display_context), Ok(buffer)) = (
                                         app.buffer_manager
-                                            .get_buffer_display_context(buf_id, tab_id),
+                                            .get_buffer_display_context(buf_id, active_id),
                                         app.buffer_manager.get_buffer(buf_id),
                                     ) {
                                         let current_row = display_context

@@ -1,5 +1,5 @@
-use crate::app::buffer_manager::TabId;
 use vim_buffer::BufferId;
+use vim_ui::WindowId;
 
 pub use textmate as highlight;
 pub use vim_clipboard as clipboard;
@@ -18,7 +18,7 @@ pub enum TaskType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OwnerId {
     pub buffer_id: Option<BufferId>,
-    pub tab_id: Option<TabId>,
+    pub window_id: Option<WindowId>,
 }
 
 pub struct Services {
