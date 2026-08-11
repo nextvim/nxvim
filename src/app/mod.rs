@@ -7,10 +7,9 @@ pub mod ui;
 pub mod views;
 
 use text::{Point, ToOffset, ToPoint};
-use vim_input::Action;
 
 pub struct App {
-    pub runtime: script::ScriptRuntime,
+    pub script: script::ScriptRuntime,
     pub buffer_manager: buffer_manager::BufferManager,
     pub controller: input::InputController,
     pub ui: ui::Ui,
@@ -26,7 +25,7 @@ impl App {
         let mut ui = ui::Ui::new(ui::Rect::new(0, 0, 80, 24));
         let (tabline_id, status_id) = ui::setup_initial_layout(&mut ui).unwrap();
         let mut app = Self {
-            runtime: script::ScriptRuntime::new(),
+            script: script::ScriptRuntime::new(),
             buffer_manager: buffer_manager::BufferManager::new(),
             controller: input::InputController::new(vim_input::Mode::Normal),
             ui,
@@ -185,8 +184,7 @@ impl App {
             })
             .unwrap_or_else(|| "[No Name]".to_string());
 
-        // let left = format!(" {} [{}]", mode, buf_name);
-        let left = format!("{:?}", self.status_message);
+        let left = format!(" {} [{}]", mode, buf_name);
         let cursor_str = "1:5".to_string(); // fallback/consistent display position row 1, column 5 (row 0, col 4 1-indexed)
         let right = format!("{} | utf-8 | rust ", cursor_str);
 
@@ -320,7 +318,7 @@ impl App {
     }
 }
 
-struct EditorUIContext {
+struct AppContext {
     text_models: std::collections::HashMap<vim_ui::WindowId, vim_ui::TextViewModel>,
     active_buffer_id: Option<vim_ui::BufferId>,
     buffer_ids: Vec<vim_ui::BufferId>,
@@ -330,7 +328,7 @@ struct EditorUIContext {
     status_message: Option<String>,
 }
 
-impl vim_ui::UIContext for EditorUIContext {
+impl vim_ui::UIContext for AppContext {
     fn get_buffer_model(&self, _id: vim_ui::BufferId) -> Option<vim_ui::BufferViewModel<'_>> {
         None
     }
@@ -360,7 +358,7 @@ impl vim_ui::UIContext for EditorUIContext {
     }
 }
 
-impl EditorUIContext {
+impl AppContext {
     pub fn new() -> Self {
         Self {
             text_models: std::collections::HashMap::new(),
@@ -446,7 +444,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Draw the initial layout
     app.update(rect.width, rect.height);
-    let mut context = EditorUIContext::new();
+    let mut context = AppContext::new();
     context.build(&app, rect.width, rect.height);
     app.ui.draw(&context, &mut buffered_renderer)?;
     buffered_renderer.flush(&mut out)?;
@@ -470,7 +468,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut resolved_action: Option<input::ControllerAction> = None;
 
         let cmds: Vec<script::EditorCommand> =
-            std::iter::from_fn(|| app.runtime.try_next_command()).collect();
+            std::iter::from_fn(|| app.script.try_next_command()).collect();
         for cmd in cmds {
             match cmd {
                 script::EditorCommand::Quit => {
@@ -665,7 +663,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                                 .as_rope()
                                                 .chunks_in_range(start..end)
                                                 .collect();
-                                            let _ = app.runtime.execute(&row_text);
+                                            let _ = app.script.execute(&row_text);
                                         }
                                     }
                                 }
@@ -708,47 +706,42 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Action::SplitHorizontal { .. } => {
                             let active_id = app.ui.focused_window_id();
-                            let current_buf = app
-                                .buffer_manager
-                                .window_buffers
-                                .get(&active_id)
-                                .copied()
-                                .unwrap_or(vim_buffer::BufferId::new(0).unwrap());
-
-                            if let Ok(new_win_id) = app.ui.split_focused(vim_ui::SplitAxis::Rows) {
-                                if let Some(w) = app.ui.window_mut(new_win_id) {
-                                    w.set_title("MAIN WINDOW".to_string());
-                                    w.set_view(Box::new(crate::app::views::MainWindowView::new(
-                                        new_win_id,
-                                    )));
+                            if let Some(buf_id) = app.buffer_manager.window_buffers.get(&active_id)
+                            {
+                                if let Ok(new_win_id) =
+                                    app.ui.split_focused(vim_ui::SplitAxis::Rows)
+                                {
+                                    if let Some(w) = app.ui.window_mut(new_win_id) {
+                                        w.set_title("MAIN WINDOW".to_string());
+                                        w.set_view(Box::new(
+                                            crate::app::views::MainWindowView::new(new_win_id),
+                                        ));
+                                    }
+                                    app.buffer_manager
+                                        .window_buffers
+                                        .insert(new_win_id, *buf_id);
+                                    let _ = app.ui.focus(new_win_id);
                                 }
-                                app.buffer_manager
-                                    .window_buffers
-                                    .insert(new_win_id, current_buf);
-                                let _ = app.ui.focus(new_win_id);
                             }
                         }
                         Action::SplitVertical { .. } => {
                             let active_id = app.ui.focused_window_id();
-                            let current_buf = app
-                                .buffer_manager
-                                .window_buffers
-                                .get(&active_id)
-                                .copied()
-                                .unwrap_or(vim_buffer::BufferId::new(0).unwrap());
-
-                            if let Ok(new_win_id) = app.ui.split_focused(vim_ui::SplitAxis::Columns)
+                            if let Some(buf_id) = app.buffer_manager.window_buffers.get(&active_id)
                             {
-                                if let Some(w) = app.ui.window_mut(new_win_id) {
-                                    w.set_title("MAIN WINDOW".to_string());
-                                    w.set_view(Box::new(crate::app::views::MainWindowView::new(
-                                        new_win_id,
-                                    )));
+                                if let Ok(new_win_id) =
+                                    app.ui.split_focused(vim_ui::SplitAxis::Columns)
+                                {
+                                    if let Some(w) = app.ui.window_mut(new_win_id) {
+                                        w.set_title("MAIN WINDOW".to_string());
+                                        w.set_view(Box::new(
+                                            crate::app::views::MainWindowView::new(new_win_id),
+                                        ));
+                                    }
+                                    app.buffer_manager
+                                        .window_buffers
+                                        .insert(new_win_id, *buf_id);
+                                    let _ = app.ui.focus(new_win_id);
                                 }
-                                app.buffer_manager
-                                    .window_buffers
-                                    .insert(new_win_id, current_buf);
-                                let _ = app.ui.focus(new_win_id);
                             }
                         }
                         Action::FocusLeftWindow => {
