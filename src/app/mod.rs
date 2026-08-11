@@ -10,7 +10,7 @@ use text::{Point, ToOffset, ToPoint};
 use vim_input::Action;
 
 pub struct App {
-    pub script: script::ScriptRuntime,
+    pub runtime: script::ScriptRuntime,
     pub buffer_manager: buffer_manager::BufferManager,
     pub controller: input::InputController,
     pub ui: ui::Ui,
@@ -26,7 +26,7 @@ impl App {
         let mut ui = ui::Ui::new(ui::Rect::new(0, 0, 80, 24));
         let (tabline_id, status_id) = ui::setup_initial_layout(&mut ui).unwrap();
         let mut app = Self {
-            script: script::ScriptRuntime::new(),
+            runtime: script::ScriptRuntime::new(),
             buffer_manager: buffer_manager::BufferManager::new(),
             controller: input::InputController::new(vim_input::Mode::Normal),
             ui,
@@ -320,7 +320,7 @@ impl App {
     }
 }
 
-struct AppContext {
+struct EditorUIContext {
     text_models: std::collections::HashMap<vim_ui::WindowId, vim_ui::TextViewModel>,
     active_buffer_id: Option<vim_ui::BufferId>,
     buffer_ids: Vec<vim_ui::BufferId>,
@@ -330,7 +330,7 @@ struct AppContext {
     status_message: Option<String>,
 }
 
-impl vim_ui::UIContext for AppContext {
+impl vim_ui::UIContext for EditorUIContext {
     fn get_buffer_model(&self, _id: vim_ui::BufferId) -> Option<vim_ui::BufferViewModel<'_>> {
         None
     }
@@ -360,7 +360,7 @@ impl vim_ui::UIContext for AppContext {
     }
 }
 
-impl AppContext {
+impl EditorUIContext {
     pub fn new() -> Self {
         Self {
             text_models: std::collections::HashMap::new(),
@@ -446,7 +446,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Draw the initial layout
     app.update(rect.width, rect.height);
-    let mut context = AppContext::new();
+    let mut context = EditorUIContext::new();
     context.build(&app, rect.width, rect.height);
     app.ui.draw(&context, &mut buffered_renderer)?;
     buffered_renderer.flush(&mut out)?;
@@ -470,7 +470,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut resolved_action: Option<input::ControllerAction> = None;
 
         let cmds: Vec<script::EditorCommand> =
-            std::iter::from_fn(|| app.script.try_next_command()).collect();
+            std::iter::from_fn(|| app.runtime.try_next_command()).collect();
         for cmd in cmds {
             match cmd {
                 script::EditorCommand::Quit => {
@@ -665,7 +665,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                                                 .as_rope()
                                                 .chunks_in_range(start..end)
                                                 .collect();
-                                            let _ = app.script.execute(&row_text);
+                                            let _ = app.runtime.execute(&row_text);
                                         }
                                     }
                                 }
