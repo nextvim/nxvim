@@ -141,6 +141,10 @@ impl BufferManager {
         self.inner.list()
     }
 
+    pub fn listed(&self) -> Vec<BufferId> {
+        self.inner.listed()
+    }
+
     pub fn get_buffer_mut(
         &mut self,
         id: BufferId,

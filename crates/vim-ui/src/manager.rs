@@ -241,7 +241,11 @@ impl Ui {
     }
 
     pub fn find_neighbor(&self, direction: NavigationDirection) -> Option<WindowId> {
-        self.focus_manager.navigate(direction, &self.cached_layout)
+        self.focus_manager.navigate(direction, &self.cached_layout, |id| {
+            self.window_store
+                .get(id)
+                .map_or(true, |w| w.accepts_focus())
+        })
     }
 
     pub fn computed_overlays(
@@ -461,12 +465,13 @@ impl Ui {
             .windows
             .iter()
             .map(|(id, _)| *id)
+            .filter(|&id| self.window_store.get(id).map_or(true, |w| w.accepts_focus()))
             .collect();
         let mut overlays: Vec<_> = self
             .window_store
             .iter()
             .filter_map(|(&id, window)| {
-                (window.is_visible() && self.overlay_manager.is_floating(id)).then_some(id)
+                (window.is_visible() && window.accepts_focus() && self.overlay_manager.is_floating(id)).then_some(id)
             })
             .collect();
         overlays.sort_unstable();

@@ -14,6 +14,8 @@ use vim_script::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EditorCommand {
+    BNext,
+    BPrev,
     Quit,
 }
 
@@ -32,6 +34,26 @@ impl ScriptRuntime {
         host.register_command(CommandDefinition {
             name: "quit".to_owned(),
             minimum_abbreviation: 1,
+            accepts_bang: true,
+            accepts_range: false,
+            accepts_count: false,
+            accepts_register: false,
+            required_capabilities: vec![Capability::Editor],
+        });
+
+        host.register_command(CommandDefinition {
+            name: "bnext".to_owned(),
+            minimum_abbreviation: 2,
+            accepts_bang: true,
+            accepts_range: false,
+            accepts_count: false,
+            accepts_register: false,
+            required_capabilities: vec![Capability::Editor],
+        });
+
+        host.register_command(CommandDefinition {
+            name: "bprev".to_owned(),
+            minimum_abbreviation: 2,
             accepts_bang: true,
             accepts_range: false,
             accepts_count: false,
@@ -130,6 +152,8 @@ impl Host for EditorHost {
         Box::pin(async move {
             let command = match request.command.name.as_str() {
                 "quit" => EditorCommand::Quit,
+                "bnext" => EditorCommand::BNext,
+                "bprev" => EditorCommand::BPrev,
                 name => {
                     return Err(RuntimeError::coded(
                         "E492",

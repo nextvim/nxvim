@@ -46,6 +46,9 @@ impl BufferManager {
             return Ok((id, ManagerOutcome::Existing(id)));
         }
         let id = self.insert_buffer(initial_text.into(), Some(name));
+        if let Some(buf) = self.buffers.get_mut(&id) {
+            buf.set_listed(false);
+        }
         Ok((id, ManagerOutcome::Added(id)))
     }
 

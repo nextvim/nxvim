@@ -6,9 +6,7 @@ pub mod services;
 pub mod ui;
 pub mod views;
 
-use text::{Point, ToPoint};
-
-
+use text::{Point, ToOffset, ToPoint};
 
 pub struct App {
     pub script: script::ScriptRuntime,
@@ -25,9 +23,8 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let mut ui = ui::Ui::new(ui::Rect::new(0, 0, 80, 24));
-        let (tabline_id, status_id) =
-            ui::setup_initial_layout(&mut ui).unwrap();
-        Self {
+        let (tabline_id, status_id) = ui::setup_initial_layout(&mut ui).unwrap();
+        let mut app = Self {
             script: script::ScriptRuntime::new(),
             buffer_manager: buffer_manager::BufferManager::new(),
             controller: input::InputController::new(vim_input::Mode::Normal),
@@ -37,10 +34,42 @@ impl App {
             editor: editor::Editor::new(),
             tabline_id,
             status_id,
-        }
+        };
+        app.init_commandline_buffer();
+        app
+    }
+
+    pub fn init_commandline_buffer(&mut self) {
+        let cmd_id = self
+            .ui
+            .window_store()
+            .iter()
+            .find(|(_, w)| w.title() == "COMMAND LINE")
+            .map(|(&id, _)| id)
+            .expect("COMMAND LINE window must be present in layout");
+
+        let cmd_buf_id = if let Some(buf) = self.buffer_manager.list().iter().find(|&&id| {
+            self.buffer_manager.get_buffer(id).map_or(false, |b| {
+                b.path()
+                    .map_or(false, |p| p.to_string_lossy() == "#commandline")
+            })
+        }) {
+            *buf
+        } else {
+            let (buf_id, _) = self
+                .buffer_manager
+                .create_named("#commandline", "")
+                .expect("Failed to create #commandline buffer");
+            buf_id
+        };
+
+        self.buffer_manager
+            .window_buffers
+            .insert(cmd_id, cmd_buf_id);
     }
 
     pub fn update(&mut self, width: u16, height: u16) {
+        self.init_commandline_buffer();
         let window_buffers: Vec<(vim_ui::WindowId, vim_buffer::BufferId)> = self
             .buffer_manager
             .window_buffers
@@ -108,13 +137,9 @@ impl App {
 
         // Rebuild TabLineView
         let tabline_win_id = self.tabline_id;
-        let current_tab_ids = self.buffer_manager.list();
+        let current_tab_ids = self.buffer_manager.listed();
         let active_win = self.ui.focused_window_id();
-        let current_active_tab = self
-            .buffer_manager
-            .window_buffers
-            .get(&active_win)
-            .copied();
+        let current_active_tab = self.buffer_manager.window_buffers.get(&active_win).copied();
 
         let tabs: Vec<String> = current_tab_ids
             .iter()
@@ -411,6 +436,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let rect = terminal.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
     app.ui = ui::Ui::new(rect);
     let _ = ui::setup_initial_layout(&mut app.ui);
+    app.init_commandline_buffer();
 
     let mut buffered_renderer = BufferedRenderer::new(rect.width, rect.height);
     let mut out = stdout();
@@ -436,7 +462,34 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if event::poll(std::time::Duration::from_millis(50))? {
+        let mut resolved_action: Option<input::ControllerAction> = None;
+
+        let cmds: Vec<script::EditorCommand> =
+            std::iter::from_fn(|| app.script.try_next_command()).collect();
+        for cmd in cmds {
+            match cmd {
+                script::EditorCommand::Quit => {
+                    resolved_action = Some(ControllerAction::Execute {
+                        action: Action::Quit,
+                        register: None,
+                    });
+                }
+                script::EditorCommand::BNext => {
+                    resolved_action = Some(ControllerAction::Execute {
+                        action: Action::NextTab { count: 1 },
+                        register: None,
+                    });
+                }
+                script::EditorCommand::BPrev => {
+                    resolved_action = Some(ControllerAction::Execute {
+                        action: Action::PreviousTab { count: 1 },
+                        register: None,
+                    });
+                }
+            }
+        }
+
+        if resolved_action == None && event::poll(std::time::Duration::from_millis(50))? {
             let ev = event::read()?;
 
             if let event::Event::Resize(w, h) = ev {
@@ -446,170 +499,295 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if let Some(resolved) = app.controller.feed_event(ev) {
-                match resolved {
-                    ControllerAction::Execute { action, register } => {
-                        let mut msg = format!("[{:?}] Action: {:?}", app.controller.mode(), action);
-                        if let Some(r) = register {
-                            msg.push_str(&format!(" (reg: '{}')", r));
-                        }
-                        app.status_message = Some(msg);
+                resolved_action = Some(resolved);
+            }
+        }
 
-                        let active_id = app.ui.focused_window_id();
-                        let tab_id = crate::app::buffer_manager::TabId(active_id.get());
-                        let active_buf = app
-                            .buffer_manager
-                            .window_buffers
-                            .get(&active_id)
-                            .copied();
-                        if let Some(buf_id) = active_buf {
-                            let mut next_mode = None;
-                            let _ = app.buffer_manager.with_mut(
-                                buf_id,
-                                tab_id,
-                                |buffer, context, display_context| {
-                                    if let Ok(mode) = app.editor.execute(
-                                        app.controller.mode(),
-                                        &action,
-                                        buffer,
-                                        context,
-                                        display_context,
-                                        &mut app.services,
+        if let Some(ref resolved) = resolved_action {
+            match resolved {
+                ControllerAction::Execute { action, register } => {
+                    let mut msg = format!("[{:?}] Action: {:?}", app.controller.mode(), action);
+                    if let Some(r) = register {
+                        msg.push_str(&format!(" (reg: '{}')", r));
+                    }
+                    app.status_message = Some(msg);
+
+                    let active_id = app.ui.focused_window_id();
+                    let tab_id = crate::app::buffer_manager::TabId(active_id.get());
+                    let active_buf = app.buffer_manager.window_buffers.get(&active_id).copied();
+                    if let Some(buf_id) = active_buf {
+                        let mut next_mode = None;
+                        let _ = app.buffer_manager.with_mut(
+                            buf_id,
+                            tab_id,
+                            |buffer, context, display_context| {
+                                if let Ok(mode) = app.editor.execute(
+                                    app.controller.mode(),
+                                    &action,
+                                    buffer,
+                                    context,
+                                    display_context,
+                                    &mut app.services,
+                                ) {
+                                    next_mode = mode;
+                                }
+                            },
+                        );
+                        if let Some(m) = next_mode {
+                            app.controller.set_mode(m);
+                        }
+                    }
+
+                    match action {
+                        Action::SetToCommand => {
+                            if let Some(cmd_id) = app
+                                .ui
+                                .window_store()
+                                .iter()
+                                .find(|(_, w)| w.title() == "COMMAND LINE")
+                                .map(|(&id, _)| id)
+                            {
+                                let _ = app.ui.focus(cmd_id);
+                                app.controller.set_mode(vim_input::Mode::Insert);
+                            }
+                        }
+                        Action::Clear => {
+                            let current_id = app.ui.focused_window_id();
+                            let is_current_cmd = app
+                                .ui
+                                .window(current_id)
+                                .map_or(false, |w| w.title() == "COMMAND LINE");
+                            if is_current_cmd {
+                                let mut focused = false;
+                                if let Some(prev_id) = app.ui.focus_manager().previous_id() {
+                                    let is_prev_cmd = app
+                                        .ui
+                                        .window(prev_id)
+                                        .map_or(false, |w| w.title() == "COMMAND LINE");
+                                    if !is_prev_cmd {
+                                        let _ = app.ui.focus(prev_id);
+                                        focused = true;
+                                    }
+                                }
+                                if !focused {
+                                    if let Some(fallback_id) = app
+                                        .ui
+                                        .window_store()
+                                        .iter()
+                                        .find(|(_, w)| {
+                                            w.title() == "MAIN WINDOW" && w.accepts_focus()
+                                        })
+                                        .map(|(&id, _)| id)
+                                    {
+                                        let _ = app.ui.focus(fallback_id);
+                                    }
+                                }
+                            }
+                        }
+                        Action::InsertNewLine { .. } => {
+                            let active_id = app.ui.focused_window_id();
+                            let is_current_cmd = app
+                                .ui
+                                .window(active_id)
+                                .map_or(false, |w| w.title() == "COMMAND LINE");
+                            if is_current_cmd {
+                                // restore focus
+                                {
+                                    let current_id = app.ui.focused_window_id();
+                                    let is_current_cmd = app
+                                        .ui
+                                        .window(current_id)
+                                        .map_or(false, |w| w.title() == "COMMAND LINE");
+                                    if is_current_cmd {
+                                        let mut focused = false;
+                                        if let Some(prev_id) = app.ui.focus_manager().previous_id()
+                                        {
+                                            let is_prev_cmd = app
+                                                .ui
+                                                .window(prev_id)
+                                                .map_or(false, |w| w.title() == "COMMAND LINE");
+                                            if !is_prev_cmd {
+                                                let _ = app.ui.focus(prev_id);
+                                                focused = true;
+                                            }
+                                        }
+                                        if !focused {
+                                            if let Some(fallback_id) = app
+                                                .ui
+                                                .window_store()
+                                                .iter()
+                                                .find(|(_, w)| {
+                                                    w.title() == "MAIN WINDOW" && w.accepts_focus()
+                                                })
+                                                .map(|(&id, _)| id)
+                                            {
+                                                let _ = app.ui.focus(fallback_id);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                let active_buf =
+                                    app.buffer_manager.window_buffers.get(&active_id).copied();
+                                if let Some(buf_id) = active_buf {
+                                    let tab_id = crate::app::buffer_manager::TabId(active_id.get());
+                                    if let (Some(display_context), Ok(buffer)) = (
+                                        app.buffer_manager
+                                            .get_buffer_display_context(buf_id, tab_id),
+                                        app.buffer_manager.get_buffer(buf_id),
                                     ) {
-                                        next_mode = mode;
-                                    }
-                                },
-                            );
-                            if let Some(m) = next_mode {
-                                app.controller.set_mode(m);
-                            }
-                        }
-
-                        match action {
-                            Action::NextTab { .. } => {
-                                let buffers = app.buffer_manager.list();
-                                let active_id = app.ui.focused_window_id();
-                                if let Some(buf_id) = app.buffer_manager.window_buffers.get_mut(&active_id) {
-                                    if !buffers.is_empty() {
-                                        if let Some(pos) =
-                                            buffers.iter().position(|&id| id == *buf_id)
-                                        {
-                                            let next_pos = (pos + 1) % buffers.len();
-                                            *buf_id = buffers[next_pos];
-                                        } else {
-                                            *buf_id = buffers[0];
+                                        let current_row = display_context
+                                            .selections
+                                            .first()
+                                            .unwrap()
+                                            .head()
+                                            .to_point(buffer.as_text_buffer())
+                                            .row;
+                                        if current_row > 0 {
+                                            let target_row = current_row - 1;
+                                            let text_buf = buffer.as_text_buffer();
+                                            let start =
+                                                Point::new(target_row, 0).to_offset(text_buf);
+                                            let end = Point::new(
+                                                target_row,
+                                                text_buf.line_len(target_row),
+                                            )
+                                            .to_offset(text_buf);
+                                            let row_text: String = text_buf
+                                                .as_rope()
+                                                .chunks_in_range(start..end)
+                                                .collect();
+                                            let _ = app.script.execute(&row_text);
                                         }
                                     }
                                 }
                             }
-                            Action::PreviousTab { .. } => {
-                                let buffers = app.buffer_manager.list();
-                                let active_id = app.ui.focused_window_id();
-                                if let Some(buf_id) = app.buffer_manager.window_buffers.get_mut(&active_id) {
-                                    if !buffers.is_empty() {
-                                        if let Some(pos) =
-                                            buffers.iter().position(|&id| id == *buf_id)
-                                        {
-                                            let prev_pos =
-                                                if pos == 0 { buffers.len() - 1 } else { pos - 1 };
-                                            *buf_id = buffers[prev_pos];
-                                        } else {
-                                            *buf_id = buffers[0];
-                                        }
-                                    }
-                                }
-                            }
-                            Action::SplitHorizontal { .. } => {
-                                let active_id = app.ui.focused_window_id();
-                                let current_buf = app
-                                    .buffer_manager
-                                    .window_buffers
-                                    .get(&active_id)
-                                    .copied()
-                                    .unwrap_or(vim_buffer::BufferId::new(1).unwrap());
-
-                                if let Ok(new_win_id) =
-                                    app.ui.split_focused(vim_ui::SplitAxis::Rows)
-                                {
-                                    if let Some(w) = app.ui.window_mut(new_win_id) {
-                                        w.set_title("MAIN WINDOW".to_string());
-                                        w.set_view(Box::new(
-                                            crate::app::views::MainWindowView::new(new_win_id),
-                                        ));
-                                    }
-                                    app.buffer_manager
-                                        .window_buffers
-                                        .insert(new_win_id, current_buf);
-                                    let _ = app.ui.focus(new_win_id);
-                                }
-                            }
-                            Action::SplitVertical { .. } => {
-                                let active_id = app.ui.focused_window_id();
-                                let current_buf = app
-                                    .buffer_manager
-                                    .window_buffers
-                                    .get(&active_id)
-                                    .copied()
-                                    .unwrap_or(vim_buffer::BufferId::new(1).unwrap());
-
-                                if let Ok(new_win_id) =
-                                    app.ui.split_focused(vim_ui::SplitAxis::Columns)
-                                {
-                                    if let Some(w) = app.ui.window_mut(new_win_id) {
-                                        w.set_title("MAIN WINDOW".to_string());
-                                        w.set_view(Box::new(
-                                            crate::app::views::MainWindowView::new(new_win_id),
-                                        ));
-                                    }
-                                    app.buffer_manager
-                                        .window_buffers
-                                        .insert(new_win_id, current_buf);
-                                    let _ = app.ui.focus(new_win_id);
-                                }
-                            }
-                            Action::FocusLeftWindow => {
-                                if let Some(neighbor) =
-                                    app.ui.find_neighbor(vim_ui::NavigationDirection::Left)
-                                {
-                                    let _ = app.ui.focus(neighbor);
-                                }
-                            }
-                            Action::FocusRightWindow => {
-                                if let Some(neighbor) =
-                                    app.ui.find_neighbor(vim_ui::NavigationDirection::Right)
-                                {
-                                    let _ = app.ui.focus(neighbor);
-                                }
-                            }
-                            Action::FocusUpWindow => {
-                                if let Some(neighbor) =
-                                    app.ui.find_neighbor(vim_ui::NavigationDirection::Up)
-                                {
-                                    let _ = app.ui.focus(neighbor);
-                                }
-                            }
-                            Action::FocusDownWindow => {
-                                if let Some(neighbor) =
-                                    app.ui.find_neighbor(vim_ui::NavigationDirection::Down)
-                                {
-                                    let _ = app.ui.focus(neighbor);
-                                }
-                            }
-                            Action::Quit => {
-                                break;
-                            }
-                            _ => {}
                         }
-                    }
-                    ControllerAction::Pending => {
-                        let msg = format!("Pending sequence: {}", app.controller.pending_display());
-                        app.status_message = Some(msg);
-                    }
-                    ControllerAction::Invalid => {
-                        app.status_message = Some("Invalid sequence".to_string());
+                        Action::NextTab { .. } => {
+                            let buffers = app.buffer_manager.listed();
+                            let active_id = app.ui.focused_window_id();
+                            if let Some(buf_id) =
+                                app.buffer_manager.window_buffers.get_mut(&active_id)
+                            {
+                                if !buffers.is_empty() {
+                                    if let Some(pos) = buffers.iter().position(|&id| id == *buf_id)
+                                    {
+                                        let next_pos = (pos + 1) % buffers.len();
+                                        *buf_id = buffers[next_pos];
+                                    } else {
+                                        *buf_id = buffers[0];
+                                    }
+                                }
+                            }
+                        }
+                        Action::PreviousTab { .. } => {
+                            let buffers = app.buffer_manager.listed();
+                            let active_id = app.ui.focused_window_id();
+                            if let Some(buf_id) =
+                                app.buffer_manager.window_buffers.get_mut(&active_id)
+                            {
+                                if !buffers.is_empty() {
+                                    if let Some(pos) = buffers.iter().position(|&id| id == *buf_id)
+                                    {
+                                        let prev_pos =
+                                            if pos == 0 { buffers.len() - 1 } else { pos - 1 };
+                                        *buf_id = buffers[prev_pos];
+                                    } else {
+                                        *buf_id = buffers[0];
+                                    }
+                                }
+                            }
+                        }
+                        Action::SplitHorizontal { .. } => {
+                            let active_id = app.ui.focused_window_id();
+                            let current_buf = app
+                                .buffer_manager
+                                .window_buffers
+                                .get(&active_id)
+                                .copied()
+                                .unwrap_or(vim_buffer::BufferId::new(0).unwrap());
+
+                            if let Ok(new_win_id) = app.ui.split_focused(vim_ui::SplitAxis::Rows) {
+                                if let Some(w) = app.ui.window_mut(new_win_id) {
+                                    w.set_title("MAIN WINDOW".to_string());
+                                    w.set_view(Box::new(crate::app::views::MainWindowView::new(
+                                        new_win_id,
+                                    )));
+                                }
+                                app.buffer_manager
+                                    .window_buffers
+                                    .insert(new_win_id, current_buf);
+                                let _ = app.ui.focus(new_win_id);
+                            }
+                        }
+                        Action::SplitVertical { .. } => {
+                            let active_id = app.ui.focused_window_id();
+                            let current_buf = app
+                                .buffer_manager
+                                .window_buffers
+                                .get(&active_id)
+                                .copied()
+                                .unwrap_or(vim_buffer::BufferId::new(0).unwrap());
+
+                            if let Ok(new_win_id) = app.ui.split_focused(vim_ui::SplitAxis::Columns)
+                            {
+                                if let Some(w) = app.ui.window_mut(new_win_id) {
+                                    w.set_title("MAIN WINDOW".to_string());
+                                    w.set_view(Box::new(crate::app::views::MainWindowView::new(
+                                        new_win_id,
+                                    )));
+                                }
+                                app.buffer_manager
+                                    .window_buffers
+                                    .insert(new_win_id, current_buf);
+                                let _ = app.ui.focus(new_win_id);
+                            }
+                        }
+                        Action::FocusLeftWindow => {
+                            if let Some(neighbor) =
+                                app.ui.find_neighbor(vim_ui::NavigationDirection::Left)
+                            {
+                                let _ = app.ui.focus(neighbor);
+                            }
+                        }
+                        Action::FocusRightWindow => {
+                            if let Some(neighbor) =
+                                app.ui.find_neighbor(vim_ui::NavigationDirection::Right)
+                            {
+                                let _ = app.ui.focus(neighbor);
+                            }
+                        }
+                        Action::FocusUpWindow => {
+                            if let Some(neighbor) =
+                                app.ui.find_neighbor(vim_ui::NavigationDirection::Up)
+                            {
+                                let _ = app.ui.focus(neighbor);
+                            }
+                        }
+                        Action::FocusDownWindow => {
+                            if let Some(neighbor) =
+                                app.ui.find_neighbor(vim_ui::NavigationDirection::Down)
+                            {
+                                let _ = app.ui.focus(neighbor);
+                            }
+                        }
+                        Action::Quit => {
+                            break;
+                        }
+                        _ => {}
                     }
                 }
+                ControllerAction::Pending => {
+                    let msg = format!("Pending sequence: {}", app.controller.pending_display());
+                    app.status_message = Some(msg);
+                }
+                ControllerAction::Invalid => {
+                    app.status_message = Some("Invalid sequence".to_string());
+                }
             }
+        }
 
+        if resolved_action.is_some() {
             // Redraw layout with dynamic context
             let active_rect = app.ui.screen_rect();
             app.update(active_rect.width, active_rect.height);
@@ -617,16 +795,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             app.ui.draw(&context, &mut buffered_renderer)?;
             buffered_renderer.flush(&mut out)?;
             out.flush()?;
-        }
-
-        let cmds: Vec<script::EditorCommand> =
-            std::iter::from_fn(|| app.script.try_next_command()).collect();
-        for cmd in cmds {
-            match cmd {
-                script::EditorCommand::Quit => {
-                    break 'main_loop;
-                }
-            }
         }
     }
 

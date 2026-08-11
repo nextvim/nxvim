@@ -37,9 +37,7 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::CommandLineView::new(
-            "COMMAND LINE",
-        )));
+        w.set_view(Box::new(crate::app::views::CommandLineView::new(cmd_id)));
     }
 
     // Define layout using SlotLayout

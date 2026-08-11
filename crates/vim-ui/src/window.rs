@@ -42,6 +42,9 @@ pub trait View {
     fn cursor_screen_pos(&self, _area: Rect, _context: &dyn UIContext) -> Option<(u16, u16)> {
         None
     }
+    fn accepts_focus(&self) -> bool {
+        true
+    }
 }
 
 pub trait Controller {
@@ -55,6 +58,7 @@ pub struct Window {
     controller: Option<Box<dyn Controller>>,
     visible: bool,
     draw_border: bool,
+    accepts_focus: bool,
 }
 
 impl Window {
@@ -66,6 +70,7 @@ impl Window {
             controller: None,
             visible: true,
             draw_border: true,
+            accepts_focus: true,
         }
     }
 
@@ -79,6 +84,14 @@ impl Window {
 
     pub fn set_title(&mut self, title: impl Into<String>) {
         self.title = title.into();
+    }
+
+    pub fn accepts_focus(&self) -> bool {
+        self.accepts_focus && self.view.as_ref().map(|v| v.accepts_focus()).unwrap_or(true)
+    }
+
+    pub fn set_accepts_focus(&mut self, accepts_focus: bool) {
+        self.accepts_focus = accepts_focus;
     }
 
     pub const fn is_visible(&self) -> bool {

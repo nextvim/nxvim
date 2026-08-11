@@ -1,13 +1,13 @@
-use vim_ui::{Rect, Renderer, UIContext, View};
+use vim_ui::{Rect, Renderer, TextView, UIContext, View, WindowId};
 
 pub struct CommandLineView {
-    pub content: String,
+    inner: TextView,
 }
 
 impl CommandLineView {
-    pub fn new(content: impl Into<String>) -> Self {
+    pub const fn new(window_id: WindowId) -> Self {
         Self {
-            content: content.into(),
+            inner: TextView::new(window_id),
         }
     }
 }
@@ -19,15 +19,10 @@ impl View for CommandLineView {
         context: &dyn UIContext,
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
-        let content = context
-            .get_status_message()
-            .unwrap_or_else(|| self.content.clone());
-        renderer.move_to(area.x, area.y)?;
-        renderer.print(&content)?;
-        let remaining = (area.width as usize).saturating_sub(content.len());
-        if remaining > 0 {
-            renderer.print(&" ".repeat(remaining))?;
-        }
-        Ok(())
+        self.inner.draw(area, context, renderer)
+    }
+
+    fn cursor_screen_pos(&self, area: Rect, context: &dyn UIContext) -> Option<(u16, u16)> {
+        self.inner.cursor_screen_pos(area, context)
     }
 }

@@ -34,6 +34,7 @@ impl FocusManager {
         &self,
         direction: NavigationDirection,
         computed_layout: &ComputedLayout,
+        mut accepts_focus: impl FnMut(WindowId) -> bool,
     ) -> Option<WindowId> {
         let focused_rect = computed_layout.get_rect(self.focused_id)?;
 
@@ -41,6 +42,9 @@ impl FocusManager {
         let mut min_dist = i32::MAX;
         for &(id, rect) in &computed_layout.windows {
             if id == self.focused_id {
+                continue;
+            }
+            if !accepts_focus(id) {
                 continue;
             }
             let (is_in_direction, distance) = match direction {
@@ -118,7 +122,7 @@ mod tests {
             (second, Rect::new(40, 0, 40, 24)),
         ]);
 
-        let target = fm.navigate(NavigationDirection::Left, &layout);
+        let target = fm.navigate(NavigationDirection::Left, &layout, |_| true);
         assert_eq!(target, Some(first));
     }
 }

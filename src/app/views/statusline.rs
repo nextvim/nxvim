@@ -36,4 +36,8 @@ impl View for StatusLineView {
         }
         Ok(())
     }
+
+    fn accepts_focus(&self) -> bool {
+        false
+    }
 }

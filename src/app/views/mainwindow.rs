@@ -101,7 +101,10 @@ pub fn build_text(
                         vim_ui::model::CursorShape::Block
                     };
                     saved_cursor = Some(vim_ui::model::TextCursor {
-                        position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col + 4 },
+                        position: vim_ui::model::DisplayPosition {
+                            row: screen_row,
+                            column: screen_col + 4,
+                        },
                         shape: cursor_shape,
                         visible: true,
                     });
@@ -156,7 +159,8 @@ pub fn build_text(
         if saved_cursor.is_some() {
             saved_cursor
         } else if let (Some(display_context), Ok(buffer)) = (
-            app.buffer_manager.get_buffer_display_context(buffer_id, tab_id),
+            app.buffer_manager
+                .get_buffer_display_context(buffer_id, tab_id),
             app.buffer_manager.get_buffer(buffer_id),
         ) {
             let cursor_shape = if app.controller.mode() == vim_input::Mode::Insert {
@@ -197,7 +201,10 @@ pub fn build_text(
                     let screen_row = display_cursor.row() - scroll_y;
                     let screen_col = display_cursor.column().saturating_sub(scroll_x) + 4;
                     Some(vim_ui::model::TextCursor {
-                        position: vim_ui::model::DisplayPosition { row: screen_row, column: screen_col },
+                        position: vim_ui::model::DisplayPosition {
+                            row: screen_row,
+                            column: screen_col,
+                        },
                         shape: cursor_shape,
                         visible: true,
                     })
