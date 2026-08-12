@@ -1,4 +1,6 @@
 **/target/
+**/.zig-cache/
+**/zig-out/
 .tmp-dzed/
 .tmp-zed/
 .tmp-vim-formatter/
