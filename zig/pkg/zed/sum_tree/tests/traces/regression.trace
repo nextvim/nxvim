@@ -1,0 +1,18 @@
+push 10
+push 20
+append 30 40 50
+seek 0 L
+seek 2 L
+seek 2 R
+seek 5 R
+slice 1 4
+map_put 3 30
+map_put 1 10
+map_put 2 20
+map_put 2 22
+map_remove 3
+set_add 8
+set_add 2
+set_add 8
+set_remove 2
+emit

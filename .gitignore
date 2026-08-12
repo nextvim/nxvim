@@ -1,5 +1,7 @@
 **/target/
+crates/zed/tooling/sum_tree_oracle/Cargo.lock
 **/.zig-cache/
+.cargo-home/
 **/zig-out/
 .tmp-dzed/
 .tmp-zed/
@@ -7,3 +9,7 @@
 .tmp-vim-script/
 .tmp-vim-regex/
 reference/
+
+**/__pycache__/
+*.py[cod]
+crates/zed/tooling/rope_oracle/Cargo.lock

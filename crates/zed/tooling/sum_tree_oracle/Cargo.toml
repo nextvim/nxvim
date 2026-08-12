@@ -1,0 +1,10 @@
+[package]
+name = "sum_tree_oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+sum_tree = { path = "../../crates/sum_tree" }
