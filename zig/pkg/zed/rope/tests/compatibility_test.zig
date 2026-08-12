@@ -24,12 +24,17 @@ test "text consumer compatibility surface" {
     try std.testing.expectEqual(@as(usize, 6), visible.pointUtf16ToOffset(point16));
     const utf16 = visible.offsetToOffsetUtf16(6);
     try std.testing.expectEqual(@as(usize, 6), visible.offsetUtf16ToOffset(utf16));
+    try std.testing.expectEqual(utf16, visible.pointToOffsetUtf16(point));
+    try std.testing.expectEqual(utf16, visible.pointUtf16ToOffsetUtf16(point16));
     _ = visible.pointToPointUtf16(point);
     _ = visible.pointUtf16ToPoint(point16);
     _ = visible.clipPoint(.new(2, 5), .left);
     _ = visible.clipPointUtf16(.init(.new(2, 5)), .right);
     _ = visible.clipOffsetUtf16(utf16, .left);
     try std.testing.expect(visible.isCharBoundary(6));
+    try std.testing.expect(visible.assertCharBoundary(false, 6));
+    try std.testing.expect(!visible.assertCharBoundary(false, 7));
+    try std.testing.expect(!visible.assertCharBoundary(false, visible.len() + 1));
     try std.testing.expectEqual(@as(u32, 5), visible.lineLen(0));
 
     var builder = try rope.Rope.init(std.testing.allocator);
@@ -87,4 +92,21 @@ test "text consumer compatibility surface" {
     try std.testing.expect(visible.endsWith("tail"));
     try visible.validate();
     try deleted.validate();
+}
+
+test "text consumer direct UTF-16 offsets preserve clipping semantics" {
+    var value = try rope.Rope.initText(std.testing.allocator, "a😀z\nβ👩‍💻x");
+    defer value.deinit();
+
+    const byte_point = rope.Point.new(0, 2);
+    try std.testing.expectEqual(value.offsetToOffsetUtf16(2), value.pointToOffsetUtf16(byte_point));
+
+    const inside_surrogate = rope.PointUtf16.new(0, 2);
+    try std.testing.expectEqual(
+        value.offsetToOffsetUtf16(value.pointUtf16ToOffset(inside_surrogate)),
+        value.pointUtf16ToOffsetUtf16(inside_surrogate),
+    );
+
+    try std.testing.expectEqual(value.summary().len_utf16, value.pointToOffsetUtf16(rope.Point.max));
+    try std.testing.expectEqual(value.summary().len_utf16, value.pointUtf16ToOffsetUtf16(rope.PointUtf16.max));
 }

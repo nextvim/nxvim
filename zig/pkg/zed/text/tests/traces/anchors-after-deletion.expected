@@ -1,0 +1,14 @@
+anchor version=2 replica=8 name=before-left valid=1 offset=1 bias=left buffer=11
+anchor version=2 replica=8 name=start-right valid=0 offset=- bias=right buffer=11
+anchor version=2 replica=8 name=middle-left valid=0 offset=- bias=left buffer=11
+anchor version=2 replica=8 name=middle-right valid=0 offset=- bias=right buffer=11
+anchor version=2 replica=8 name=end-left valid=0 offset=- bias=left buffer=11
+anchor version=2 replica=8 name=after-right valid=1 offset=1 bias=right buffer=11
+anchor version=2 replica=9 name=before-left valid=1 offset=1 bias=left buffer=11
+anchor version=2 replica=9 name=start-right valid=0 offset=- bias=right buffer=11
+anchor version=2 replica=9 name=middle-left valid=0 offset=- bias=left buffer=11
+anchor version=2 replica=9 name=middle-right valid=0 offset=- bias=right buffer=11
+anchor version=2 replica=9 name=end-left valid=0 offset=- bias=left buffer=11
+anchor version=2 replica=9 name=after-right valid=1 offset=1 bias=right buffer=11
+state version=2 replica=8 buffer=11 text=6166 line-ending=lf vv=0:1,8:3 operations=1 deferred=0
+state version=2 replica=9 buffer=11 text=6166 line-ending=lf vv=0:1,8:3 operations=1 deferred=0

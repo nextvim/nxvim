@@ -79,7 +79,7 @@ Only move to a consumer once its prerequisite package has:
 | `crates/zed/crates/sum_tree` | `zig/pkg/zed/sum_tree` | Observable feature set implemented and differentially validated; performance optimization remains. |
 | `crates/zed/crates/rope` | `zig/pkg/zed/rope` | Consumer-ready feature set implemented; expanded stateful differential coverage remains. |
 | `crates/zed/crates/clock` | `zig/pkg/zed/clock` | Text-required logical clock and version-vector surface implemented and differentially validated. |
-| `crates/zed/crates/text` | `zig/pkg/zed/text` | Phase 0 scaffold and initial-state oracle implemented; clock and CRDT gates remain. |
+| `crates/zed/crates/text` | `zig/pkg/zed/text` | Hard Gates 1–4 and Phases 2–3 pass; Phase 4 fragment model, summaries, dimensions, and indexes are next. |
 
 See the package-specific documents above for complete phase records and measured gaps.
 
@@ -128,4 +128,4 @@ Where practical, use a language-neutral trace format and compare canonical Rust/
 
 ## Immediate next step
 
-Complete the remaining Text Phase 1 gates from [`ZIG-text.md`](ZIG-text.md): add the Text-specific SumTree fixture, verify the exact Rope consumer surface, and keep the central CRDT implementation gated until those prerequisites pass.
+Begin Text Phase 4 from [`ZIG-text.md`](ZIG-text.md): implement fragments, contextual summaries, visible/deleted/versioned dimensions, splitting, insertion indexes, and invariant validation against the frozen oracle contracts.

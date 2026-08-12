@@ -1,6 +1,6 @@
 # Rope phase 0 contract freeze
 
-Baseline: Zed `7a9ce83c781e725cb45940a8772527a991d4f9a4`, Zig `0.16.0`, `unicode-segmentation 1.13.3`.
+Baseline: Zed `90d024b88abc91264d9a0ad260eb4f365fa695c3`, Zig `0.16.0`, `unicode-segmentation 1.13.3`.
 
 ## Ownership and errors
 

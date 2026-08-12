@@ -338,6 +338,11 @@ pub const ChunkSlice = struct {
         return result;
     }
 
+    pub fn pointToOffsetUtf16(self: ChunkSlice, point: Point) Error!OffsetUtf16 {
+        const offset = try self.pointToOffset(point);
+        return .{ .value = @popCount(self.chars_utf16_bitmap & lowMask(offset)) };
+    }
+
     pub fn offsetToOffsetUtf16(self: ChunkSlice, offset: usize) Error!OffsetUtf16 {
         if (offset > self.len()) return error.OffsetOutOfBounds;
         if (!self.isCharBoundary(offset)) return error.NotCodepointBoundary;

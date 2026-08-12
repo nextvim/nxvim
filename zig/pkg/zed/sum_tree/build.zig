@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
         "tests/sum_tree_test.zig",
         "tests/tree_map_test.zig",
         "tests/compatibility_test.zig",
+        "tests/text_compatibility_test.zig",
         "tests/cursor_gate_test.zig",
         "tests/parallel_gate_test.zig",
         "tests/persistence_gate_test.zig",

@@ -32,6 +32,15 @@ pub fn build(b: *std.Build) void {
         "tests/contract_test.zig",
         "tests/clock_compatibility_test.zig",
         "tests/trace_test.zig",
+        "tests/buffer_id_test.zig",
+        "tests/locator_test.zig",
+        "tests/edit_test.zig",
+        "tests/patch_test.zig",
+        "tests/selection_test.zig",
+        "tests/line_metadata_test.zig",
+        "tests/operation_queue_test.zig",
+        "tests/undo_map_test.zig",
+        "tests/subscription_test.zig",
     }) |test_path| {
         const unit_tests = b.addTest(.{
             .root_module = b.createModule(.{

@@ -1,0 +1,3 @@
+trace 2
+replica 8 1 -
+deliver absent 8

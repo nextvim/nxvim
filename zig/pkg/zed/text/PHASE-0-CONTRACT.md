@@ -1,10 +1,10 @@
 # Text phase 0 contract freeze
 
-Baseline: Zed `7a9ce83c781e725cb45940a8772527a991d4f9a4`, Zig `0.16.0`, Text trace format v1.
+Baseline: Zed `90d024b88abc91264d9a0ad260eb4f365fa695c3`, Zig `0.16.0`, Text trace format v1.
 
 ## Gate boundary
 
-This package is scaffolding only. `clock` semantic parity, the Text-specific SumTree fixture, final Rope differential expansion, and the CRDT oracle contract remain prerequisites. No `Buffer`, fragment, operation, anchor, locator, patch, queue, history, subscription, or replication behavior is claimed here.
+This package is scaffolding only. Clock semantic parity, the exact Rope consumer surface, the Text-specific SumTree fixture, and the CRDT oracle gate pass. Final Rope differential expansion remains a production-readiness prerequisite. The operation-level CRDT grammar, strict Zig parser, Rust oracle, and golden corpora are recorded under `TRACE-FORMAT-V2.md` and `tests/traces/`. No `Buffer`, fragment, operation, anchor, locator, patch, queue, history, subscription, or replication behavior is claimed here.
 
 ## Ownership and errors
 

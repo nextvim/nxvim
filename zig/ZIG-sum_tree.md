@@ -20,7 +20,7 @@ Rust source:
 Pinned baseline:
 
 - Zig `0.16.0`
-- Rust/Zed source revision `7a9ce83c781e725cb45940a8772527a991d4f9a4`
+- Rust/Zed source revision `90d024b88abc91264d9a0ad260eb4f365fa695c3`
 
 Zig package:
 

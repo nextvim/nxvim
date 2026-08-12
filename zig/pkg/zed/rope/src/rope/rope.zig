@@ -350,6 +350,14 @@ pub const Rope = struct {
         return located.item != null and located.item.?.isCharBoundary(offset - located.start);
     }
 
+    pub fn assertCharBoundary(self: *const Rope, comptime panic_on_failure: bool, offset: usize) bool {
+        if (self.isCharBoundary(offset)) return true;
+        if (panic_on_failure) {
+            std.debug.panic("byte index {} is not a character boundary of rope (length: {})", .{ offset, self.len() });
+        }
+        return false;
+    }
+
     pub fn floorCharBoundary(self: *const Rope, index: usize) usize {
         if (index >= self.len()) return self.len();
         const located = self.locate(usize, index, .left);
@@ -407,6 +415,14 @@ pub const Rope = struct {
         return located.start.second + local;
     }
 
+    pub fn pointToOffsetUtf16(self: *const Rope, point: Point) OffsetUtf16 {
+        if (point.order(self.maxPoint()) != .lt) return self.summary().len_utf16;
+        const located = self.locateProduct(Point, OffsetUtf16, point, .left);
+        const local_point = point.sub(located.start.first);
+        const local = located.item.?.asSlice().pointToOffsetUtf16(local_point) catch return located.start.second;
+        return located.start.second.add(local);
+    }
+
     pub fn pointToPointUtf16(self: *const Rope, point: Point) PointUtf16 {
         if (point.order(self.maxPoint()) != .lt) return self.maxPointUtf16();
         const located = self.locateProduct(Point, PointUtf16, point, .left);
@@ -431,6 +447,16 @@ pub const Rope = struct {
 
     pub fn pointUtf16ToOffset(self: *const Rope, point: PointUtf16) usize {
         return self.pointUtf16ToOffsetImpl(point, false);
+    }
+
+    pub fn pointUtf16ToOffsetUtf16(self: *const Rope, point: PointUtf16) OffsetUtf16 {
+        if (point.order(self.maxPointUtf16()) != .lt) return self.summary().len_utf16;
+        const located = self.locateProduct(PointUtf16, OffsetUtf16, point, .left);
+        const local_point = point.sub(located.start.first);
+        const chunk_slice = located.item.?.asSlice();
+        const local_offset = chunk_slice.pointUtf16ToOffset(local_point, false) catch return located.end.second;
+        const local = chunk_slice.offsetToOffsetUtf16(local_offset) catch return located.end.second;
+        return located.start.second.add(local);
     }
 
     pub fn unclippedPointUtf16ToOffset(self: *const Rope, point: Unclipped(PointUtf16)) usize {

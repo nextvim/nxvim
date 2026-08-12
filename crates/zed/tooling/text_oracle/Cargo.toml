@@ -7,3 +7,5 @@ publish = false
 [workspace]
 
 [dependencies]
+clock = { path = "../../crates/clock" }
+text = { path = "../../crates/text", features = ["test-support"] }

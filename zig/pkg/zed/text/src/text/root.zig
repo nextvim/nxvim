@@ -17,63 +17,36 @@ pub const Buffer = opaque {};
 pub const BufferSnapshot = opaque {};
 pub const EditedBufferSnapshot = opaque {};
 pub const Operation = opaque {};
+pub const OperationQueue = @import("operation_queue.zig").OperationQueue;
 pub const EditOperation = opaque {};
 pub const UndoOperation = opaque {};
 pub const Transaction = opaque {};
 pub const HistoryEntry = opaque {};
 pub const Anchor = opaque {};
-pub const Locator = opaque {};
-pub const SelectionGoal = opaque {};
-pub const LineIndent = opaque {};
+pub const Locator = @import("locator.zig").Locator;
+pub const SelectionGoal = @import("selection.zig").SelectionGoal;
+pub const LineIndent = @import("line_indent.zig").LineIndent;
 pub const SubscriptionState = opaque {};
 
-pub const BufferId = u64;
+pub const BufferId = @import("buffer_id.zig").BufferId;
 pub const ReplicaId = clock.ReplicaId;
 pub const TransactionId = u64;
 
-pub const LineEnding = enum {
-    unix,
-    windows,
-};
+pub const LineEnding = @import("line_ending.zig").LineEnding;
+pub const NormalizedLineEndingText = @import("line_ending.zig").Normalized;
 
-pub fn Edit(comptime T: type) type {
-    return opaque {
-        pub const Coordinate = T;
-    };
-}
+pub const Edit = @import("edit.zig").Edit;
+pub const Patch = @import("patch.zig").Patch;
+pub const Selection = @import("selection.zig").Selection;
 
-pub fn Patch(comptime T: type) type {
-    return opaque {
-        pub const Coordinate = T;
-    };
-}
-
-pub fn Selection(comptime T: type) type {
-    return opaque {
-        pub const Coordinate = T;
-    };
-}
-
-pub fn OperationQueue(comptime T: type) type {
-    return opaque {
-        pub const Item = T;
-    };
-}
-
-pub fn Topic(comptime T: type) type {
-    return opaque {
-        pub const Item = T;
-    };
-}
-
-pub fn Subscription(comptime T: type) type {
-    return opaque {
-        pub const Item = T;
-    };
-}
+pub const UndoMap = @import("undo_map.zig").UndoMap;
+pub const UndoMapCount = @import("undo_map.zig").Count;
+pub const UndoMapOperation = @import("undo_map.zig").UndoOperation;
+pub const Topic = @import("subscription.zig").Topic;
+pub const Subscription = @import("subscription.zig").Subscription;
 
 pub const baseline = struct {
     pub const zig = "0.16.0";
-    pub const zed_revision = "7a9ce83c781e725cb45940a8772527a991d4f9a4";
+    pub const zed_revision = "90d024b88abc91264d9a0ad260eb4f365fa695c3";
     pub const trace_version: u16 = 1;
 };

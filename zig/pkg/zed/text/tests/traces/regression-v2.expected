@@ -1,0 +1,16 @@
+state version=2 replica=9 buffer=1 text=- line-ending=lf vv=- operations=1 deferred=1
+state version=2 replica=8 buffer=1 text=6162 line-ending=lf vv=8:4 operations=2 deferred=0
+state version=2 replica=9 buffer=1 text=6162 line-ending=lf vv=8:4 operations=2 deferred=0
+state version=2 replica=8 buffer=1 text=61 line-ending=lf vv=8:5 operations=3 deferred=0
+state version=2 replica=9 buffer=1 text=61 line-ending=lf vv=8:5 operations=3 deferred=0
+state version=2 replica=8 buffer=1 text=6162 line-ending=lf vv=8:6 operations=4 deferred=0
+state version=2 replica=9 buffer=1 text=6162 line-ending=lf vv=8:6 operations=4 deferred=0
+anchor version=2 replica=10 name=left-at-one valid=1 offset=1 bias=left buffer=2
+anchor version=2 replica=10 name=right-at-one valid=1 offset=2 bias=right buffer=2
+anchor version=2 replica=11 name=left-at-one valid=1 offset=1 bias=left buffer=2
+anchor version=2 replica=11 name=right-at-one valid=1 offset=2 bias=right buffer=2
+patch version=2 replica=10 since=before-insert edits=1:1:1:2
+state version=2 replica=10 buffer=2 text=615862 line-ending=lf vv=0:1,10:3 operations=1 deferred=0
+state version=2 replica=11 buffer=2 text=615862 line-ending=lf vv=0:1,10:3 operations=1 deferred=0
+state version=2 replica=12 buffer=3 text=6f6e650a74776f0a7468726565 line-ending=crlf vv=0:1 operations=0 deferred=0
+state version=2 replica=12 buffer=3 text=6f6e650a74776f0a7468726565 line-ending=lf vv=0:1 operations=0 deferred=0

@@ -33,7 +33,7 @@ Rust source:
 Pinned baseline:
 
 - Zig `0.16.0`;
-- Rust/Zed source revision `7a9ce83c781e725cb45940a8772527a991d4f9a4`;
+- Rust/Zed source revision `90d024b88abc91264d9a0ad260eb4f365fa695c3`;
 - Zig Rope and SumTree behavior at the commit that starts the Text implementation.
 
 The first port targets observable semantics rather than Rust ABI or syntax. Zig may use explicit allocators, error unions, concrete iterator types, tagged unions, and callback or polling APIs where Rust uses traits, `Arc`, futures, or channels. These adaptations must not reduce CRDT convergence, snapshot behavior, coordinate semantics, undo behavior, or operation ordering.
@@ -143,7 +143,7 @@ Exit gate:
 
 ### Hard gate 2 — Rope consumer readiness
 
-Status: **substantially complete, final differential expansion remains**.
+Status: **completed for beginning Text implementation; production-readiness follow-up remains**. The exact audited Text surface is exercised by `zig/pkg/zed/rope/tests/compatibility_test.zig`, including direct UTF-16 offset conversions, boundary assertions, persistent assembly, coordinate conversion, clipping, iterators, lines, and snapshots. Rope Phase 7 expanded stateful differential coverage still blocks final Text production-readiness.
 
 Before implementing `Buffer.apply_edit_internal` and remote edits:
 
@@ -162,7 +162,7 @@ Exit gate:
 
 ### Hard gate 3 — SumTree contextual and keyed consumer readiness
 
-Status: **implemented; Text-specific fixture required**.
+Status: **completed for the Text-required fixture surface**. `zig/pkg/zed/sum_tree/tests/text_compatibility_test.zig` exercises version-context summaries and dimensions, fragment splitting and snapshot isolation, insertion-key lookup, keyed operation replacement/deduplication, undo-key historical lookup, validation, and heap-owning item cleanup.
 
 Before the central CRDT implementation:
 
@@ -181,7 +181,7 @@ Exit gate:
 
 ### Hard gate 4 — CRDT contract freeze and Rust oracle
 
-Status: **not started**.
+Status: **completed**. The baseline is aligned to Rust revision `90d024b88abc91264d9a0ad260eb4f365fa695c3`; operation-level grammar v2 is frozen; the strict Zig parser covers every command and stream framing rule; and the public-API Rust oracle has reproducible golden corpora for local edits, causal deferral, duplicates, concurrent insertion ordering, undo/redo, anchor bias and deletion, patches, normalization, line endings, canonical state, and malformed input.
 
 Before implementing remote-operation merge logic:
 
@@ -190,13 +190,57 @@ Before implementing remote-operation merge logic:
 3. pin deletion/undo visibility rules and version-relative queries;
 4. pin line-ending normalization and operation payload text semantics;
 5. define malformed external operation handling separately from programmer assertions;
-6. build a Rust trace oracle that emits canonical buffer state, operation state, versions, anchors, and patches.
+6. keep Clock, SumTree, and Rope differential fixtures passing against the repinned checked-in Rust mirror;
+7. build a Rust trace oracle that emits canonical buffer state, operation state, versions, anchors, and patches.
 
 Exit gate:
 
 - a versioned trace format exists;
 - fixed Rust oracle traces cover local edits, concurrent edits, out-of-order delivery, undo/redo, and anchors;
 - malformed traces return errors rather than panic.
+
+Validation evidence:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+cargo test --manifest-path crates/zed/tooling/text_oracle/Cargo.toml
+sh zig/pkg/zed/text/tests/run_oracle.sh
+```
+
+All commands pass. The oracle corpus reports three valid and four malformed cases.
+
+## Pre-implementation gate program
+
+This program is the immediate work queue required by the port-order and consumer-readiness rules in [`ZIG.md`](ZIG.md). It is deliberately separate from the implementation phases: completing an isolated fixture, oracle command, or contract document does not authorize central `Fragment` or `Buffer` work until every required gate for that work is green.
+
+| Order | Gate | Current evidence | Remaining work | Unlocks |
+| --- | --- | --- | --- | --- |
+| 1 | Clock semantic parity | Package wiring, deterministic and semilattice tests, allocation-failure coverage, fixed Rust differential vectors, and all three build modes pass | Freeze the exact Text call-site inventory; add a compatibility vector if that inventory exposes an untested operation | Clock-backed independent types and oracle records |
+| 2 | Exact Rope consumer surface | Complete for implementation: `zig/pkg/zed/rope/tests/compatibility_test.zig` covers the audited direct APIs and passes Debug, ReleaseSafe, and ReleaseFast | Complete Rope Phase 7 before production-readiness is claimed | Local edit/query integration after Gates 3–4 also pass |
+| 3 | Text-specific SumTree behavior | Complete: `zig/pkg/zed/sum_tree/tests/text_compatibility_test.zig` covers the required composition and passes Debug, ReleaseSafe, and ReleaseFast | Optimize generic keyed edits later if Text benchmarks show the rebuild fallback is material | Fragment/index implementation after Gate 4 passes |
+| 4 | CRDT contract and oracle | Complete: strict Zig v2 parser, public-API Rust oracle, three valid golden corpora, four malformed corpora, and `tests/run_oracle.sh`; v1 remains compatible | Enable Zig semantic execution incrementally as implementation phases land | Central fragment summaries, local Buffer edits, and remote merge phases |
+
+### Gate execution rules
+
+1. Keep `clock`, Rope, and SumTree checks in their owning packages; Text fixtures verify only the exact composition Text depends on.
+2. Use the pinned Rust revision as the semantic oracle. Fixtures compare public behavior and canonical summaries, never private node layout.
+3. Every owning fixture must test successful cleanup, injected allocation failure, transactional rollback, and retained-snapshot isolation.
+4. A gate changes to **completed** only when its commands and evidence paths are recorded in this document.
+5. Gate 4 oracle traces must be authored before the matching Zig CRDT behavior; a trace produced only after implementation is not an independent contract.
+6. Rope Phase 7 may run in parallel with Gates 3–4, but its completion blocks final Text production-readiness, not independent value-type work.
+
+### Central implementation lock — released
+
+Gates 1–4 are green. The following work was locked while Gates 2, 3, or 4 were red and may now proceed in phase order:
+
+- contextual `FragmentSummary` and production fragment indexes;
+- `Buffer.apply_edit_internal` or any equivalent central local-edit path;
+- remote-operation readiness, deferral, duplicate suppression, or merge logic;
+- history/undo integration that mutates fragment visibility.
+
+The oracle-first rule remains: each Zig semantic path must be enabled against an existing golden case, and new behavior requires a Rust trace before implementation.
 
 ## Rust behavior to preserve
 
@@ -374,46 +418,45 @@ The implementation must validate, at minimum:
 
 Provide `Buffer.validate()` and focused validators for locators, patches, queues, fragments, and undo maps.
 
-## Phase plan
+## Pre-implementation phase record
 
-### Phase 0 — Contract freeze, oracle, and package scaffold
+### Foundation record — contract, oracle scaffold, and package scaffold
 
-Status: **in progress**. The package scaffold, dependency declarations, compile-only API contract, contract document, trace format v1, strict Zig consumer, and standalone Rust initial-state oracle are implemented. The complete public API inventory and CRDT trace/oracle contract remain open.
+Status: **completed for pre-implementation**. The package scaffold, dependency declarations, compile-only API contract, ownership/error contract, trace formats v1/v2, strict Zig parsers, public-API Rust oracle, and fixed golden corpora are implemented. Public API inventory continues as implementation phases expose concrete types.
 
-Deliverables:
+Completed evidence:
 
-1. pin Rust revision and Zig toolchain;
-2. inventory every public type/method and categorize direct port, Zig adaptation, test-only, or deferred dependency;
-3. define allocator, clone/deinit, assertion, malformed-operation, and thread-safety contracts;
-4. version the differential trace format;
-5. create Rust `text_oracle` and Zig trace consumer scaffolds;
-6. create package layout and dependency declarations without central CRDT behavior;
-7. add a compile-only API contract test.
+1. Rust revision and Zig toolchain are pinned;
+2. allocator, clone/deinit, assertion, malformed-operation, and baseline thread-safety contracts are documented;
+3. differential trace format v1 is versioned;
+4. Rust `text_oracle` and Zig trace-consumer scaffolds exist;
+5. package layout and dependencies compile without central CRDT behavior;
+6. compile-only API and malformed-trace tests exist.
 
-Exit gate:
+Remaining foundation work:
 
-- no unresolved ownership or error-policy decisions for core state;
-- fixed oracle traces emit canonical initial buffer state;
-- Debug, ReleaseSafe, and ReleaseFast package scaffolds compile;
-- malformed trace parsing returns errors.
+1. inventory every public type/method and categorize direct port, Zig adaptation, test-only, or deferred dependency;
+2. freeze callback execution and cancellation ordering before subscriptions;
+3. expand canonical oracle state beyond the empty buffer as specified by Gate 4.
 
-### Phase 1 — Port `clock` and satisfy prerequisite gates
+### Prerequisite record — `clock`, Rope, and SumTree
 
-Deliverables:
-
-1. Zig `clock` package;
-2. clock Rust/Zig differential tests;
-3. Text-specific SumTree contextual/keyed fixture;
-4. Rope consumer compatibility verification;
-5. document any remaining prerequisite gaps.
+Status: **complete for Gates 1–4**. Clock, the exact Rope compatibility surface, and the Text-specific SumTree fixture pass in Debug, ReleaseSafe, and ReleaseFast. The Rust baseline is aligned and differentially revalidated; strict v2 parsing, the Rust oracle, and all required initial golden corpora pass.
 
 Exit gate:
 
-- Hard gates 1–3 pass;
-- no central Buffer/Fragment implementation begins while a hard gate is red;
-- allocation-failure tests pass for clock vectors and fixture-owned summaries.
+- Hard gates 1–3 pass with evidence paths and reproducible commands recorded;
+- Gate 4 has frozen the oracle behavior required by the next implementation phase;
+- allocation-failure tests pass for clock vectors and fixture-owned summaries;
+- the central implementation lock above can be removed without qualification.
+
+## Implementation phase plan
+
+Implementation phases begin only after the applicable pre-implementation gates are green. Phase numbering remains aligned with the original roadmap so existing records and references do not need renumbering.
 
 ### Phase 2 — Independent value types: locator, edits, patches, selections, line metadata
+
+Status: **completed**. Concrete package exports now replace the Phase 0 opaque declarations for `Locator`, `BufferId`, `Edit(T)`, `Patch(T)`, `Selection(T)`, `SelectionGoal`, `LineEnding`, and `LineIndent`.
 
 Deliverables:
 
@@ -432,7 +475,29 @@ Exit gate:
 - invalid Buffer IDs and overflow paths return documented errors;
 - all owning value types pass allocation-failure cleanup.
 
+Completion evidence:
+
+- `Locator` uses two-component inline storage, heap ownership only beyond depth two, transactional assignment, generated ordering checks, 100,000 forward insertions, and 10,000 split-region insertions;
+- `Patch(usize)` composition matches checked-in Rust fixtures and flat-text models, with generated exterior-coordinate checks that respect Rust's intentional touching-edit coalescing;
+- selection direction/head/tail transitions match the pinned Rust implementation;
+- line-ending detection and normalization cover CRLF, bare CR, UTF-8 prefix boundaries, borrowed/owned results, and allocator failure;
+- Buffer ID zero and checked-overflow paths return documented errors;
+- `Patch(Point)` remains publicly instantiable; Point-specific arithmetic methods will use an explicit coordinate adapter when Buffer query phases require them.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+sh zig/pkg/zed/text/tests/run_oracle.sh
+```
+
+All commands pass.
+
 ### Phase 3 — Operation queue, undo map, and subscriptions
+
+Status: **completed for observable semantics**. Concrete `OperationQueue(T, Ops)`, `UndoMap`, `Topic(T, Ops)`, and `Subscription(T, Ops)` exports replace the Phase 0 placeholders. Ownership-heavy generics use explicit comptime `Ops` contracts for timestamps, clone/deinit, initialization, and composition.
 
 Deliverables:
 
@@ -450,6 +515,30 @@ Exit gate:
 - subscription composition matches direct patch composition;
 - cross-thread tests pass if final thread-safe mode is enabled;
 - allocation failures do not lose existing queue, undo, or subscription state.
+
+Completion evidence:
+
+- operation queues sort by Lamport total order, deduplicate generated batches, replace cross-batch duplicate timestamps, preserve persistent clones, and drain transactionally;
+- UndoMap keys `(edit_id, undo_id)`, takes maximum counts, preserves odd/even visibility parity, and matches direct generated models under version-vector observation;
+- subscriptions compose actual `Patch(usize)` values identically to direct composition, prune stale subscribers, survive topic destruction, and preserve pending state when publication allocation fails;
+- concurrent publishers serialize safely and deliver every update exactly once to the tested subscriber;
+- allocation-failure checks cover all owning queue, undo-map, and subscription paths.
+
+Known non-semantic performance follow-ups:
+
+- queue keyed insertion currently inherits SumTree's transactional rebuild fallback;
+- UndoMap lookup currently scans ordered items and should move to a keyed cursor before large-history performance parity is claimed.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+sh zig/pkg/zed/text/tests/run_oracle.sh
+```
+
+All commands pass.
 
 ### Phase 4 — Fragment model, summaries, dimensions, and indexes
 

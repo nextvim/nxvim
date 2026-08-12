@@ -4,7 +4,7 @@ const text = @import("text");
 test "phase-0 public declarations compile" {
     try std.testing.expectEqualStrings("0.16.0", text.baseline.zig);
     try std.testing.expectEqualStrings(
-        "7a9ce83c781e725cb45940a8772527a991d4f9a4",
+        "90d024b88abc91264d9a0ad260eb4f365fa695c3",
         text.baseline.zed_revision,
     );
     try std.testing.expectEqual(@as(u16, 1), text.baseline.trace_version);
@@ -20,7 +20,7 @@ test "phase-0 public declarations compile" {
     _ = text.Operation;
     _ = text.EditOperation;
     _ = text.UndoOperation;
-    _ = text.OperationQueue(text.Operation);
+    _ = text.OperationQueue;
     _ = text.Edit(usize);
     _ = text.Patch(text.Point);
     _ = text.Anchor;
@@ -28,8 +28,9 @@ test "phase-0 public declarations compile" {
     _ = text.SelectionGoal;
     _ = text.LineEnding;
     _ = text.LineIndent;
-    _ = text.Topic(u8);
-    _ = text.Subscription(u8);
+    _ = text.Topic;
+    _ = text.Subscription;
+    _ = text.UndoMap;
 
     try std.testing.expect(text.Point == text.rope.Point);
     try std.testing.expect(text.sum_tree.SumTree == text.rope.sum_tree.SumTree);

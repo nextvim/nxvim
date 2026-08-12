@@ -1,0 +1,3 @@
+state version=2 replica=8 buffer=10 text=615a595862 line-ending=lf vv=0:1,8:3,9:3,10:3 operations=3 deferred=0
+state version=2 replica=9 buffer=10 text=615a595862 line-ending=lf vv=0:1,8:3,9:3,10:3 operations=3 deferred=0
+state version=2 replica=10 buffer=10 text=615a595862 line-ending=lf vv=0:1,8:3,9:3,10:3 operations=3 deferred=0

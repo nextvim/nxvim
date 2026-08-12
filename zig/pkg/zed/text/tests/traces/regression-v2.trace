@@ -1,0 +1,46 @@
+# Text CRDT oracle regression corpus
+trace 2
+
+# Causal deferral, duplicate delivery, undo, and redo.
+replica 8 1 -
+replica 9 1 -
+edit 8 0 0 61
+capture 8 op-a
+edit 8 1 1 62
+capture 8 op-b
+deliver op-b 9
+emit 9
+deliver op-a 9
+deliver op-a 9
+emit all
+undo 8
+capture 8 undo-b
+deliver undo-b 9
+emit all
+redo 8
+capture 8 redo-b
+deliver redo-b 9
+emit all
+
+# Anchor bias and patch output.
+replica 10 2 6162
+replica 11 2 6162
+anchor 10 left-at-one 1 left
+anchor 10 right-at-one 1 right
+mark 10 before-insert
+edit 10 1 1 58
+capture 10 insert-x
+deliver insert-x 11
+resolve 10 left-at-one
+resolve 10 right-at-one
+resolve 11 left-at-one
+resolve 11 right-at-one
+patch 10 before-insert
+emit 10
+emit 11
+
+# Native construction normalization and explicit metadata change.
+replica 12 3 6f6e650d0a74776f0d7468726565
+emit 12
+line-ending 12 lf
+emit 12
