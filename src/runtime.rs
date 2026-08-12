@@ -1,0 +1,168 @@
+use crate::app::App;
+use crate::controller::{Command, CommandOutcome, Dispatcher, ViewEffect};
+use crate::terminal::TerminalSession;
+use crate::view::{EditorViewModel, LayoutSnapshot};
+use crossterm::event;
+use std::io::{Write, stdout};
+use vim_ui::BufferedRenderer;
+
+/// Owns terminal lifecycle, event polling, redraw scheduling, and rendering.
+pub struct Runtime {
+    terminal: TerminalSession,
+    app: App,
+    buffered_renderer: BufferedRenderer,
+}
+
+impl Runtime {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let terminal = TerminalSession::enter()?;
+        let rect = terminal.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
+
+        Ok(Self {
+            terminal,
+            app: App::new(rect, std::env::args_os().skip(1).map(Into::into).collect()),
+            buffered_renderer: BufferedRenderer::new(rect.width, rect.height),
+        })
+    }
+
+    pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut out = stdout();
+        let rect = self.app.ui.screen_rect();
+        self.redraw(rect, &mut out)?;
+
+        let mut should_redraw = false;
+
+        'main_loop: loop {
+            if self.app.services.poll() {
+                for result in self.app.services.drain_results() {
+                    let outcome = Dispatcher::dispatch(&mut self.app, Command::Task(result));
+                    should_redraw |= outcome.redraw;
+                }
+            }
+
+            let current_rect = self.app.ui.screen_rect();
+            if let Ok(new_rect) = self.terminal.size() {
+                if new_rect != current_rect {
+                    self.resize(new_rect);
+                    should_redraw = true;
+                }
+            }
+
+            let mut commands: Vec<Command> =
+                std::iter::from_fn(|| self.app.script.try_next_command().map(Command::from))
+                    .collect();
+
+            if commands.is_empty() && event::poll(std::time::Duration::from_millis(50))? {
+                let terminal_event = event::read()?;
+                if let event::Event::Resize(width, height) = terminal_event {
+                    self.resize(vim_ui::Rect::new(0, 0, width, height));
+                    should_redraw = true;
+                } else if let Some(resolved) = self.app.controller.feed_event(terminal_event) {
+                    commands.push(Command::from(resolved));
+                }
+            }
+
+            for command in commands {
+                let outcome = Dispatcher::dispatch(&mut self.app, command);
+                should_redraw |= outcome.redraw;
+                self.apply_outcome(&outcome);
+                if outcome.quit {
+                    break 'main_loop;
+                }
+            }
+
+            if should_redraw {
+                let active_rect = self.app.ui.screen_rect();
+                self.redraw(active_rect, &mut out)?;
+                should_redraw = false;
+            }
+        }
+
+        self.terminal.restore()?;
+        Ok(())
+    }
+
+    fn apply_outcome(&mut self, outcome: &CommandOutcome) {
+        for effect in &outcome.view_effects {
+            self.apply_view_effect(*effect);
+        }
+    }
+
+    fn apply_view_effect(&mut self, effect: ViewEffect) {
+        match effect {
+            ViewEffect::Focus(window_id) => {
+                if self.app.ui.focus(window_id).is_ok() {
+                    self.app.model.focus_window(window_id);
+                }
+            }
+            ViewEffect::FocusDirection(direction) => {
+                if let Some(neighbor) = self.app.ui.find_neighbor(direction) {
+                    if self.app.ui.focus(neighbor).is_ok() {
+                        self.app.model.focus_window(neighbor);
+                    }
+                }
+            }
+            ViewEffect::Split { source, axis } => {
+                if self.app.model.window_buffer(source).is_none() {
+                    return;
+                }
+                if self.app.ui.focused_window_id() != source {
+                    let _ = self.app.ui.focus(source);
+                }
+                if let Ok(new_window_id) = self.app.ui.split_focused(axis) {
+                    if let Some(window) = self.app.ui.window_mut(new_window_id) {
+                        window.set_title("MAIN WINDOW".to_string());
+                        window.set_view(Box::new(crate::view::TextView::new(new_window_id)));
+                    }
+                    if self.app.model.split_window(source, new_window_id) {
+                        let _ = self.app.ui.focus(new_window_id);
+                    } else {
+                        let _ = self.app.ui.close_window(new_window_id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn resize(&mut self, rect: vim_ui::Rect) {
+        self.app.ui.resize(rect);
+        self.buffered_renderer.resize(rect.width, rect.height);
+    }
+
+    fn redraw(
+        &mut self,
+        rect: vim_ui::Rect,
+        out: &mut impl Write,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let layout = self.layout_snapshot(rect);
+        self.app.model.synchronize_viewports(&layout);
+        let view_model = EditorViewModel::build(&self.app.model, &self.app.controller, &layout);
+        self.app.ui.draw(&view_model, &mut self.buffered_renderer)?;
+        self.buffered_renderer.flush(out)?;
+        out.flush()?;
+        Ok(())
+    }
+
+    fn layout_snapshot(&self, fallback: vim_ui::Rect) -> LayoutSnapshot {
+        let mut snapshot = LayoutSnapshot::default();
+        for (window_id, _) in self.app.model.window_buffers() {
+            let rect = self
+                .app
+                .ui
+                .computed_layout()
+                .get_rect(window_id)
+                .unwrap_or(fallback);
+            let draws_border = self
+                .app
+                .ui
+                .window(window_id)
+                .is_some_and(|window| window.draws_border());
+            snapshot.insert(window_id, rect, draws_border);
+        }
+        snapshot
+    }
+}
+
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    Runtime::new()?.run()
+}

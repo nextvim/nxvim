@@ -43,7 +43,7 @@ impl InputController {
                         }
                         ResolveOutcome::Pending => {
                             self.pending_display = self.resolver.pending().to_string();
-                            Some(ControllerAction::Pending)
+                            Some(ControllerAction::Pending(self.pending_display.clone()))
                         }
                         ResolveOutcome::Invalid(_) => {
                             self.pending_display.clear();
@@ -73,7 +73,7 @@ pub enum ControllerAction {
         register: Option<char>,
     },
     /// Input is pending (e.g., operator or count prefix).
-    Pending,
+    Pending(String),
     /// Invalid sequence was consumed.
     Invalid,
 }
@@ -137,7 +137,7 @@ mod tests {
         let event_w = Event::Key(KeyEvent::new(CKey::Char('w'), control));
         assert_eq!(
             controller.feed_event(event_w),
-            Some(ControllerAction::Pending)
+            Some(ControllerAction::Pending("<C-w>".to_string()))
         );
 
         let event_v2 = Event::Key(KeyEvent::new(CKey::Char('v'), control));

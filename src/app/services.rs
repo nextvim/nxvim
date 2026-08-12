@@ -1,5 +1,9 @@
-use vim_buffer::BufferId;
-use vim_ui::WindowId;
+pub mod task;
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+pub use task::{TaskOwner as OwnerId, TaskResult, TaskType};
 
 pub use textmate as highlight;
 pub use vim_clipboard as clipboard;
@@ -7,30 +11,17 @@ pub use vim_indexer as indexer;
 pub use vim_macros as macros;
 pub use vim_treesitter as treesitter;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TaskType {
-    Highlight,
-    DisplayMap,
-    Indexer,
-    Treesitter,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OwnerId {
-    pub buffer_id: Option<BufferId>,
-    pub window_id: Option<WindowId>,
-}
+use task::TaskMetadata;
 
 pub struct Services {
-    pub background_workers: background_worker::WorkerManager,
+    background_workers: background_worker::WorkerManager,
     pub clipboard: clipboard::Clipboard,
     pub highlight: highlight::HighlightService,
     pub indexer: indexer::Indexer,
     pub macros: macros::MacroRecorder,
     pub treesitter: treesitter::TreeSitterService,
-    pub results: Vec<background_worker::BackgroundResult>,
-    pub task_metadata:
-        std::sync::Mutex<std::collections::HashMap<background_worker::TaskId, (OwnerId, TaskType)>>,
+    raw_results: Vec<background_worker::BackgroundResult>,
+    task_metadata: Mutex<HashMap<background_worker::TaskId, TaskMetadata>>,
 }
 
 impl Services {
@@ -44,8 +35,8 @@ impl Services {
             indexer: indexer::Indexer::new(),
             macros: macros::MacroRecorder::new(),
             treesitter: treesitter::TreeSitterService::new(),
-            results: Vec::new(),
-            task_metadata: std::sync::Mutex::new(std::collections::HashMap::new()),
+            raw_results: Vec::new(),
+            task_metadata: Mutex::new(HashMap::new()),
         }
     }
 
@@ -54,24 +45,37 @@ impl Services {
             results: &'a mut Vec<background_worker::BackgroundResult>,
         }
 
-        impl<'a> background_worker::WorkerResultHandler for ResultsCollector<'a> {
+        impl background_worker::WorkerResultHandler for ResultsCollector<'_> {
             fn handle_result(&mut self, result: background_worker::BackgroundResult) {
                 self.results.push(result);
             }
         }
 
         let mut collector = ResultsCollector {
-            results: &mut self.results,
+            results: &mut self.raw_results,
         };
         let count = self.background_workers.poll(&mut collector);
-        count > 0 || !self.results.is_empty()
+        count > 0 || !self.raw_results.is_empty()
+    }
+
+    pub fn drain_results(&mut self) -> Vec<TaskResult> {
+        let raw_results = std::mem::take(&mut self.raw_results);
+        let mut metadata = self.task_metadata.lock().unwrap();
+        raw_results
+            .into_iter()
+            .filter_map(|result| {
+                let task_id = result.task_id;
+                let metadata = metadata.remove(&task_id)?;
+                Self::decode_result(result, metadata)
+            })
+            .collect()
     }
 
     pub fn spawn_task<T, F>(
         &self,
         worker_name: &str,
         sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
-        owner_id: OwnerId,
+        owner: OwnerId,
         task_type: TaskType,
         job: F,
     ) -> Option<background_worker::TaskId>
@@ -85,7 +89,7 @@ impl Services {
         self.task_metadata
             .lock()
             .unwrap()
-            .insert(task_id, (owner_id, task_type));
+            .insert(task_id, TaskMetadata { owner, task_type });
         Some(task_id)
     }
 
@@ -93,7 +97,7 @@ impl Services {
         &self,
         worker_name: &str,
         sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
-        owner_id: OwnerId,
+        owner: OwnerId,
         task_type: TaskType,
         job: F,
     ) -> Option<background_worker::TaskId>
@@ -107,13 +111,107 @@ impl Services {
         self.task_metadata
             .lock()
             .unwrap()
-            .insert(task_id, (owner_id, task_type));
+            .insert(task_id, TaskMetadata { owner, task_type });
         Some(task_id)
+    }
+
+    fn decode_result(
+        result: background_worker::BackgroundResult,
+        metadata: TaskMetadata,
+    ) -> Option<TaskResult> {
+        let task_id = result.task_id;
+        let owner = metadata.owner;
+        match metadata.task_type {
+            TaskType::Treesitter => Some(TaskResult::Treesitter {
+                task_id,
+                buffer_id: owner.buffer_id?,
+                revision: owner.revision,
+                result: result
+                    .downcast::<Result<vim_treesitter::SyntaxTree, String>>()
+                    .ok()?,
+            }),
+            TaskType::Indexer => Some(TaskResult::Index {
+                task_id,
+                buffer_id: owner.buffer_id?,
+                revision: owner.revision,
+                result: result
+                    .downcast::<Result<vim_indexer::IndexTaskResult, String>>()
+                    .ok()?,
+            }),
+            TaskType::Highlight => Some(TaskResult::Highlight {
+                task_id,
+                window_id: owner.window_id?,
+                buffer_id: owner.buffer_id?,
+                revision: owner.revision,
+                highlights: result.downcast::<Vec<textmate::HighlightSpan>>().ok()?,
+            }),
+            TaskType::DisplayMap => {
+                let (map, height, layout_width) = result
+                    .downcast::<(display_map::DisplayMap, u32, u32)>()
+                    .ok()?;
+                Some(TaskResult::DisplayMap {
+                    task_id,
+                    window_id: owner.window_id?,
+                    buffer_id: owner.buffer_id?,
+                    revision: owner.revision,
+                    map,
+                    height,
+                    layout_width,
+                })
+            }
+        }
     }
 }
 
 impl Default for Services {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use std::time::{Duration, Instant};
+    use vim_buffer::BufferId;
+    use vim_ui::WindowId;
+
+    #[test]
+    fn drain_results_decodes_owner_and_revision() {
+        let mut services = Services::new();
+        let buffer_id = BufferId::new(7).unwrap();
+        let owner = OwnerId {
+            buffer_id: Some(buffer_id),
+            window_id: Some(WindowId::new(8)),
+            revision: 9,
+        };
+        services
+            .spawn_task(
+                "display_map",
+                Arc::new(AtomicU64::new(0)),
+                owner,
+                TaskType::Highlight,
+                Vec::<textmate::HighlightSpan>::new,
+            )
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !services.poll() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let results = services.drain_results();
+
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            &results[0],
+            TaskResult::Highlight {
+                buffer_id: result_buffer_id,
+                window_id: result_window_id,
+                revision: 9,
+                ..
+            } if *result_buffer_id == buffer_id && *result_window_id == WindowId::new(8)
+        ));
     }
 }

@@ -1,8 +1,16 @@
 pub use vim_ui::{Rect, Ui};
 
-pub fn setup_initial_layout(
-    ui: &mut Ui,
-) -> Result<(vim_ui::WindowId, vim_ui::WindowId), Box<dyn std::error::Error>> {
+#[derive(Debug, Clone, Copy)]
+pub struct ViewIds {
+    pub tabline: vim_ui::WindowId,
+    pub main: vim_ui::WindowId,
+    pub commandline: vim_ui::WindowId,
+    pub statusline: vim_ui::WindowId,
+    pub left_panel: vim_ui::WindowId,
+    pub right_panel: vim_ui::WindowId,
+}
+
+pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::Error>> {
     use vim_ui::SizeConstraint;
 
     // The initial window in store is WindowId::new(1)
@@ -19,21 +27,18 @@ pub fn setup_initial_layout(
     }
     if let Some(w) = ui.window_mut(tabline_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::TabLineView::new(Vec::new(), 0)));
+        w.set_view(Box::new(crate::app::views::TabLineView::new()));
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
-        w.set_view(Box::new(crate::app::views::TextView::new(main_id)));
+        w.set_view(Box::new(crate::view::TextView::new(main_id)));
     }
     if let Some(w) = ui.window_mut(right_id) {
         w.set_title("RIGHT PANEL".to_string());
     }
     if let Some(w) = ui.window_mut(status_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::StatusLineView::new(
-            "main.rs".to_string(),
-            "utf-8 | rust".to_string(),
-        )));
+        w.set_view(Box::new(crate::app::views::StatusLineView::new()));
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
@@ -55,7 +60,14 @@ pub fn setup_initial_layout(
     ui.hide_window(left_panel_id)?;
     ui.hide_window(right_id)?;
     ui.focus(main_id)?; // Focus the main editor window by default
-    Ok((tabline_id, status_id))
+    Ok(ViewIds {
+        tabline: tabline_id,
+        main: main_id,
+        commandline: cmd_id,
+        statusline: status_id,
+        left_panel: left_panel_id,
+        right_panel: right_id,
+    })
 }
 
 /*

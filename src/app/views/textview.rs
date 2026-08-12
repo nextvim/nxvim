@@ -56,9 +56,8 @@ pub fn build_text(
     let mut rows = Vec::new();
     let mut saved_cursor = None;
     if let (Some(display_context), Ok(buffer)) = (
-        app.buffer_manager
-            .get_buffer_display_context(buffer_id, win_id),
-        app.buffer_manager.get_buffer(buffer_id),
+        app.model.window_state(win_id),
+        app.model.get_buffer(buffer_id),
     ) {
         let display_map_snapshot = display_context.display_map.snapshot();
         let row_count = display_map_snapshot.row_count();
@@ -157,9 +156,8 @@ pub fn build_text(
         if saved_cursor.is_some() {
             saved_cursor
         } else if let (Some(display_context), Ok(buffer)) = (
-            app.buffer_manager
-                .get_buffer_display_context(buffer_id, win_id),
-            app.buffer_manager.get_buffer(buffer_id),
+            app.model.window_state(win_id),
+            app.model.get_buffer(buffer_id),
         ) {
             let cursor_shape = if app.controller.mode() == vim_input::Mode::Insert {
                 vim_ui::model::CursorShape::BlinkingBar

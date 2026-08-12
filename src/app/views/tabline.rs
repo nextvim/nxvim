@@ -1,15 +1,11 @@
 use vim_ui::views::tabline::TabLineView as VimTabLineView;
 use vim_ui::{Rect, Renderer, UIContext, View};
 
-pub struct TabLineView {
-    inner: VimTabLineView,
-}
+pub struct TabLineView;
 
 impl TabLineView {
-    pub fn new(tabs: Vec<String>, active_index: usize) -> Self {
-        Self {
-            inner: VimTabLineView::new(tabs, active_index),
-        }
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -20,6 +16,19 @@ impl View for TabLineView {
         context: &dyn UIContext,
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
-        self.inner.draw(area, context, renderer)
+        let buffer_ids = context.get_buffer_ids();
+        let active = context.get_active_buffer_id();
+        let tabs = buffer_ids
+            .iter()
+            .map(|&id| {
+                context
+                    .get_buffer_name(id)
+                    .unwrap_or_else(|| "[No Name]".to_string())
+            })
+            .collect();
+        let active_index = active
+            .and_then(|id| buffer_ids.iter().position(|&candidate| candidate == id))
+            .unwrap_or(0);
+        VimTabLineView::new(tabs, active_index).draw(area, context, renderer)
     }
 }
