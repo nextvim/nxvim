@@ -49,6 +49,8 @@ Package rules:
 Keep this file focused on cross-package roadmap and conventions. Package-specific design, implementation history, validation, benchmark results, and remaining work belong in dedicated documents:
 
 - [`ZIG-sum_tree.md`](ZIG-sum_tree.md) — `zig/pkg/zed/sum_tree`
+- [`ZIG-rope.md`](ZIG-rope.md) — `zig/pkg/zed/rope`
+- [`ZIG-text.md`](ZIG-text.md) — `zig/pkg/zed/text` and its `zig/pkg/zed/clock` prerequisite
 
 Add one `ZIG-<crate>.md` document for each newly ported crate.
 
@@ -75,8 +77,11 @@ Only move to a consumer once its prerequisite package has:
 | Rust crate | Zig package | Status |
 | --- | --- | --- |
 | `crates/zed/crates/sum_tree` | `zig/pkg/zed/sum_tree` | Observable feature set implemented and differentially validated; performance optimization remains. |
+| `crates/zed/crates/rope` | `zig/pkg/zed/rope` | Consumer-ready feature set implemented; expanded stateful differential coverage remains. |
+| `crates/zed/crates/clock` | `zig/pkg/zed/clock` | Text-required logical clock and version-vector surface implemented and differentially validated. |
+| `crates/zed/crates/text` | `zig/pkg/zed/text` | Phase 0 scaffold and initial-state oracle implemented; clock and CRDT gates remain. |
 
-See [`ZIG-sum_tree.md`](ZIG-sum_tree.md) for the complete phase record and measured gaps.
+See the package-specific documents above for complete phase records and measured gaps.
 
 ## Cross-package validation expectations
 
@@ -123,4 +128,4 @@ Where practical, use a language-neutral trace format and compare canonical Rust/
 
 ## Immediate next step
 
-Before beginning another crate, resolve or explicitly schedule the `sum_tree` performance work described in [`ZIG-sum_tree.md`](ZIG-sum_tree.md), especially path-copy mutation and logarithmic cursor traversal, because `rope` and `text` depend on those characteristics.
+Complete the remaining Text Phase 1 gates from [`ZIG-text.md`](ZIG-text.md): add the Text-specific SumTree fixture, verify the exact Rope consumer surface, and keep the central CRDT implementation gated until those prerequisites pass.

@@ -1,0 +1,10 @@
+[package]
+name = "clock_oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+clock = { path = "../../crates/clock" }
