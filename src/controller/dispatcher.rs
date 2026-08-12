@@ -22,8 +22,7 @@ impl Dispatcher {
             }
             Command::Task(result) => TaskDispatcher::dispatch(&mut app.model, result),
             Command::Editor { action, register } => {
-                let active_window = app.ui.focused_window_id();
-                app.model.focus_window(active_window);
+                let active_window = app.model.windows.focused();
 
                 let mut message = format!("[{:?}] Action: {:?}", app.controller.mode(), action);
                 if let Some(register) = register {

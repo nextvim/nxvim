@@ -1,5 +1,7 @@
 pub use vim_ui::{Rect, Ui};
 
+/// Concrete UI identities. `main` and `commandline` are semantic model windows;
+/// tabline, statusline, and side panels are presentation-only chrome.
 #[derive(Debug, Clone, Copy)]
 pub struct ViewIds {
     pub tabline: vim_ui::WindowId,
@@ -10,11 +12,88 @@ pub struct ViewIds {
     pub right_panel: vim_ui::WindowId,
 }
 
+pub struct ViewSynchronizer;
+
+impl ViewSynchronizer {
+    pub fn apply(
+        ui: &mut Ui,
+        model: &mut crate::model::EditorModel,
+        view_ids: ViewIds,
+        effect: crate::controller::ViewEffect,
+    ) -> bool {
+        match effect {
+            crate::controller::ViewEffect::Focus(window_id) => {
+                if model.window_state(window_id).is_none() || ui.focus(window_id).is_err() {
+                    return false;
+                }
+                model.focus_window(window_id)
+            }
+            crate::controller::ViewEffect::FocusDirection(direction) => {
+                let Some(window_id) = ui
+                    .find_neighbor(direction)
+                    .filter(|&id| model.window_state(id).is_some())
+                else {
+                    return false;
+                };
+                if ui.focus(window_id).is_err() {
+                    return false;
+                }
+                model.focus_window(window_id)
+            }
+            crate::controller::ViewEffect::Split { source, axis } => {
+                if source == view_ids.commandline {
+                    return false;
+                }
+                Self::split(ui, model, source, axis)
+            }
+            crate::controller::ViewEffect::Close(window_id) => {
+                if model.window_state(window_id).is_none() || ui.close_window(window_id).is_err() {
+                    return false;
+                }
+                model.remove_window(window_id)
+            }
+            crate::controller::ViewEffect::Hide(window_id) => ui.hide_window(window_id).is_ok(),
+            crate::controller::ViewEffect::Resize { width, height } => {
+                ui.resize(Rect::new(0, 0, width, height));
+                true
+            }
+        }
+    }
+
+    fn split(
+        ui: &mut Ui,
+        model: &mut crate::model::EditorModel,
+        source: vim_ui::WindowId,
+        axis: vim_ui::SplitAxis,
+    ) -> bool {
+        if model.window_buffer(source).is_none() || ui.focus(source).is_err() {
+            return false;
+        }
+        let Ok(new_window_id) = ui.split_focused(axis) else {
+            return false;
+        };
+        if !model.split_window(source, new_window_id) {
+            let _ = ui.close_window(new_window_id);
+            let _ = ui.focus(source);
+            return false;
+        }
+        let Some(window) = ui.window_mut(new_window_id) else {
+            model.remove_window(new_window_id);
+            let _ = ui.close_window(new_window_id);
+            let _ = ui.focus(source);
+            model.focus_window(source);
+            return false;
+        };
+        window.set_title("MAIN WINDOW".to_string());
+        window.set_view(Box::new(crate::view::TextView::new(new_window_id)));
+        true
+    }
+}
+
 pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::Error>> {
     use vim_ui::SizeConstraint;
 
-    // The initial window in store is WindowId::new(1)
-    let left_panel_id = vim_ui::WindowId::new(1);
+    let left_panel_id = ui.focused_window_id();
     let tabline_id = ui.create_window("TABLINE".to_string());
     let main_id = ui.create_window("MAIN WINDOW".to_string());
     let right_id = ui.create_window("RIGHT PANEL".to_string());
@@ -68,6 +147,87 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
         left_panel: left_panel_id,
         right_panel: right_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::controller::ViewEffect;
+
+    fn fixture() -> (Ui, crate::model::EditorModel, ViewIds) {
+        let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
+        let ids = setup_initial_layout(&mut ui).unwrap();
+        let model = crate::model::EditorModel::new(Vec::new(), ids.main, ids.commandline);
+        (ui, model, ids)
+    }
+
+    #[test]
+    fn initial_layout_registers_only_semantic_windows_in_model() {
+        let (ui, model, ids) = fixture();
+
+        assert!(model.window_state(ids.main).is_some());
+        assert!(model.window_state(ids.commandline).is_some());
+        for chrome in [ids.tabline, ids.statusline, ids.left_panel, ids.right_panel] {
+            assert!(ui.window(chrome).is_some());
+            assert!(model.window_state(chrome).is_none());
+        }
+    }
+
+    #[test]
+    fn failed_focus_does_not_change_model_focus() {
+        let (mut ui, mut model, ids) = fixture();
+        let original = model.windows.focused();
+
+        assert!(!ViewSynchronizer::apply(
+            &mut ui,
+            &mut model,
+            ids,
+            ViewEffect::Focus(ids.left_panel),
+        ));
+        assert_eq!(model.windows.focused(), original);
+        assert_eq!(ui.focused_window_id(), ids.main);
+    }
+
+    #[test]
+    fn split_failure_leaves_ui_and_model_stores_unchanged() {
+        let (mut ui, mut model, ids) = fixture();
+        let ui_count = ui.window_count();
+        let model_count = model.window_buffers().count();
+
+        assert!(!ViewSynchronizer::apply(
+            &mut ui,
+            &mut model,
+            ids,
+            ViewEffect::Split {
+                source: ids.commandline,
+                axis: vim_ui::SplitAxis::Columns,
+            },
+        ));
+        assert_eq!(ui.window_count(), ui_count);
+        assert_eq!(model.window_buffers().count(), model_count);
+        assert_eq!(ui.focused_window_id(), ids.main);
+        assert_eq!(model.windows.focused(), ids.main);
+    }
+
+    #[test]
+    fn split_success_registers_and_focuses_same_window_in_both_stores() {
+        let (mut ui, mut model, ids) = fixture();
+
+        assert!(ViewSynchronizer::apply(
+            &mut ui,
+            &mut model,
+            ids,
+            ViewEffect::Split {
+                source: ids.main,
+                axis: vim_ui::SplitAxis::Columns,
+            },
+        ));
+        let split = ui.focused_window_id();
+        assert_ne!(split, ids.main);
+        assert!(ui.window(split).is_some());
+        assert!(model.window_state(split).is_some());
+        assert_eq!(model.windows.focused(), split);
+    }
 }
 
 /*

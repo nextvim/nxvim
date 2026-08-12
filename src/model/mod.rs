@@ -253,6 +253,10 @@ impl EditorModel {
         self.windows.split_from(source, new_id, buffer)
     }
 
+    pub fn remove_window(&mut self, window_id: WindowId) -> bool {
+        self.windows.remove(window_id).is_some()
+    }
+
     pub fn with_mut<F, R>(
         &mut self,
         id: BufferId,

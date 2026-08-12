@@ -16,6 +16,9 @@ pub enum ViewEffect {
     Focus(WindowId),
     Split { source: WindowId, axis: SplitAxis },
     FocusDirection(NavigationDirection),
+    Close(WindowId),
+    Hide(WindowId),
+    Resize { width: u16, height: u16 },
 }
 
 #[derive(Debug, Default)]

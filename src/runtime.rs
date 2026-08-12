@@ -89,43 +89,19 @@ impl Runtime {
     }
 
     fn apply_view_effect(&mut self, effect: ViewEffect) {
-        match effect {
-            ViewEffect::Focus(window_id) => {
-                if self.app.ui.focus(window_id).is_ok() {
-                    self.app.model.focus_window(window_id);
-                }
-            }
-            ViewEffect::FocusDirection(direction) => {
-                if let Some(neighbor) = self.app.ui.find_neighbor(direction) {
-                    if self.app.ui.focus(neighbor).is_ok() {
-                        self.app.model.focus_window(neighbor);
-                    }
-                }
-            }
-            ViewEffect::Split { source, axis } => {
-                if self.app.model.window_buffer(source).is_none() {
-                    return;
-                }
-                if self.app.ui.focused_window_id() != source {
-                    let _ = self.app.ui.focus(source);
-                }
-                if let Ok(new_window_id) = self.app.ui.split_focused(axis) {
-                    if let Some(window) = self.app.ui.window_mut(new_window_id) {
-                        window.set_title("MAIN WINDOW".to_string());
-                        window.set_view(Box::new(crate::view::TextView::new(new_window_id)));
-                    }
-                    if self.app.model.split_window(source, new_window_id) {
-                        let _ = self.app.ui.focus(new_window_id);
-                    } else {
-                        let _ = self.app.ui.close_window(new_window_id);
-                    }
-                }
-            }
-        }
+        crate::app::ui::ViewSynchronizer::apply(
+            &mut self.app.ui,
+            &mut self.app.model,
+            self.app.view_ids,
+            effect,
+        );
     }
 
     fn resize(&mut self, rect: vim_ui::Rect) {
-        self.app.ui.resize(rect);
+        self.apply_view_effect(ViewEffect::Resize {
+            width: rect.width,
+            height: rect.height,
+        });
         self.buffered_renderer.resize(rect.width, rect.height);
     }
 
