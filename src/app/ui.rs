@@ -60,6 +60,42 @@ impl ViewSynchronizer {
         }
     }
 
+    pub fn synchronize_viewports(
+        model: &mut crate::model::EditorModel,
+        layout: &crate::view::LayoutSnapshot,
+    ) {
+        let updates: Vec<_> = model
+            .window_buffers()
+            .filter_map(|(window_id, buffer_id)| {
+                let window_layout = layout.get(window_id)?;
+                let inner_rect = if window_layout.draws_border {
+                    window_layout.rect.inner(1)
+                } else {
+                    window_layout.rect
+                };
+                let snapshot = model
+                    .get_buffer(buffer_id)
+                    .ok()?
+                    .snapshot()
+                    .as_inner()
+                    .clone();
+                Some((
+                    window_id,
+                    snapshot,
+                    window_layout.rect.width as u32,
+                    inner_rect.height as u32,
+                    window_layout.draws_border,
+                ))
+            })
+            .collect();
+
+        for (window_id, snapshot, width, height, has_border) in updates {
+            if let Some(window) = model.window_state_mut(window_id) {
+                window.update(snapshot, width, height, has_border);
+            }
+        }
+    }
+
     fn split(
         ui: &mut Ui,
         model: &mut crate::model::EditorModel,
@@ -106,7 +142,7 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
     }
     if let Some(w) = ui.window_mut(tabline_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::TabLineView::new()));
+        w.set_view(Box::new(crate::view::TabLineView::new()));
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
@@ -117,11 +153,11 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
     }
     if let Some(w) = ui.window_mut(status_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::StatusLineView::new()));
+        w.set_view(Box::new(crate::view::StatusLineView::new()));
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::app::views::CommandLineView::new(cmd_id)));
+        w.set_view(Box::new(crate::view::CommandLineView::new(cmd_id)));
     }
 
     // Define layout using SlotLayout
@@ -176,7 +212,7 @@ mod tests {
     #[test]
     fn failed_focus_does_not_change_model_focus() {
         let (mut ui, mut model, ids) = fixture();
-        let original = model.windows.focused();
+        let original = model.focused_window();
 
         assert!(!ViewSynchronizer::apply(
             &mut ui,
@@ -184,7 +220,7 @@ mod tests {
             ids,
             ViewEffect::Focus(ids.left_panel),
         ));
-        assert_eq!(model.windows.focused(), original);
+        assert_eq!(model.focused_window(), original);
         assert_eq!(ui.focused_window_id(), ids.main);
     }
 
@@ -206,7 +242,7 @@ mod tests {
         assert_eq!(ui.window_count(), ui_count);
         assert_eq!(model.window_buffers().count(), model_count);
         assert_eq!(ui.focused_window_id(), ids.main);
-        assert_eq!(model.windows.focused(), ids.main);
+        assert_eq!(model.focused_window(), ids.main);
     }
 
     #[test]
@@ -226,7 +262,7 @@ mod tests {
         assert_ne!(split, ids.main);
         assert!(ui.window(split).is_some());
         assert!(model.window_state(split).is_some());
-        assert_eq!(model.windows.focused(), split);
+        assert_eq!(model.focused_window(), split);
     }
 }
 

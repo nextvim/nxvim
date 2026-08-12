@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::app::input::InputController;
+use crate::controller::input::InputController;
 use crate::model::EditorModel;
 
 use super::textview;
@@ -54,7 +54,7 @@ impl EditorViewModel {
             buffer_names.insert(ui_buffer_id, buffer_name(model, id));
         }
 
-        let active_window = model.windows.focused();
+        let active_window = model.focused_window();
         let active_buffer_id = model
             .window_buffer(active_window)
             .map(|id| vim_ui::BufferId::new(id.get()));

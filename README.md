@@ -37,9 +37,21 @@ graph TD
     end
 ```
 
+### Binary architecture
+
+The `nxvim` binary is split into explicit layers:
+
+- **`model`** owns buffers, semantic windows, selections, display maps, and task-derived state.
+- **`controller`** dispatches commands, executes editor behavior, accepts typed task results, and emits `ViewEffect`s.
+- **`view`** builds an immutable `EditorViewModel` and renders it through `vim-ui`.
+- **`app`** is the small composition root for input, scripting, services, editor operations, and concrete UI synchronization.
+- **`runtime`** owns terminal lifecycle, polls events/tasks, dispatches, projects, and renders.
+
+See [`STRUCTURE.md`](STRUCTURE.md) for dependency rules and window identity ownership.
+
 ### Components and Crates
 
-- **`nxvim` (App binary)**: The main terminal-based UI and application shell. Uses `crossterm` for rendering, screen buffering, and raw-mode inputs. Translates interactive keyboard inputs into script executions and coordinates headless evaluations.
+- **`nxvim` (App binary)**: The terminal application shell using `crossterm` and the MVC modules above.
 - **`crates/vim-buffer`**: High-fidelity, editor-agnostic, Vim-compatible buffer and buffer lifecycle manager. Manages atomic transactions, stable anchor-backed selections (`VimSelection`), special marks (`MarkSet`), undo tree / command grouping (`UndoTree`), options, and synchronous event callbacks.
 - **`crates/vim-script`**: Compiles and executes Vimscript. Exposes functions (`bufnr`, `getline`, `setline`), variables, commands, and interfaces with the underlying host.
 - **`crates/vim-formatter`**: Evaluates and renders formatted strings, modeled after Vim's `statusline` specification. Parses format templates into a compiled AST and renders them efficiently with syntax styles.

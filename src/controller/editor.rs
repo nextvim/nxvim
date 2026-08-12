@@ -1,4 +1,4 @@
-use crate::app::buffer_manager::{BufferContext, BufferDisplayContext};
+use crate::model::{BufferState, WindowState};
 use display_map::DisplayPoint;
 use std::cmp::Ordering;
 use sum_tree::Bias;
@@ -19,8 +19,8 @@ impl Editor {
         mode: Mode,
         action: &Action,
         buffer: &mut Buffer,
-        buffer_context: &mut BufferContext,
-        buffer_display_context: &mut BufferDisplayContext,
+        buffer_context: &mut BufferState,
+        buffer_display_context: &mut WindowState,
         services: &mut crate::app::services::Services,
     ) -> Result<Option<Mode>, Box<dyn std::error::Error>> {
         // Ensure there is at least one selection
@@ -47,8 +47,8 @@ impl Editor {
         mode: Mode,
         previous_mode: Mode,
         buffer: &mut Buffer,
-        buffer_context: &mut BufferContext,
-        buffer_display_context: &mut BufferDisplayContext,
+        _buffer_context: &mut BufferState,
+        buffer_display_context: &mut WindowState,
     ) {
         if previous_mode == mode {
             buffer_display_context
@@ -80,8 +80,8 @@ impl Editor {
         &self,
         mode: Mode,
         buffer: &mut Buffer,
-        buffer_context: &mut BufferContext,
-        buffer_display_context: &mut BufferDisplayContext,
+        _buffer_context: &mut BufferState,
+        buffer_display_context: &mut WindowState,
     ) {
         if mode == Mode::VisualBlock {
             buffer_display_context
@@ -100,8 +100,8 @@ impl Editor {
         mode: Mode,
         action: &Action,
         buffer: &mut Buffer,
-        buffer_context: &mut BufferContext,
-        buffer_display_context: &mut BufferDisplayContext,
+        buffer_context: &mut BufferState,
+        buffer_display_context: &mut WindowState,
         services: &mut crate::app::services::Services,
     ) -> Option<Mode> {
         let mut action_owned = action.clone();
@@ -1267,8 +1267,8 @@ impl Editor {
         &self,
         mode: Mode,
         buffer: &mut Buffer,
-        buffer_context: &mut BufferContext,
-        buffer_display_context: &mut BufferDisplayContext,
+        buffer_context: &mut BufferState,
+        buffer_display_context: &mut WindowState,
         services: &mut crate::app::services::Services,
         count: u32,
         motion: &Action,

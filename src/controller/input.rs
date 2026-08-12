@@ -58,10 +58,6 @@ impl InputController {
             _ => None,
         }
     }
-
-    pub fn pending_display(&self) -> &str {
-        &self.pending_display
-    }
 }
 
 /// Result of feeding a key to the controller.

@@ -1,33 +1,18 @@
-pub mod buffer_manager;
-pub mod editor;
-pub mod input;
+//! Application composition and infrastructure adapters.
+//!
+//! This module wires model, controller-facing services, UI synchronization,
+//! and scripting. Semantic state remains in `model` and behavior in `controller`.
 pub mod script;
 pub mod services;
 pub mod ui;
-pub mod views;
 
 pub struct App {
-    pub script: script::ScriptRuntime,
     pub model: crate::model::EditorModel,
-    pub controller: input::InputController,
-    pub ui: ui::Ui,
+    pub controller: crate::controller::input::InputController,
     pub services: services::Services,
-    pub editor: editor::Editor,
+    pub script: script::ScriptRuntime,
+    pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
-}
-
-impl std::ops::Deref for App {
-    type Target = crate::model::EditorModel;
-
-    fn deref(&self) -> &Self::Target {
-        &self.model
-    }
-}
-
-impl std::ops::DerefMut for App {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.model
-    }
 }
 
 impl App {
@@ -37,12 +22,11 @@ impl App {
         let model = crate::model::EditorModel::new(paths, view_ids.main, view_ids.commandline);
 
         Self {
-            script: script::ScriptRuntime::new(),
             model,
-            controller: input::InputController::new(vim_input::Mode::Normal),
-            ui,
+            controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
             services: services::Services::new(),
-            editor: editor::Editor::new(),
+            script: script::ScriptRuntime::new(),
+            ui,
             view_ids,
         }
     }

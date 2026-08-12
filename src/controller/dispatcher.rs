@@ -22,7 +22,7 @@ impl Dispatcher {
             }
             Command::Task(result) => TaskDispatcher::dispatch(&mut app.model, result),
             Command::Editor { action, register } => {
-                let active_window = app.model.windows.focused();
+                let active_window = app.model.focused_window();
 
                 let mut message = format!("[{:?}] Action: {:?}", app.controller.mode(), action);
                 if let Some(register) = register {
@@ -37,7 +37,6 @@ impl Dispatcher {
                 let mut outcome = EditorHandler::execute(
                     &mut app.model,
                     &mut app.controller,
-                    &app.editor,
                     &mut app.services,
                     active_window,
                     &action,

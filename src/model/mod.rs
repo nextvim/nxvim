@@ -1,7 +1,12 @@
-pub mod buffer_state;
-pub mod buffers;
-pub mod window_state;
-pub mod windows;
+//! Semantic editor state.
+//!
+//! This layer owns buffers and windows and must not depend on terminal input,
+//! rendering, UI layout, controller handlers, or service implementations.
+
+mod buffer_state;
+mod buffers;
+mod window_state;
+mod windows;
 
 use std::path::PathBuf;
 use vim_buffer::BufferId;
@@ -9,13 +14,13 @@ use vim_ui::WindowId;
 
 pub use buffer_state::BufferState;
 pub use buffers::Buffers;
-pub use window_state::{Viewport, WindowState};
+pub use window_state::WindowState;
 pub use windows::Windows;
 
 pub struct EditorModel {
-    pub buffers: Buffers,
-    pub windows: Windows,
-    pub status: Option<String>,
+    buffers: Buffers,
+    windows: Windows,
+    pub(crate) status: Option<String>,
     commandline_buffer: BufferId,
 }
 
@@ -53,51 +58,8 @@ impl EditorModel {
         self.commandline_buffer
     }
 
-    pub fn get_current(&self) -> Option<BufferId> {
-        Some(self.buffers.current())
-    }
-
     pub fn create(&mut self, initial_text: impl Into<String>) -> BufferId {
         self.buffers.create(initial_text)
-    }
-
-    pub fn create_named(
-        &mut self,
-        name: impl AsRef<std::path::Path>,
-        initial_text: impl Into<String>,
-    ) -> Result<(BufferId, vim_buffer::ManagerOutcome), vim_buffer::BufferError> {
-        self.buffers.create_named(name, initial_text)
-    }
-
-    pub fn load(
-        &mut self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(BufferId, vim_buffer::ManagerOutcome), vim_buffer::BufferError> {
-        self.buffers.load(path)
-    }
-
-    pub fn unload(
-        &mut self,
-        id: BufferId,
-        force: bool,
-    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
-        let result = self.buffers.unload(id, force);
-        if result.is_ok() {
-            self.cleanup_windows(id);
-        }
-        result
-    }
-
-    pub fn delete(
-        &mut self,
-        id: BufferId,
-        force: bool,
-    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
-        let result = self.buffers.delete(id, force);
-        if result.is_ok() {
-            self.cleanup_windows(id);
-        }
-        result
     }
 
     pub fn wipe(
@@ -116,51 +78,17 @@ impl EditorModel {
         self.buffers.get(id)
     }
 
-    pub fn get_buffer_mut(
-        &mut self,
-        id: BufferId,
-    ) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
-        self.buffers.get_mut(id)
-    }
-
     pub fn list(&self) -> Vec<BufferId> {
         self.buffers.list()
     }
 
-    pub fn listed(&self) -> Vec<BufferId> {
-        self.buffers.listed()
-    }
-
-    pub fn get_buffer_context(&self, id: BufferId) -> Option<&BufferState> {
+    pub fn buffer_state(&self, id: BufferId) -> Option<&BufferState> {
         self.buffers.state(id)
     }
 
-    pub fn get_buffer_context_mut(&mut self, id: BufferId) -> Option<&mut BufferState> {
-        Some(self.buffers.state_mut(id))
-    }
-
-    pub fn buffer_revision(&self, id: BufferId) -> Option<u64> {
+    pub fn buffer_state_mut(&mut self, id: BufferId) -> Option<&mut BufferState> {
         self.get_buffer(id).ok()?;
-        Some(
-            self.get_buffer_context(id)
-                .map_or(0, |state| state.revision),
-        )
-    }
-
-    pub fn task_owner(
-        &self,
-        buffer_id: BufferId,
-        window_id: Option<WindowId>,
-    ) -> Option<crate::app::services::OwnerId> {
-        Some(crate::app::services::OwnerId {
-            buffer_id: Some(buffer_id),
-            window_id,
-            revision: self.buffer_revision(buffer_id)?,
-        })
-    }
-
-    pub fn set_buffer_context(&mut self, id: BufferId, context: BufferState) {
-        *self.buffers.state_mut(id) = context;
+        Some(self.buffers.state_mut(id))
     }
 
     pub fn window_buffer(&self, window_id: WindowId) -> Option<BufferId> {
@@ -181,50 +109,12 @@ impl EditorModel {
             .map(|(window_id, state)| (window_id, state.buffer_id))
     }
 
-    pub fn synchronize_viewports(&mut self, layout: &crate::view::LayoutSnapshot) {
-        let updates: Vec<_> = self
-            .window_buffers()
-            .filter_map(|(window_id, buffer_id)| {
-                let window_layout = layout.get(window_id)?;
-                let inner_rect = if window_layout.draws_border {
-                    window_layout.rect.inner(1)
-                } else {
-                    window_layout.rect
-                };
-                let snapshot = self
-                    .get_buffer(buffer_id)
-                    .ok()?
-                    .snapshot()
-                    .as_inner()
-                    .clone();
-                Some((
-                    window_id,
-                    snapshot,
-                    window_layout.rect.width as u32,
-                    inner_rect.height as u32,
-                    window_layout.draws_border,
-                ))
-            })
-            .collect();
-
-        for (window_id, snapshot, width, height, has_border) in updates {
-            if let Some(window) = self.window_state_mut(window_id) {
-                window.update(snapshot, width, height, has_border);
-            }
-        }
+    pub fn focused_window(&self) -> WindowId {
+        self.windows.focused()
     }
 
-    pub fn register_window(
-        &mut self,
-        window_id: WindowId,
-        buffer_id: BufferId,
-        viewport: Viewport,
-    ) -> bool {
-        let Ok(buffer) = self.buffers.get(buffer_id) else {
-            return false;
-        };
-        self.windows.register(window_id, buffer, viewport);
-        true
+    pub fn previous_window(&self) -> Option<WindowId> {
+        self.windows.previous()
     }
 
     pub fn focus_window(&mut self, window_id: WindowId) -> bool {
@@ -257,31 +147,29 @@ impl EditorModel {
         self.windows.remove(window_id).is_some()
     }
 
-    pub fn with_mut<F, R>(
+    pub fn edit_window<R>(
         &mut self,
-        id: BufferId,
         window_id: WindowId,
-        f: F,
-    ) -> Result<R, vim_buffer::BufferError>
-    where
-        F: FnOnce(&mut vim_buffer::Buffer, &mut BufferState, &mut WindowState) -> R,
-    {
-        self.buffers.state_mut(id);
-        if self.windows.state(window_id).is_none() {
-            let buffer = self.buffers.get(id)?;
-            self.windows.register_placeholder(window_id, buffer);
-        }
-        if self.windows.buffer_id(window_id) != Some(id) {
-            let buffer = self.buffers.get(id)?;
-            self.windows.switch_to(window_id, buffer);
-        }
+        edit: impl FnOnce(&mut vim_buffer::Buffer, &mut BufferState, &mut WindowState) -> R,
+    ) -> Result<R, vim_buffer::BufferError> {
+        let Some(buffer_id) = self.windows.buffer_id(window_id) else {
+            return Err(vim_buffer::BufferError::NotImplemented(
+                "editing an unregistered window",
+            ));
+        };
+        self.buffers.state_mut(buffer_id);
 
         let Buffers { inner, states } = &mut self.buffers;
-        let buffer = inner.get_mut(id)?;
-        let context = states.get_mut(&id).unwrap();
-        context.revision = context.revision.wrapping_add(1);
-        let window = self.windows.state_mut(window_id).unwrap();
-        Ok(f(buffer, context, window))
+        let buffer = inner.get_mut(buffer_id)?;
+        let state = states
+            .get_mut(&buffer_id)
+            .expect("buffer state was initialized");
+        state.revision = state.revision.wrapping_add(1);
+        let window = self
+            .windows
+            .state_mut(window_id)
+            .expect("window buffer came from registered window");
+        Ok(edit(buffer, state, window))
     }
 
     pub fn validate(&self) -> Result<(), String> {

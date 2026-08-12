@@ -118,7 +118,7 @@ impl TaskDispatcher {
         if model.get_buffer(buffer_id).is_err() {
             return None;
         }
-        let state = model.get_buffer_context_mut(buffer_id)?;
+        let state = model.buffer_state_mut(buffer_id)?;
         (state.revision == revision).then_some(state)
     }
 
@@ -130,7 +130,7 @@ impl TaskDispatcher {
     ) -> bool {
         model.window_buffer(window_id) == Some(buffer_id)
             && model
-                .get_buffer_context(buffer_id)
+                .buffer_state(buffer_id)
                 .is_some_and(|state| state.revision == revision)
     }
 }
@@ -169,7 +169,7 @@ mod tests {
     fn current_revision_is_applied_and_requests_redraw() {
         let (mut model, main, _) = model();
         let buffer = model.window_buffer(main).unwrap();
-        let revision = model.get_buffer_context_mut(buffer).unwrap().revision;
+        let revision = model.buffer_state_mut(buffer).unwrap().revision;
 
         let outcome = TaskDispatcher::dispatch(&mut model, highlight(main, buffer, revision));
 
@@ -180,7 +180,7 @@ mod tests {
     fn stale_revision_is_discarded() {
         let (mut model, main, _) = model();
         let buffer = model.window_buffer(main).unwrap();
-        model.get_buffer_context_mut(buffer).unwrap().revision = 2;
+        model.buffer_state_mut(buffer).unwrap().revision = 2;
 
         let outcome = TaskDispatcher::dispatch(&mut model, highlight(main, buffer, 1));
 

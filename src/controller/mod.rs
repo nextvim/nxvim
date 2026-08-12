@@ -1,15 +1,23 @@
-pub mod buffer_handler;
-pub mod command;
-pub mod commandline_handler;
-pub mod dispatcher;
-pub mod editor_handler;
-pub mod task_dispatcher;
-pub mod window_handler;
+//! Command dispatch and editor behavior.
+//!
+//! Controllers may mutate `model` through explicit operations and request UI
+//! changes through `ViewEffect`; they do not render or manipulate terminal state.
+
+mod buffer_handler;
+mod command;
+mod commandline_handler;
+mod dispatcher;
+mod editor;
+mod editor_handler;
+pub(crate) mod input;
+mod task_dispatcher;
+mod window_handler;
 
 pub use command::{Command, CommandOutcome, ViewEffect};
 pub use dispatcher::Dispatcher;
 
-use crate::app::{input::ControllerAction, script::EditorCommand};
+use crate::app::script::EditorCommand;
+use input::ControllerAction;
 
 impl From<ControllerAction> for Command {
     fn from(action: ControllerAction) -> Self {

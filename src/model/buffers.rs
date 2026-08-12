@@ -84,37 +84,6 @@ impl Buffers {
         self.inner.create_named(name, initial_text)
     }
 
-    pub fn load(
-        &mut self,
-        path: impl AsRef<Path>,
-    ) -> Result<(BufferId, vim_buffer::ManagerOutcome), vim_buffer::BufferError> {
-        self.inner.load(path)
-    }
-
-    pub fn unload(
-        &mut self,
-        id: BufferId,
-        force: bool,
-    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
-        let result = self.inner.unload(id, force);
-        if result.is_ok() {
-            self.states.remove(&id);
-        }
-        result
-    }
-
-    pub fn delete(
-        &mut self,
-        id: BufferId,
-        force: bool,
-    ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
-        let result = self.inner.delete(id, force);
-        if result.is_ok() {
-            self.states.remove(&id);
-        }
-        result
-    }
-
     pub fn wipe(
         &mut self,
         id: BufferId,
@@ -129,13 +98,6 @@ impl Buffers {
 
     pub fn get(&self, id: BufferId) -> Result<&vim_buffer::Buffer, vim_buffer::BufferError> {
         self.inner.get(id)
-    }
-
-    pub fn get_mut(
-        &mut self,
-        id: BufferId,
-    ) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
-        self.inner.get_mut(id)
     }
 
     pub fn list(&self) -> Vec<BufferId> {

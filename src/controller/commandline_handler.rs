@@ -2,7 +2,8 @@ use text::{Point, ToOffset, ToPoint};
 use vim_input::{Action, Mode};
 use vim_ui::WindowId;
 
-use crate::app::{input::InputController, script::ScriptRuntime, ui::ViewIds};
+use crate::app::{script::ScriptRuntime, ui::ViewIds};
+use crate::controller::input::InputController;
 use crate::model::EditorModel;
 
 use super::command::{CommandOutcome, ViewEffect};
@@ -51,8 +52,7 @@ impl CommandlineHandler {
 
     fn editor_focus(model: &EditorModel, view_ids: ViewIds) -> WindowId {
         model
-            .windows
-            .previous()
+            .previous_window()
             .filter(|&id| id != view_ids.commandline && model.window_state(id).is_some())
             .unwrap_or(view_ids.main)
     }

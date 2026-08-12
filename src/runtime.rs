@@ -6,7 +6,7 @@ use crossterm::event;
 use std::io::{Write, stdout};
 use vim_ui::BufferedRenderer;
 
-/// Owns terminal lifecycle, event polling, redraw scheduling, and rendering.
+/// Owns terminal lifecycle, source polling, command dispatch, and rendering.
 pub struct Runtime {
     terminal: TerminalSession,
     app: App,
@@ -111,7 +111,7 @@ impl Runtime {
         out: &mut impl Write,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let layout = self.layout_snapshot(rect);
-        self.app.model.synchronize_viewports(&layout);
+        crate::app::ui::ViewSynchronizer::synchronize_viewports(&mut self.app.model, &layout);
         let view_model = EditorViewModel::build(&self.app.model, &self.app.controller, &layout);
         self.app.ui.draw(&view_model, &mut self.buffered_renderer)?;
         self.buffered_renderer.flush(out)?;

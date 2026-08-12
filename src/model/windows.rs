@@ -71,10 +71,6 @@ impl Windows {
         self.windows.iter().map(|(&id, state)| (id, state))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (WindowId, &mut WindowState)> {
-        self.windows.iter_mut().map(|(&id, state)| (id, state))
-    }
-
     pub fn buffer_id(&self, id: WindowId) -> Option<BufferId> {
         self.state(id).map(|state| state.buffer_id)
     }
