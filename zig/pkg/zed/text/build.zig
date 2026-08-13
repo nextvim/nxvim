@@ -15,6 +15,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const oniguruma_dependency = b.dependency("oniguruma", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const module = b.addModule("text", .{
         .root_source_file = b.path("src/text/root.zig"),
@@ -41,6 +45,12 @@ pub fn build(b: *std.Build) void {
         "tests/operation_queue_test.zig",
         "tests/undo_map_test.zig",
         "tests/subscription_test.zig",
+        "tests/fragment_test.zig",
+        "tests/buffer_test.zig",
+        "tests/phase6_test.zig",
+        "tests/phase7_test.zig",
+        "tests/phase8_test.zig",
+        "tests/phase9_test.zig",
     }) |test_path| {
         const unit_tests = b.addTest(.{
             .root_module = b.createModule(.{
@@ -52,6 +62,32 @@ pub fn build(b: *std.Build) void {
         });
         test_step.dependOn(&b.addRunArtifact(unit_tests).step);
     }
+
+    const onig_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/onig_compatibility_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "text", .module = module },
+                .{ .name = "oniguruma", .module = oniguruma_dependency.module("oniguruma") },
+            },
+        }),
+    });
+    const onig_step = b.step("test-onig", "Run optional Oniguruma compatibility tests (requires libonig-dev)");
+    onig_step.dependOn(&b.addRunArtifact(onig_tests).step);
+
+    const benchmark_exe = b.addExecutable(.{
+        .name = "text_bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "text", .module = module }},
+        }),
+    });
+    const benchmark_step = b.step("bench", "Run text benchmarks (use -Doptimize=ReleaseFast)");
+    benchmark_step.dependOn(&b.addRunArtifact(benchmark_exe).step);
 
     const differential_exe = b.addExecutable(.{
         .name = "text_differential",

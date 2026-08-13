@@ -542,6 +542,8 @@ All commands pass.
 
 ### Phase 4 — Fragment model, summaries, dimensions, and indexes
 
+Status: **completed for observable semantics**. The fragment and insertion models, contextual summaries and dimensions, persistent builders, splitting, Rope reconstruction, and structural validation are implemented. The numeric summary-visit performance gate remains an instrumentation follow-up; SumTree cursor descent is already summary-guided, but this phase does not claim measured complexity evidence yet.
+
 Deliverables:
 
 1. `Fragment`, `FragmentSummary`, and `FragmentTextSummary`;
@@ -560,7 +562,33 @@ Exit gate:
 - cursor operations remain logarithmic by summary-visit gate;
 - retained fragment-tree snapshots remain isolated.
 
+Completion evidence:
+
+- `Fragment`, `FragmentSummary`, and `FragmentTextSummary` own and deep-clone locators, deletion timestamps, and version vectors;
+- fragment splitting preserves insertion spans, deletion history, undo versions, and independent locator ownership;
+- insertion fragments, keys, and slices match Rust's timestamp/split/range ordering;
+- current visible/full and contextual versioned-full dimensions match flat deterministic models, including invalid partial-version subtrees;
+- generated 160-fragment trees and insertion indexes validate after append operations and retained snapshots remain isolated;
+- visible/deleted Rope reconstruction routes old text according to previous and current fragment visibility and validates complete source consumption;
+- `FragmentBuilder` preserves appended persistent subtrees and validates its resulting tree.
+
+Known non-semantic performance follow-up:
+
+- add SumTree summary-visit counters so logarithmic fragment cursor descent has a numeric regression gate rather than only using the existing summary-guided cursor implementation.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+```
+
+All commands pass.
+
 ### Phase 5 — Buffer construction, snapshots, local edits, and queries
+
+Status: **completed for the local observable surface, with one hardening gate open**. Constructors, persistent snapshots/branches, transactional local edit planning and commit, generated edit operations, queries, anchors, subscriptions, patches, and structural validation are implemented. Exhaustive allocator-failure injection remains blocked on making allocation-owning fragment summary construction fallible through SumTree's currently infallible `Ops.summary` contract; Phase 5 does not claim that rollback gate yet.
 
 Deliverables:
 
@@ -583,7 +611,36 @@ Exit gate:
 - transaction failure injection proves rollback and cleanup;
 - Debug, ReleaseSafe, and ReleaseFast tests pass.
 
+Completion evidence:
+
+- detecting and explicitly normalized constructors preserve line-ending preference while storing normalized UTF-8 Rope text;
+- initial text is fragmentized at UTF-8 boundaries with insertion indexes and observed initial versions;
+- snapshot clones and branches retain persistent Rope/SumTree state and remain isolated across repeated edits;
+- sorted non-overlapping batch edits normalize inserted text, split existing fragments without changing insertion coordinates, retain deleted text, rebuild insertion indexes, and publish only after replacement validation;
+- edit operations own Rust-shaped full-offset ranges and normalized replacement payloads;
+- visible byte/point/UTF-16 conversions, clipping, text/range/chunk/byte/scalar/line queries, anchors, and anchor ranges delegate to Rope and fragment indexes;
+- anchor tests cover positions before, inside, and after deletions, including invalidated deleted anchors;
+- subscriptions receive canonical composed `Patch(usize)` edits after successful local edits;
+- a 48-step generated edit model validates text and retained snapshots after every operation;
+- `Buffer.validate()` checks Rope and tree structure, visible/deleted extents, locator and insertion-key ordering, nonempty fragments, and observed insertion versions.
+
+Known hardening follow-up:
+
+- extend SumTree's item-summary contract to propagate allocation failure, then run exhaustive failure injection over fragment construction and local edit commit without panic-based summary allocation.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+```
+
+All commands pass.
+
 ### Phase 6 — Remote operations, deferral, and convergence
+
+Status: **completed for replicated edit-operation semantics**. Edit operations deep-clone their version/range/text ownership, apply through source-versioned full offsets, order concurrent same-position insertions by descending Lamport order, preserve concurrent text during deletion, defer causal gaps, deduplicate duplicate timestamps, flush dependencies deterministically, publish remote patches, and converge in deterministic partition/reconnect tests. Replicated undo operations remain Phase 7 work. Canonical operation/state trace serialization and large generated network schedules remain validation follow-ups, so byte-for-byte Rust trace parity is not yet claimed.
 
 Deliverables:
 
@@ -604,7 +661,36 @@ Exit gate:
 - all replicas converge in text, fragment canonical state, versions, anchors, and undo state;
 - Rust/Zig fixed remote-operation traces match byte-for-byte.
 
+Completion evidence:
+
+- borrowed operation batches are cloned into owned queue state and callers may immediately release their payloads;
+- deferred operations remain Lamport-sorted and unique, blocked dependents flush when their source versions become observed, and repeated delivery is idempotent;
+- remote edits use sender-versioned full offsets and rebuild fragment, insertion, visible Rope, and deleted Rope state transactionally before publication;
+- three concurrent replicas converge under different delivery permutations with Rust-compatible descending Lamport insertion order;
+- concurrent deletion and insertion converge without deleting text unobserved by the deleting operation;
+- partition/reconnect tests combine delayed dependencies, concurrent operations, duplicates, and arbitrary valid delivery order;
+- remote edits publish canonical `Patch(usize)` updates after replacement validation;
+- structural validation runs after every tested delivery and all replicas converge in text and versions.
+
+Known follow-ups:
+
+- add canonical operation and complete fragment-state serialization to the differential trace format;
+- expand the deterministic network harness into generated reorder/delay/partition schedules and compare fixed remote traces byte-for-byte with Rust;
+- add replicated `UndoOperation` delivery and undo-state convergence as part of Phase 7.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+```
+
+All commands pass.
+
 ### Phase 7 — Transactions, history, undo, and redo
+
+Status: **completed for observable transaction, history, and replicated undo semantics, with allocator hardening still open**. History stores owned operations and base text; explicit and automatic transactions support nesting, deterministic injected time, grouping, suppression, merge, and forget; undo/redo generate replicated parity-count `UndoOperation`s, update `UndoMap`, recompute fragment visibility and visible/deleted Ropes, publish patches, defer behind missing causal edits, and converge across replicas. Exhaustive allocation-failure injection remains tied to the infallible allocation-owning fragment summary callback documented in Phase 5.
 
 Deliverables:
 
@@ -625,7 +711,37 @@ Exit gate:
 - snapshots from before/after history operations remain isolated;
 - allocation failure leaves history and CRDT state unchanged.
 
+Completion evidence:
+
+- `Operation` owns and deep-clones both edit and undo payloads, including source versions and per-edit undo counts;
+- history retains the normalized base Rope and deduplicated owned operation records;
+- automatic edits create transactions while explicit nested transactions collect multiple edit IDs under one start version;
+- injected `u64` monotonic times drive grouping deterministically, with configurable intervals and grouping suppression;
+- transaction lookup, finalization, merge, suppression, and forget behavior have deterministic tests;
+- local undo and redo increment maximum observed counts, update `UndoMap`, recompute every fragment's visibility, rebuild visible/deleted Ropes, and preserve retained snapshots;
+- replicated undo delivery is idempotent, defers until its causal edit arrives, and flushes automatically afterward;
+- undo after a concurrent remote insertion removes only the local edit and preserves the concurrent insertion on every replica;
+- undo/redo round trips restore matching visible text and validated fragment state on local and remote replicas.
+
+Known hardening follow-ups:
+
+- make SumTree item-summary construction fallible so exhaustive allocation-failure injection can cover history plus CRDT commit without panic-based fragment summary allocation;
+- expand generated edit/undo network schedules and compare grouping plus undo traces against the Rust oracle;
+- optimize UndoMap's version-relative lookup using the Phase 3 keyed-cursor follow-up.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+```
+
+All commands pass.
+
 ### Phase 8 — Waiters, subscriptions, regex/query completeness, and consumer readiness
+
+Status: **completed for documented consumer readiness**. Version/edit/anchor wait handles use reference-counted thread-safe polling state with exact-once readiness and cancellation; subscriptions retain their Phase 3 thread-safe composition semantics; remaining direct query surfaces include string containment, indentation, edit detection, and engine-neutral regex search. Core `text` exposes `RegexMatcher` without linking a regex engine, while compatibility tests use the vendored Oniguruma 6.9.9 package. The consumer fixture compiles entirely through public exports, and adaptations plus deferred Rust surfaces are listed in the package README rather than silently omitted.
 
 Deliverables:
 
@@ -645,7 +761,41 @@ Exit gate:
 - immediate consumer fixture compiles without private escape hatches;
 - no public Rust behavior is silently omitted; every adaptation is documented.
 
+Completion evidence:
+
+- `waitForVersion`, `waitForEdits`, and `waitForAnchors` complete only after the requested causal version is observed, including after deferred remote delivery;
+- waiter state is shared through atomic reference counts and a spin mutex; handle drop, explicit cancel, `giveUpWaiting`, and buffer destruction release or cancel state safely;
+- duplicate operations do not retrigger completed waiters and readiness is monotonic;
+- `RegexMatcher` is an engine-neutral borrowed callback contract returning validated byte ranges, with safe iteration across empty UTF-8 matches;
+- `BufferSnapshot` provides regex find/find-all, string containment, line indentation, and `hasEditsSince` queries without exposing private Rope or fragment fields;
+- the optional `test-onig` step uses the vendored Oniguruma 6.9.9 Zig package and covers Unicode properties and lookaround syntax;
+- the vendored Oniguruma package now links its static library through the exported module so downstream imports receive native symbols;
+- an immediate-consumer fixture compiles construction, snapshots, coordinates, anchors, subscriptions, waiters, and regex adapters through public `text` exports only;
+- `zig/pkg/zed/text/README.md` documents ownership, waiter adaptation, regex integration, synchronization boundaries, examples, and deferred Rust APIs.
+
+Documented adaptations and follow-ups:
+
+- wait handles are polling handles rather than Rust futures/oneshot receivers; executors may add their own wake adapter;
+- regex compilation, syntax, captures, and replacement stay engine-owned; core `text` consumes byte-range matches only;
+- regex search currently materializes contiguous text and is scheduled for Phase 9 performance work;
+- lazy `edits_since`, anchored edit iteration, and `offsets_to_version` remain explicitly deferred rather than silently represented by incomplete APIs;
+- buffer mutation remains externally synchronized, while subscriptions and waiter shared state are internally thread-safe.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+zig build --build-file zig/pkg/zed/text/build.zig test-onig
+zig build --build-file zig/pkg/zed/text/build.zig test-onig -Doptimize=ReleaseSafe
+```
+
+All commands pass.
+
 ### Phase 9 — Stateful differential validation, fuzzing, and performance
+
+Status: **validation and baseline program completed; final performance and allocator gates remain open**. Three documented seeds drive stateful UTF-8 flat-model edits and four-replica convergence schedules with reverse/random delivery and duplicates. Cross-thread retained-snapshot reads, the checked-in Rust oracle corpus, all optimization modes, Oniguruma compatibility, and a non-gating ReleaseFast benchmark pass. Benchmarking exposed whole-buffer fragment/Rope reconstruction during edits, so Rust-equivalent logarithmic edit complexity is not claimed. Exhaustive Buffer allocation-failure injection remains blocked by the infallible allocation-owning fragment summary callback.
 
 Deliverables:
 
@@ -679,6 +829,39 @@ Exit gate:
 - no core operation performs an accidental whole-buffer scan where Rust uses summary-guided traversal;
 - benchmark machine/toolchain and representative results are recorded;
 - noisy wall-clock thresholds are not added until measurements are stable.
+
+Completion evidence:
+
+- seeds `0x90d024b00001`, `0x90d024b00002`, and `0x90d024b00003` each run 160 valid UTF-8 edits against a flat model, validating text, coordinates, retained snapshots, fragments, insertions, and versions after every operation;
+- the same seeds generate four-replica causal edit chains delivered in shuffled/reversed order with duplicate messages, and every replica converges to validated text/state;
+- retained persistent snapshots support concurrent read-only chunk and coordinate traversal from four threads;
+- a multi-chunk middle-insertion regression found and fixed underfull interior Rope chunks by canonicalizing reconstructed Ropes before commit;
+- the seven-case Rust oracle corpus passes, including fixed concurrent insertion/anchor traces and malformed lexical/semantic cases;
+- Debug, ReleaseSafe, ReleaseFast, Oniguruma Debug/ReleaseSafe, and ReleaseFast benchmark commands pass;
+- `zig/pkg/zed/text/bench.zig` covers 4 KiB, 64 KiB, and 2 MiB construction/edit/query/traversal/undo workloads plus two/four/eight-replica synchronization;
+- `zig/pkg/zed/text/BENCHMARKS.md` records machine/toolchain metadata, shallow representation sizes, representative timings, and complexity observations without noisy thresholds.
+
+Open exit gates:
+
+- local and remote edit planning currently materializes old Rope text, walks all fragments, and canonicalizes rebuilt Ropes through contiguous text; replace this with persistent cursor slices and boundary repair before claiming Rust-equivalent edit complexity;
+- engine-neutral regex search currently materializes visible text and needs chunk-aware adaptation for large-buffer performance parity;
+- make SumTree's item-summary callback fallible, then run exhaustive allocation-failure matrices over Buffer construction/edit/remote/undo/history/waiter commit paths;
+- expand the differential executor from its checked-in oracle corpus to generated semantic traces covering all Phase 6-8 commands and canonical fragment/history serialization;
+- sanitizer runs remain optional and were not executed on this pinned Zig toolchain.
+
+Validation:
+
+```sh
+zig build --build-file zig/pkg/zed/text/build.zig test
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseSafe
+zig build --build-file zig/pkg/zed/text/build.zig test -Doptimize=ReleaseFast
+zig build --build-file zig/pkg/zed/text/build.zig test-onig
+zig build --build-file zig/pkg/zed/text/build.zig test-onig -Doptimize=ReleaseSafe
+sh zig/pkg/zed/text/tests/run_oracle.sh
+zig build --build-file zig/pkg/zed/text/build.zig bench -Doptimize=ReleaseFast
+```
+
+All listed commands pass. Phase 9 remains open specifically for the performance, exhaustive allocator-failure, generated semantic differential, and optional sanitizer gates above.
 
 ## Testing matrix
 

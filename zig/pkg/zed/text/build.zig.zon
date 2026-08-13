@@ -7,6 +7,7 @@
         .clock = .{ .path = "../clock" },
         .rope = .{ .path = "../rope" },
         .sum_tree = .{ .path = "../sum_tree" },
+        .oniguruma = .{ .path = "../../oniguruma" },
     },
     .paths = .{
         "build.zig",
@@ -14,6 +15,8 @@
         "src",
         "tests",
         "PHASE-0-CONTRACT.md",
+        "README.md",
+        "BENCHMARKS.md",
         "TRACE-FORMAT.md",
     },
 }
