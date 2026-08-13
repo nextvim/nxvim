@@ -2,6 +2,65 @@ use std::{cmp, ops::Range};
 use sum_tree::{Bias, ContextLessSummary, Dimension, Dimensions, Item, SeekTarget, SumTree};
 use text::{BufferSnapshot, Edit, Point};
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static BUILD_STATS: Cell<BuildStats> = const { Cell::new(BuildStats::new()) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BuildStats {
+    pub rows: u64,
+    pub transforms: u64,
+}
+
+#[cfg(test)]
+impl BuildStats {
+    const fn new() -> Self {
+        Self {
+            rows: 0,
+            transforms: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_build_stats() {
+    BUILD_STATS.set(BuildStats::new());
+}
+
+#[cfg(test)]
+pub(crate) fn build_stats() -> BuildStats {
+    BUILD_STATS.get()
+}
+
+#[cfg(test)]
+fn record_row() {
+    BUILD_STATS.with(|cell| {
+        let mut stats = cell.get();
+        stats.rows += 1;
+        cell.set(stats);
+    });
+}
+
+#[cfg(test)]
+fn record_transform() {
+    BUILD_STATS.with(|cell| {
+        let mut stats = cell.get();
+        stats.transforms += 1;
+        cell.set(stats);
+    });
+}
+
+#[cfg(not(test))]
+fn record_row() {}
+
+#[cfg(not(test))]
+fn record_transform() {}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WrapPoint {
     pub row: u32,
@@ -191,7 +250,11 @@ impl WrapMap {
     pub fn set_wrap_width(&mut self, wrap_width: Option<u32>) {
         if self.wrap_width != wrap_width {
             self.wrap_width = wrap_width;
-            self.sync(self.snapshot.buffer.clone());
+            self.snapshot = WrapSnapshot {
+                transforms: build_transforms(&self.snapshot.buffer, wrap_width),
+                buffer: self.snapshot.buffer.clone(),
+                wrap_width,
+            };
         }
     }
 }
@@ -235,12 +298,14 @@ fn build_row_transforms(
     let max_row = buffer.max_point().row;
 
     for row in rows.start..rows.end.min(buffer.row_count()) {
+        record_row();
         let line_len = buffer.line_len(row);
         let mut column = 0;
 
         if let Some(width) = wrap_width.filter(|width| *width > 0) {
             while line_len.saturating_sub(column) > width {
                 push_isomorphic(&mut transforms, Point::new(0, width));
+                record_transform();
                 transforms.push(Transform::wrap(), ());
                 column += width;
             }
@@ -249,6 +314,7 @@ fn build_row_transforms(
         let remaining = line_len - column;
         push_isomorphic(&mut transforms, Point::new(0, remaining));
         if row < max_row {
+            record_transform();
             transforms.push(Transform::isomorphic(Point::new(1, 0)), ());
         }
     }
@@ -368,6 +434,7 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, extent: Point) {
     );
 
     if let Some(extent) = extent {
+        record_transform();
         transforms.push(Transform::isomorphic(extent), ());
     }
 }

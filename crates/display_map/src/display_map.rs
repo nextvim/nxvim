@@ -1,12 +1,12 @@
-use crate::wrap_map::{WrapMap, WrapPoint, WrapSnapshot};
+use crate::block_map::BlockMap;
 use crate::fold_map::{Fold, FoldMap};
 use crate::inlay_map::InlayMap;
 use crate::tab_map::TabMap;
-use crate::block_map::BlockMap;
+use crate::wrap_map::{WrapMap, WrapPoint, WrapSnapshot};
 
 use std::ops::Range;
-use text::{BufferSnapshot, Point, Anchor, ToPoint};
 use sum_tree::Bias;
+use text::{Anchor, BufferSnapshot, Point, ToPoint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DisplayPoint(pub WrapPoint);
@@ -150,8 +150,15 @@ impl DisplayMap {
     }
 
     pub fn set_wrap_width(&mut self, width: Option<u32>) {
+        if self.wrap_width == width {
+            return;
+        }
         self.wrap_width = width;
-        self.wrap_map.set_wrap_width(width);
+        self.wrap_map = WrapMap::new_windowed(
+            self.fold_map.folded_buffer().clone(),
+            width,
+            self.buffer_window.clone(),
+        );
     }
 
     pub fn apply_wrap_snapshot(&mut self, snapshot: WrapSnapshot) {
@@ -172,13 +179,23 @@ impl DisplayMap {
         let end = buffer_window.end.max(start).min(row_count);
         let buffer_window = start..end;
 
+        let coverage_unchanged = self.buffer_window == buffer_window;
         self.original_buffer = buffer.clone();
         self.buffer_window = buffer_window.clone();
         self.fold_map = FoldMap::new(&buffer, self.folds.clone());
         self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
         self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
-        self.wrap_map = WrapMap::new_windowed(self.fold_map.folded_buffer().clone(), self.wrap_width, buffer_window);
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
+
+        if coverage_unchanged && self.folds.is_empty() {
+            self.wrap_map.sync(buffer);
+        } else {
+            self.wrap_map = WrapMap::new_windowed(
+                self.fold_map.folded_buffer().clone(),
+                self.wrap_width,
+                buffer_window,
+            );
+        }
     }
 
     pub fn scroll_to_cursor(
@@ -192,35 +209,31 @@ impl DisplayMap {
 
         let visible_rows = (screen_rows - 1)
             .saturating_sub(self.margin_top as i32)
-            .saturating_sub(self.margin_bottom as i32);
+            .saturating_sub(self.margin_bottom as i32)
+            .max(0);
         let visible_cols = screen_cols
             .saturating_sub(self.margin_left as i32)
-            .saturating_sub(self.margin_right as i32);
+            .saturating_sub(self.margin_right as i32)
+            .max(0);
 
         self.visible_rows = visible_rows as u32;
         self.visible_cols = visible_cols as u32;
 
-        // scroll based on cursor position
-        let mut cursor_screen_row = cursor_row - self.scroll_y as i32;
-        while cursor_screen_row >= visible_rows {
-            self.scroll_y += 1;
-            cursor_screen_row = cursor_row - self.scroll_y as i32;
-        }
-        while cursor_screen_row < 0 && self.scroll_y > 0 {
-            self.scroll_y -= 1;
-            cursor_screen_row = cursor_row - self.scroll_y as i32;
+        if visible_rows > 0 {
+            let scroll_y = self.scroll_y as i32;
+            if cursor_row < scroll_y {
+                self.scroll_y = cursor_row as u32;
+            } else if cursor_row - scroll_y >= visible_rows {
+                self.scroll_y = (cursor_row - visible_rows + 1) as u32;
+            }
         }
 
-        // Horizontal scroll only if not wrapping (or visible_cols is defined)
         if visible_cols > 0 {
-            let mut cursor_screen_col = cursor_col - self.scroll_x as i32;
-            while cursor_screen_col >= visible_cols {
-                self.scroll_x += 1;
-                cursor_screen_col = cursor_col - self.scroll_x as i32;
-            }
-            while cursor_screen_col < 0 && self.scroll_x > 0 {
-                self.scroll_x -= 1;
-                cursor_screen_col = cursor_col - self.scroll_x as i32;
+            let scroll_x = self.scroll_x as i32;
+            if cursor_col < scroll_x {
+                self.scroll_x = cursor_col as u32;
+            } else if cursor_col - scroll_x >= visible_cols {
+                self.scroll_x = (cursor_col - visible_cols + 1) as u32;
             }
         }
     }
@@ -313,7 +326,16 @@ impl DisplaySnapshot {
 mod tests {
     use super::*;
     use clock::ReplicaId;
+    use std::time::{Duration, Instant};
     use text::{Buffer, BufferId};
+
+    fn large_buffer(row_count: u32) -> Buffer {
+        let mut contents = String::with_capacity(row_count as usize * 11);
+        for _ in 0..row_count {
+            contents.push_str("abcdefghij\n");
+        }
+        Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), contents)
+    }
 
     #[test]
     fn windowed_map_wraps_only_requested_rows() {
@@ -358,6 +380,130 @@ mod tests {
     }
 
     #[test]
+    fn long_buffer_mappings_are_correct_with_and_without_wrapping() {
+        let buffer = large_buffer(4_096);
+
+        for wrap_width in [None, Some(4)] {
+            let display = DisplayMap::new(buffer.snapshot().clone(), wrap_width).snapshot();
+            for row in [0, 1, 2_047, 4_095] {
+                for column in [0, 3, 10] {
+                    let point = Point::new(row, column);
+                    let display_point = display.point_to_display_point(point);
+                    assert_eq!(
+                        display.display_point_to_point(display_point),
+                        point,
+                        "round trip failed with width {wrap_width:?} at {point:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn deep_cursor_jump_reaches_the_expected_scroll_position() {
+        let mut map =
+            DisplayMap::new_windowed(large_buffer(100_000).snapshot().clone(), None, 0..1);
+
+        map.scroll_to_cursor(DisplayPoint::new(99_999, 7), 24, 80);
+
+        assert_eq!(map.scroll_y, 99_977);
+        assert_eq!(map.scroll_x, 0);
+    }
+
+    #[test]
+    fn changing_wrap_width_rebuilds_mappings() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abcdefgh");
+        let mut map = DisplayMap::new(buffer.snapshot().clone(), Some(8));
+        assert_eq!(map.snapshot().row_count(), 1);
+
+        map.set_wrap_width(Some(3));
+
+        let snapshot = map.snapshot();
+        assert_eq!(snapshot.row_count(), 3);
+        assert_eq!(snapshot.line_text(0), "abc");
+        assert_eq!(snapshot.line_text(1), "def");
+        assert_eq!(snapshot.line_text(2), "gh");
+    }
+
+    #[test]
+    fn stable_hot_window_rebuilds_only_edited_rows() {
+        const ROW_COUNT: u32 = 10_000;
+        const LINE_BYTES: usize = 11;
+
+        for cursor_row in [10_u32, 5_000, 9_999] {
+            let mut buffer = large_buffer(ROW_COUNT);
+            let buffer_window = cursor_row.saturating_sub(80)
+                ..cursor_row
+                    .saturating_add(80)
+                    .saturating_add(1)
+                    .min(ROW_COUNT);
+            let mut map = DisplayMap::new_windowed(
+                buffer.snapshot().clone(),
+                Some(80),
+                buffer_window.clone(),
+            );
+            let edit_offset = cursor_row as usize * LINE_BYTES + 1;
+            buffer.edit([(edit_offset..edit_offset, "x")]);
+
+            crate::wrap_map::reset_build_stats();
+            map.sync_windowed(buffer.snapshot().clone(), buffer_window);
+            let stats = crate::wrap_map::build_stats();
+
+            assert!(stats.rows <= 2, "cursor row {cursor_row}: {stats:?}");
+            let point = Point::new(cursor_row, 2);
+            let snapshot = map.snapshot();
+            assert_eq!(
+                snapshot.display_point_to_point(snapshot.point_to_display_point(point)),
+                point
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual Phase 2 measurement; run with --ignored --nocapture"]
+    fn large_buffer_edit_sync_baseline() {
+        const ROW_COUNT: u32 = 100_000;
+        const WINDOW_MARGIN: u32 = 80;
+        const LINE_BYTES: usize = 11;
+        let mut measurements = Vec::new();
+
+        for cursor_row in [10_u32, 50_000, 99_999] {
+            let mut buffer = large_buffer(ROW_COUNT);
+            let buffer_window = cursor_row.saturating_sub(WINDOW_MARGIN)
+                ..cursor_row.saturating_add(WINDOW_MARGIN).min(ROW_COUNT);
+            let mut map = DisplayMap::new_windowed(
+                buffer.snapshot().clone(),
+                Some(80),
+                buffer_window.clone(),
+            );
+            let edit_offset = cursor_row as usize * LINE_BYTES + 1;
+            buffer.edit([(edit_offset..edit_offset, "x")]);
+
+            crate::wrap_map::reset_build_stats();
+            let started = Instant::now();
+            map.sync_windowed(buffer.snapshot().clone(), buffer_window);
+            let elapsed = started.elapsed();
+            let stats = crate::wrap_map::build_stats();
+            measurements.push((cursor_row, elapsed, stats));
+        }
+
+        eprintln!("display-map synchronous hot-window edit ({ROW_COUNT} rows):");
+        for (cursor_row, elapsed, stats) in &measurements {
+            eprintln!(
+                "  cursor_row={cursor_row:>6} elapsed={elapsed:?} rows_built={} transforms_created={}",
+                stats.rows, stats.transforms
+            );
+        }
+
+        assert!(measurements.iter().all(|(_, _, stats)| stats.rows <= 2));
+        assert!(
+            measurements
+                .iter()
+                .all(|(_, elapsed, _)| *elapsed > Duration::ZERO)
+        );
+    }
+
+    #[test]
     fn test_folding() {
         let buffer = Buffer::new(
             ReplicaId::LOCAL,
@@ -384,4 +530,3 @@ mod tests {
         assert_eq!(orig_point, Point::new(3, 2));
     }
 }
-

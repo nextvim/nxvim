@@ -65,6 +65,7 @@ impl WindowState {
             has_border,
         };
         if self.viewport == viewport && self.last_version.as_ref() == Some(&snapshot.version) {
+            self.scroll_to_cursor();
             return;
         }
 
@@ -79,20 +80,28 @@ impl WindowState {
         } else {
             self.selections.primary().head().to_point(&snapshot).row
         };
-        let window_size = height.max(24) * 2;
-        let end_row = (cursor_row + window_size).min(snapshot.row_count());
+        let buffer_window = hot_window(cursor_row, height, snapshot.row_count());
 
-        self.display_map.sync_windowed(snapshot, 0..end_row);
+        self.display_map.sync_windowed(snapshot, buffer_window);
         self.display_map.set_wrap_width(Some(wrap_width));
-        if !self.selections.selections.is_empty() {
-            let cursor_anchor = self.selections.primary().head();
-            let display_cursor = self
-                .display_map
-                .snapshot()
-                .anchor_to_display_point(cursor_anchor);
-            self.display_map
-                .scroll_to_cursor(display_cursor, height as i32, wrap_width as i32);
+        self.scroll_to_cursor();
+    }
+
+    pub fn scroll_to_cursor(&mut self) {
+        if self.selections.selections.is_empty() {
+            return;
         }
+
+        let display_cursor = self
+            .display_map
+            .snapshot()
+            .anchor_to_display_point(self.selections.primary().head());
+        let wrap_width = self.display_map.wrap_width.unwrap_or(self.viewport.width);
+        self.display_map.scroll_to_cursor(
+            display_cursor,
+            self.viewport.height as i32,
+            wrap_width as i32,
+        );
     }
 
     fn from_parts(
@@ -103,10 +112,9 @@ impl WindowState {
     ) -> Self {
         let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border);
         let cursor_row = selections.primary().head().to_point(&snapshot).row;
-        let window_size = viewport.height.max(24) * 2;
-        let end_row = (cursor_row + window_size).min(snapshot.row_count());
+        let buffer_window = hot_window(cursor_row, viewport.height, snapshot.row_count());
         let mut display_map =
-            display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), 0..end_row);
+            display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), buffer_window);
         let display_cursor = display_map
             .snapshot()
             .anchor_to_display_point(selections.primary().head());
@@ -121,6 +129,27 @@ impl WindowState {
             last_version: None,
             viewport,
         }
+    }
+}
+
+fn hot_window(cursor_row: u32, height: u32, row_count: u32) -> std::ops::Range<u32> {
+    let margin = height.max(24).saturating_mul(2);
+    cursor_row.saturating_sub(margin)
+        ..cursor_row
+            .saturating_add(margin)
+            .saturating_add(1)
+            .min(row_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hot_window;
+
+    #[test]
+    fn hot_window_is_bounded_around_the_cursor() {
+        assert_eq!(hot_window(0, 24, 100_000), 0..49);
+        assert_eq!(hot_window(50_000, 24, 100_000), 49_952..50_049);
+        assert_eq!(hot_window(99_999, 24, 100_000), 99_951..100_000);
     }
 }
 

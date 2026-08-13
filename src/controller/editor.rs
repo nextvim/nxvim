@@ -39,6 +39,14 @@ impl Editor {
             services,
         );
 
+        let viewport = buffer_display_context.viewport;
+        buffer_display_context.update(
+            buffer.snapshot().as_inner().clone(),
+            viewport.width,
+            viewport.height,
+            viewport.has_border,
+        );
+
         Ok(new_mode)
     }
 
