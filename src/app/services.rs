@@ -1,9 +1,5 @@
-pub mod task;
-
 use std::collections::HashMap;
 use std::sync::Mutex;
-
-pub use task::{TaskOwner as OwnerId, TaskResult, TaskType};
 
 pub use textmate as highlight;
 pub use vim_clipboard as clipboard;
@@ -11,7 +7,62 @@ pub use vim_indexer as indexer;
 pub use vim_macros as macros;
 pub use vim_treesitter as treesitter;
 
-use task::TaskMetadata;
+use vim_buffer::BufferId;
+use vim_ui::WindowId;
+
+pub type TaskId = background_worker::TaskId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TaskType {
+    Highlight,
+    DisplayMap,
+    Indexer,
+    Treesitter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TaskOwner {
+    pub buffer_id: Option<BufferId>,
+    pub window_id: Option<WindowId>,
+    pub revision: u64,
+}
+
+pub enum TaskResult {
+    Treesitter {
+        task_id: TaskId,
+        buffer_id: BufferId,
+        revision: u64,
+        result: Result<vim_treesitter::SyntaxTree, String>,
+    },
+    Index {
+        task_id: TaskId,
+        buffer_id: BufferId,
+        revision: u64,
+        result: Result<vim_indexer::IndexTaskResult, String>,
+    },
+    Highlight {
+        task_id: TaskId,
+        window_id: WindowId,
+        buffer_id: BufferId,
+        revision: u64,
+        highlights: Vec<textmate::HighlightSpan>,
+    },
+    DisplayMap {
+        task_id: TaskId,
+        window_id: WindowId,
+        buffer_id: BufferId,
+        revision: u64,
+        map: display_map::DisplayMap,
+        height: u32,
+        layout_width: u32,
+    },
+}
+
+pub(super) struct TaskMetadata {
+    pub owner: TaskOwner,
+    pub task_type: TaskType,
+}
+
 
 pub struct Services {
     background_workers: background_worker::WorkerManager,
@@ -75,7 +126,7 @@ impl Services {
         &self,
         worker_name: &str,
         sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
-        owner: OwnerId,
+        owner: TaskOwner,
         task_type: TaskType,
         job: F,
     ) -> Option<background_worker::TaskId>
@@ -97,7 +148,7 @@ impl Services {
         &self,
         worker_name: &str,
         sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
-        owner: OwnerId,
+        owner: TaskOwner,
         task_type: TaskType,
         job: F,
     ) -> Option<background_worker::TaskId>
@@ -182,7 +233,7 @@ mod tests {
     fn drain_results_decodes_owner_and_revision() {
         let mut services = Services::new();
         let buffer_id = BufferId::new(7).unwrap();
-        let owner = OwnerId {
+        let owner = TaskOwner {
             buffer_id: Some(buffer_id),
             window_id: Some(WindowId::new(8)),
             revision: 9,
