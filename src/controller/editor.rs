@@ -912,7 +912,7 @@ impl Editor {
                         end: vim_buffer::ByteOffset(end_offset),
                     },
                 );
-                let _ = tx.commit(None);
+                let _ = tx.commit(Some(buffer_display_context.selections.clone()));
             }
             Action::YankLines {
                 start_line,
@@ -1034,7 +1034,7 @@ impl Editor {
                         },
                         replacement,
                     );
-                    let _ = tx.commit(None);
+                    let _ = tx.commit(Some(buffer_display_context.selections.clone()));
                 }
 
                 if let Some(col) = target_col {
@@ -1233,12 +1233,22 @@ impl Editor {
             }
             Action::Undo { count } => {
                 for _ in 0..*count {
-                    let _ = buffer.undo();
+                    // let _ = buffer.undo();
+                    if let Some(outcome) = buffer.undo().ok()? {
+                        if let Some(selections) = outcome.selections {
+                            buffer_display_context.selections = selections;
+                        }
+                    }
                 }
             }
             Action::Redo { count } => {
                 for _ in 0..*count {
-                    let _ = buffer.redo();
+                    // let _ = buffer.redo();
+                    if let Some(outcome) = buffer.redo().ok()? {
+                        if let Some(selections) = outcome.selections {
+                            buffer_display_context.selections = selections;
+                        }
+                    }
                 }
             }
             Action::NoOp | Action::Quit => {
@@ -1400,7 +1410,7 @@ impl Editor {
         for &(start, ref text_val) in &edits {
             tx.insert(None, vim_buffer::ByteOffset(start), text_val.clone());
         }
-        let _ = tx.commit(None);
+        let _ = tx.commit(Some(selections.clone()));
 
         for cursor in cursors.iter() {
             let start = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
@@ -1472,7 +1482,7 @@ impl Editor {
             for range in edits {
                 tx.delete(None, range);
             }
-            let _ = tx.commit(None);
+            let _ = tx.commit(Some(selections.clone()));
             true
         } else {
             false
@@ -1524,7 +1534,7 @@ impl Editor {
             for range in edits {
                 tx.delete(None, range);
             }
-            let _ = tx.commit(None);
+            let _ = tx.commit(Some(selections.clone()));
             true
         } else {
             false
@@ -1577,7 +1587,7 @@ impl Editor {
             for range in edits {
                 tx.delete(None, range);
             }
-            let _ = tx.commit(None);
+            let _ = tx.commit(Some(selections.clone()));
         }
     }
 
