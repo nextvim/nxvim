@@ -39,6 +39,9 @@ fn named_buffers_are_canonical_and_deduplicated() {
     assert_eq!(duplicate, first);
     assert_eq!(outcome, ManagerOutcome::Existing(first));
     assert_eq!(manager.find_by_name("example.txt").unwrap(), Some(first));
+    assert!(manager.listed().contains(&first));
+    manager.set_listed(first, false).unwrap();
+    assert!(!manager.listed().contains(&first));
     assert_eq!(
         manager.get(first).unwrap().snapshot().as_inner().text(),
         "one"

@@ -107,6 +107,14 @@ impl Buffers {
     pub fn listed(&self) -> Vec<BufferId> {
         self.inner.listed()
     }
+
+    pub fn set_listed(
+        &mut self,
+        id: BufferId,
+        listed: bool,
+    ) -> Result<(), vim_buffer::BufferError> {
+        self.inner.set_listed(id, listed)
+    }
 }
 
 impl Default for Buffers {

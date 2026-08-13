@@ -4,8 +4,40 @@ use vim_ui::WindowId;
 
 use super::window_state::{Viewport, WindowState};
 
+struct WindowStates {
+    active: WindowState,
+    retained: HashMap<BufferId, WindowState>,
+}
+
+impl WindowStates {
+    fn new(active: WindowState) -> Self {
+        Self {
+            active,
+            retained: HashMap::new(),
+        }
+    }
+
+    fn switch_to(&mut self, buffer: &vim_buffer::Buffer) {
+        if self.active.buffer_id == buffer.id() {
+            return;
+        }
+
+        let viewport = self.active.viewport;
+        let next = self
+            .retained
+            .remove(&buffer.id())
+            .unwrap_or_else(|| WindowState::new(buffer, viewport));
+        let previous = std::mem::replace(&mut self.active, next);
+        self.retained.insert(previous.buffer_id, previous);
+    }
+
+    fn remove_buffer(&mut self, id: BufferId) {
+        self.retained.remove(&id);
+    }
+}
+
 pub struct Windows {
-    windows: HashMap<WindowId, WindowState>,
+    windows: HashMap<WindowId, WindowStates>,
     focused: WindowId,
     previous: Option<WindowId>,
 }
@@ -20,15 +52,17 @@ impl Windows {
     }
 
     pub fn register(&mut self, id: WindowId, buffer: &vim_buffer::Buffer, viewport: Viewport) {
-        self.windows.insert(id, WindowState::new(buffer, viewport));
+        self.windows
+            .insert(id, WindowStates::new(WindowState::new(buffer, viewport)));
     }
 
     pub fn register_placeholder(&mut self, id: WindowId, buffer: &vim_buffer::Buffer) {
-        self.windows.insert(id, WindowState::placeholder(buffer));
+        self.windows
+            .insert(id, WindowStates::new(WindowState::placeholder(buffer)));
     }
 
     pub fn remove(&mut self, id: WindowId) -> Option<WindowState> {
-        let removed = self.windows.remove(&id);
+        let removed = self.windows.remove(&id).map(|states| states.active);
         if id == self.focused {
             if let Some(previous) = self.previous.filter(|id| self.windows.contains_key(id)) {
                 self.focused = previous;
@@ -60,15 +94,17 @@ impl Windows {
     }
 
     pub fn state(&self, id: WindowId) -> Option<&WindowState> {
-        self.windows.get(&id)
+        self.windows.get(&id).map(|states| &states.active)
     }
 
     pub fn state_mut(&mut self, id: WindowId) -> Option<&mut WindowState> {
-        self.windows.get_mut(&id)
+        self.windows.get_mut(&id).map(|states| &mut states.active)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (WindowId, &WindowState)> {
-        self.windows.iter().map(|(&id, state)| (id, state))
+        self.windows
+            .iter()
+            .map(|(&id, states)| (id, &states.active))
     }
 
     pub fn buffer_id(&self, id: WindowId) -> Option<BufferId> {
@@ -76,10 +112,10 @@ impl Windows {
     }
 
     pub fn switch_to(&mut self, id: WindowId, buffer: &vim_buffer::Buffer) -> bool {
-        let Some(state) = self.state_mut(id) else {
+        let Some(states) = self.windows.get_mut(&id) else {
             return false;
         };
-        state.switch_buffer(buffer);
+        states.switch_to(buffer);
         true
     }
 
@@ -128,6 +164,9 @@ impl Windows {
             } else {
                 self.remove(window_id);
             }
+        }
+        for states in self.windows.values_mut() {
+            states.remove_buffer(id);
         }
     }
 
@@ -231,5 +270,23 @@ mod tests {
         assert_ne!(windows.buffer_id(first), Some(original));
         assert!(windows.switch_next_buffer(first, &listed, &buffers));
         assert_eq!(windows.buffer_id(first), Some(original));
+    }
+
+    #[test]
+    fn switching_back_restores_window_state_for_buffer() {
+        let (buffers, mut windows, first, _) = fixture();
+        let listed = buffers.listed();
+        let original = windows.buffer_id(first).unwrap();
+        let sequence = windows.state(first).unwrap().sequence.clone();
+        windows.state_mut(first).unwrap().viewport.width = 37;
+
+        assert!(windows.switch_next_buffer(first, &listed, &buffers));
+        windows.state_mut(first).unwrap().viewport.width = 91;
+        assert!(windows.switch_previous_buffer(first, &listed, &buffers));
+
+        let restored = windows.state(first).unwrap();
+        assert_eq!(restored.buffer_id, original);
+        assert_eq!(restored.viewport.width, 37);
+        assert!(std::sync::Arc::ptr_eq(&restored.sequence, &sequence));
     }
 }

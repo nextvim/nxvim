@@ -31,6 +31,9 @@ impl EditorModel {
         let (commandline_buffer, _) = buffers
             .create_named("#commandline", "")
             .expect("Failed to create #commandline buffer");
+        buffers
+            .set_listed(commandline_buffer, false)
+            .expect("command-line buffer must exist");
 
         let mut windows = Windows::new(main_window);
         windows.register_placeholder(
@@ -78,8 +81,9 @@ impl EditorModel {
         self.buffers.get(id)
     }
 
+    /// Buffers that may be presented and selected as editor tabs.
     pub fn list(&self) -> Vec<BufferId> {
-        self.buffers.list()
+        self.editable_buffers()
     }
 
     pub fn buffer_state(&self, id: BufferId) -> Option<&BufferState> {
@@ -122,13 +126,13 @@ impl EditorModel {
     }
 
     pub fn switch_next_buffer(&mut self, window_id: WindowId) -> bool {
-        let listed = self.buffers.listed();
+        let listed = self.editable_buffers();
         self.windows
             .switch_next_buffer(window_id, &listed, &self.buffers)
     }
 
     pub fn switch_previous_buffer(&mut self, window_id: WindowId) -> bool {
-        let listed = self.buffers.listed();
+        let listed = self.editable_buffers();
         self.windows
             .switch_previous_buffer(window_id, &listed, &self.buffers)
     }
@@ -178,12 +182,15 @@ impl EditorModel {
 
     fn cleanup_windows(&mut self, removed: BufferId) {
         let fallback_id = self
-            .buffers
-            .listed()
+            .editable_buffers()
             .into_iter()
-            .find(|&id| id != removed && id != self.commandline_buffer);
+            .find(|&id| id != removed);
         let fallback = fallback_id.and_then(|id| self.buffers.get(id).ok());
         self.windows.remove_buffer(removed, fallback);
+    }
+
+    fn editable_buffers(&self) -> Vec<BufferId> {
+        self.buffers.listed()
     }
 }
 
@@ -201,8 +208,38 @@ mod tests {
             model.window_buffer(commandline),
             Some(model.commandline_buffer())
         );
-        assert_eq!(model.list().len(), 2);
+        assert_eq!(model.list().len(), 1);
+        assert!(!model.list().contains(&model.commandline_buffer()));
+        assert!(model.get_buffer(model.commandline_buffer()).is_ok());
         assert!(model.validate().is_ok());
+    }
+
+    #[test]
+    fn named_buffers_are_editable_tabs_but_commandline_is_not() {
+        let main = WindowId::new(10);
+        let commandline = WindowId::new(11);
+        let base = std::env::temp_dir().join(format!("nxvim-tabs-{}", std::process::id()));
+        let first = base.with_extension("first-missing");
+        let second = base.with_extension("second-missing");
+        let model = EditorModel::new(vec![first, second], main, commandline);
+
+        assert_eq!(model.list().len(), 2);
+        assert!(!model.list().contains(&model.commandline_buffer()));
+    }
+
+    #[test]
+    fn buffer_switching_skips_commandline_buffer() {
+        let main = WindowId::new(10);
+        let commandline = WindowId::new(11);
+        let mut model = EditorModel::new(Vec::new(), main, commandline);
+        let first = model.window_buffer(main).unwrap();
+        let second = model.create("second");
+
+        assert!(model.switch_next_buffer(main));
+        assert_eq!(model.window_buffer(main), Some(second));
+        assert!(model.switch_next_buffer(main));
+        assert_eq!(model.window_buffer(main), Some(first));
+        assert_ne!(model.window_buffer(main), Some(model.commandline_buffer()));
     }
 
     #[test]

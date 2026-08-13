@@ -52,11 +52,6 @@ impl WindowState {
         }
     }
 
-    pub fn switch_buffer(&mut self, buffer: &vim_buffer::Buffer) {
-        let viewport = self.viewport;
-        *self = Self::new(buffer, viewport);
-    }
-
     pub fn update(
         &mut self,
         snapshot: text::BufferSnapshot,
@@ -64,14 +59,19 @@ impl WindowState {
         height: u32,
         has_border: bool,
     ) {
-        self.sequence
-            .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
-        self.last_version = Some(snapshot.version.clone());
-        self.viewport = Viewport {
+        let viewport = Viewport {
             width,
             height,
             has_border,
         };
+        if self.viewport == viewport && self.last_version.as_ref() == Some(&snapshot.version) {
+            return;
+        }
+
+        self.sequence
+            .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+        self.last_version = Some(snapshot.version.clone());
+        self.viewport = viewport;
 
         let wrap_width = wrap_width(&snapshot, width, has_border);
         let cursor_row = if self.selections.selections.is_empty() {
