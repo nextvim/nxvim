@@ -65,6 +65,21 @@ impl EditorModel {
         self.buffers.create(initial_text)
     }
 
+    pub fn save_window(
+        &mut self,
+        window_id: WindowId,
+        path: Option<&std::path::Path>,
+        force: bool,
+    ) -> Result<vim_buffer::SaveOutcome, vim_buffer::BufferError> {
+        let buffer_id =
+            self.windows
+                .buffer_id(window_id)
+                .ok_or(vim_buffer::BufferError::NotImplemented(
+                    "saving an unregistered window",
+                ))?;
+        self.buffers.save(buffer_id, path, force)
+    }
+
     pub fn wipe(
         &mut self,
         id: BufferId,

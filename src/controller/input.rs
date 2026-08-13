@@ -1,5 +1,7 @@
 use crossterm::event::{Event, KeyCode as CKey, KeyEvent, KeyEventKind, KeyModifiers as CMod};
-use vim_input::{Action, Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
+use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
+
+use super::Command;
 
 /// Application-level input controller that translates Crossterm events
 /// into Vim actions using `vim_input::Resolver`.
@@ -28,7 +30,7 @@ impl InputController {
     }
 
     /// Translate a Crossterm event to a `vim_input::Key` and feed it to the resolver.
-    pub fn feed_event(&mut self, event: Event) -> Option<ControllerAction> {
+    pub fn feed_event(&mut self, event: Event) -> Option<Command> {
         match event {
             Event::Key(key_event) => {
                 if key_event.kind != KeyEventKind::Release {
@@ -36,18 +38,18 @@ impl InputController {
                     match self.resolver.feed(vim_key, &self.keymap) {
                         ResolveOutcome::Resolved(resolved) => {
                             self.pending_display.clear();
-                            Some(ControllerAction::Execute {
+                            Some(Command::Editor {
                                 action: resolved.action,
                                 register: resolved.register,
                             })
                         }
                         ResolveOutcome::Pending => {
                             self.pending_display = self.resolver.pending().to_string();
-                            Some(ControllerAction::Pending(self.pending_display.clone()))
+                            Some(Command::PendingInput(self.pending_display.clone()))
                         }
                         ResolveOutcome::Invalid(_) => {
                             self.pending_display.clear();
-                            Some(ControllerAction::Invalid)
+                            Some(Command::InvalidInput)
                         }
                         ResolveOutcome::Ignored => None,
                     }
@@ -58,20 +60,6 @@ impl InputController {
             _ => None,
         }
     }
-}
-
-/// Result of feeding a key to the controller.
-#[derive(Debug, PartialEq, Eq)]
-pub enum ControllerAction {
-    /// A resolved action that should be executed.
-    Execute {
-        action: Action,
-        register: Option<char>,
-    },
-    /// Input is pending (e.g., operator or count prefix).
-    Pending(String),
-    /// Invalid sequence was consumed.
-    Invalid,
 }
 
 /// Translate a Crossterm `KeyEvent` into a `vim_input::Key`.
@@ -121,28 +109,28 @@ mod tests {
         let mut controller = InputController::new(Mode::Normal);
 
         let event_v = Event::Key(KeyEvent::new(CKey::Char('v'), control));
-        assert_eq!(
+        assert!(matches!(
             controller.feed_event(event_v),
-            Some(ControllerAction::Execute {
-                action: Action::SetToVisualBlock,
+            Some(Command::Editor {
+                action: vim_input::Action::SetToVisualBlock,
                 register: None,
             })
-        );
+        ));
 
         controller.set_mode(Mode::Normal);
         let event_w = Event::Key(KeyEvent::new(CKey::Char('w'), control));
-        assert_eq!(
+        assert!(matches!(
             controller.feed_event(event_w),
-            Some(ControllerAction::Pending("<C-w>".to_string()))
-        );
+            Some(Command::PendingInput(sequence)) if sequence == "<C-w>"
+        ));
 
         let event_v2 = Event::Key(KeyEvent::new(CKey::Char('v'), control));
-        assert_eq!(
+        assert!(matches!(
             controller.feed_event(event_v2),
-            Some(ControllerAction::Execute {
-                action: Action::SplitVertical { file_path: None },
+            Some(Command::Editor {
+                action: vim_input::Action::SplitVertical { file_path: None },
                 register: None,
             })
-        );
+        ));
     }
 }

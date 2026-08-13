@@ -10,38 +10,12 @@ mod dispatcher;
 mod editor;
 mod editor_handler;
 pub(crate) mod input;
+mod save_handler;
 mod task_dispatcher;
 mod window_handler;
 
 pub use command::{Command, CommandOutcome, ViewEffect};
 pub use dispatcher::Dispatcher;
-
-use crate::app::script::EditorCommand;
-use input::ControllerAction;
-
-impl From<ControllerAction> for Command {
-    fn from(action: ControllerAction) -> Self {
-        match action {
-            ControllerAction::Execute { action, register } => Self::Editor { action, register },
-            ControllerAction::Pending(sequence) => Self::PendingInput(sequence),
-            ControllerAction::Invalid => Self::InvalidInput,
-        }
-    }
-}
-
-impl From<EditorCommand> for Command {
-    fn from(command: EditorCommand) -> Self {
-        let action = match command {
-            EditorCommand::Quit => vim_input::Action::Quit,
-            EditorCommand::BNext => vim_input::Action::NextTab { count: 1 },
-            EditorCommand::BPrev => vim_input::Action::PreviousTab { count: 1 },
-        };
-        Self::Editor {
-            action,
-            register: None,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -51,24 +25,6 @@ mod tests {
 
     fn app() -> crate::app::App {
         crate::app::App::new(Rect::new(0, 0, 80, 24), Vec::new())
-    }
-
-    #[test]
-    fn script_commands_normalize_to_editor_commands() {
-        assert!(matches!(
-            Command::from(EditorCommand::Quit),
-            Command::Editor {
-                action: Action::Quit,
-                register: None,
-            }
-        ));
-        assert!(matches!(
-            Command::from(EditorCommand::BNext),
-            Command::Editor {
-                action: Action::NextTab { count: 1 },
-                register: None,
-            }
-        ));
     }
 
     #[test]
@@ -134,6 +90,34 @@ mod tests {
             focus.view_effects,
             vec![ViewEffect::FocusDirection(NavigationDirection::Left)]
         );
+    }
+
+    #[test]
+    fn save_command_writes_the_focused_buffer() {
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-command-save-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut app = crate::app::App::new(Rect::new(0, 0, 80, 24), vec![path.clone()]);
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::Save {
+                path: None,
+                force: false,
+            },
+        );
+
+        assert!(outcome.redraw);
+        assert!(path.is_file());
+        assert!(
+            app.model
+                .status
+                .as_deref()
+                .is_some_and(|status| status.contains("bytes written"))
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

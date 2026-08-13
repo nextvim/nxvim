@@ -84,6 +84,18 @@ impl Buffers {
         self.inner.create_named(name, initial_text)
     }
 
+    pub fn save(
+        &mut self,
+        id: BufferId,
+        path: Option<&Path>,
+        force: bool,
+    ) -> Result<vim_buffer::SaveOutcome, vim_buffer::BufferError> {
+        match path {
+            Some(path) => self.inner.save_as(id, path, force),
+            None => self.inner.save(id, force),
+        }
+    }
+
     pub fn wipe(
         &mut self,
         id: BufferId,

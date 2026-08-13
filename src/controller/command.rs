@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use vim_input::Action;
 use vim_ui::{NavigationDirection, SplitAxis, WindowId};
 
@@ -8,6 +10,10 @@ pub enum Command {
     },
     PendingInput(String),
     InvalidInput,
+    Save {
+        path: Option<PathBuf>,
+        force: bool,
+    },
     Task(crate::app::services::TaskResult),
 }
 

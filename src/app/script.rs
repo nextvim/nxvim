@@ -1,4 +1,6 @@
-use std::{collections::HashMap, sync::Arc, sync::mpsc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, sync::mpsc};
+
+use crate::controller::Command;
 
 use vim_script::{
     compiler::Compiler,
@@ -12,16 +14,9 @@ use vim_script::{
     source::SourceMap,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EditorCommand {
-    BNext,
-    BPrev,
-    Quit,
-}
-
 pub struct ScriptRuntime {
     scheduler: Scheduler,
-    commands: mpsc::Receiver<EditorCommand>,
+    commands: mpsc::Receiver<Command>,
     globals: HashMap<String, Value>,
     sources: SourceMap,
 }
@@ -41,25 +36,34 @@ impl ScriptRuntime {
             required_capabilities: vec![Capability::Editor],
         });
 
-        host.register_command(CommandDefinition {
-            name: "bnext".to_owned(),
-            minimum_abbreviation: 2,
-            accepts_bang: true,
-            accepts_range: false,
-            accepts_count: false,
-            accepts_register: false,
-            required_capabilities: vec![Capability::Editor],
-        });
+        for (name, minimum_abbreviation) in [
+            ("bnext", 2),
+            ("bprev", 2),
+            ("nexttab", 1),
+            ("previoustab", 1),
+        ] {
+            host.register_command(CommandDefinition {
+                name: name.to_owned(),
+                minimum_abbreviation,
+                accepts_bang: false,
+                accepts_range: false,
+                accepts_count: false,
+                accepts_register: false,
+                required_capabilities: vec![Capability::Editor],
+            });
+        }
 
-        host.register_command(CommandDefinition {
-            name: "bprev".to_owned(),
-            minimum_abbreviation: 2,
-            accepts_bang: true,
-            accepts_range: false,
-            accepts_count: false,
-            accepts_register: false,
-            required_capabilities: vec![Capability::Editor],
-        });
+        for (name, minimum_abbreviation) in [("save", 1), ("write", 1)] {
+            host.register_command(CommandDefinition {
+                name: name.to_owned(),
+                minimum_abbreviation,
+                accepts_bang: true,
+                accepts_range: false,
+                accepts_count: false,
+                accepts_register: false,
+                required_capabilities: vec![Capability::Editor],
+            });
+        }
 
         let mut scheduler = Scheduler::default();
         scheduler.set_host(host);
@@ -110,7 +114,7 @@ impl ScriptRuntime {
         Ok(value)
     }
 
-    pub fn try_next_command(&self) -> Option<EditorCommand> {
+    pub fn try_next_command(&self) -> Option<Command> {
         self.commands.try_recv().ok()
     }
 
@@ -133,7 +137,7 @@ impl Default for ScriptRuntime {
 }
 
 struct EditorHost {
-    sender: mpsc::Sender<EditorCommand>,
+    sender: mpsc::Sender<Command>,
 }
 
 impl Host for EditorHost {
@@ -151,9 +155,25 @@ impl Host for EditorHost {
         let sender = self.sender.clone();
         Box::pin(async move {
             let command = match request.command.name.as_str() {
-                "quit" => EditorCommand::Quit,
-                "bnext" => EditorCommand::BNext,
-                "bprev" => EditorCommand::BPrev,
+                "quit" => Command::Editor {
+                    action: vim_input::Action::Quit,
+                    register: None,
+                },
+                "bnext" | "nexttab" => Command::Editor {
+                    action: vim_input::Action::NextTab { count: 1 },
+                    register: None,
+                },
+                "bprev" | "previoustab" => Command::Editor {
+                    action: vim_input::Action::PreviousTab { count: 1 },
+                    register: None,
+                },
+                "save" | "write" => {
+                    let argument = request.command.arguments.trim();
+                    Command::Save {
+                        path: (!argument.is_empty()).then(|| PathBuf::from(argument)),
+                        force: request.command.bang,
+                    }
+                }
                 name => {
                     return Err(RuntimeError::coded(
                         "E492",
@@ -190,14 +210,52 @@ mod tests {
         for source in ["q", "quit"] {
             let mut runtime = ScriptRuntime::new();
             runtime.execute(source).unwrap();
-            assert_eq!(runtime.try_next_command(), Some(EditorCommand::Quit));
+            assert!(matches!(
+                runtime.try_next_command(),
+                Some(Command::Editor {
+                    action: vim_input::Action::Quit,
+                    register: None,
+                })
+            ));
         }
+    }
+
+    #[test]
+    fn navigation_commands_are_dispatched() {
+        for (source, forward) in [("bnext", true), ("previoustab", false)] {
+            let mut runtime = ScriptRuntime::new();
+            runtime.execute(source).unwrap();
+            assert!(match runtime.try_next_command() {
+                Some(Command::Editor {
+                    action: vim_input::Action::NextTab { count: 1 },
+                    register: None,
+                }) => forward,
+                Some(Command::Editor {
+                    action: vim_input::Action::PreviousTab { count: 1 },
+                    register: None,
+                }) => !forward,
+                _ => false,
+            });
+        }
+    }
+
+    #[test]
+    fn write_commands_preserve_path_and_force() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("write! output.txt").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Save {
+                path: Some(path),
+                force: true,
+            }) if path == PathBuf::from("output.txt")
+        ));
     }
 
     #[test]
     fn unknown_commands_are_rejected_by_the_engine() {
         let mut runtime = ScriptRuntime::new();
         assert!(runtime.execute("missing").is_err());
-        assert_eq!(runtime.try_next_command(), None);
+        assert!(runtime.try_next_command().is_none());
     }
 }

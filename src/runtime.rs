@@ -33,13 +33,6 @@ impl Runtime {
         let mut should_redraw = false;
 
         'main_loop: loop {
-            if self.app.services.poll() {
-                for result in self.app.services.drain_results() {
-                    let outcome = Dispatcher::dispatch(&mut self.app, Command::Task(result));
-                    should_redraw |= outcome.redraw;
-                }
-            }
-
             let current_rect = self.app.ui.screen_rect();
             if let Ok(new_rect) = self.terminal.size() {
                 if new_rect != current_rect {
@@ -48,17 +41,27 @@ impl Runtime {
                 }
             }
 
-            let mut commands: Vec<Command> =
-                std::iter::from_fn(|| self.app.script.try_next_command().map(Command::from))
-                    .collect();
+            let mut commands = Vec::new();
+
+            if self.app.services.poll() {
+                commands.extend(
+                    self.app
+                        .services
+                        .drain_results()
+                        .into_iter()
+                        .map(Command::Task),
+                );
+            }
+
+            commands.extend(std::iter::from_fn(|| self.app.script.try_next_command()));
 
             if commands.is_empty() && event::poll(std::time::Duration::from_millis(50))? {
                 let terminal_event = event::read()?;
                 if let event::Event::Resize(width, height) = terminal_event {
                     self.resize(vim_ui::Rect::new(0, 0, width, height));
                     should_redraw = true;
-                } else if let Some(resolved) = self.app.controller.feed_event(terminal_event) {
-                    commands.push(Command::from(resolved));
+                } else if let Some(command) = self.app.controller.feed_event(terminal_event) {
+                    commands.push(command);
                 }
             }
 

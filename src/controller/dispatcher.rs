@@ -4,6 +4,7 @@ use super::buffer_handler::BufferHandler;
 use super::command::{Command, CommandOutcome};
 use super::commandline_handler::CommandlineHandler;
 use super::editor_handler::EditorHandler;
+use super::save_handler::SaveHandler;
 use super::task_dispatcher::TaskDispatcher;
 use super::window_handler::WindowHandler;
 
@@ -19,6 +20,10 @@ impl Dispatcher {
             Command::InvalidInput => {
                 app.model.status = Some("Invalid sequence".to_string());
                 CommandOutcome::redraw()
+            }
+            Command::Save { path, force } => {
+                let active_window = app.model.focused_window();
+                SaveHandler::execute(&mut app.model, active_window, path.as_deref(), force)
             }
             Command::Task(result) => TaskDispatcher::dispatch(&mut app.model, result),
             Command::Editor { action, register } => {
