@@ -44,13 +44,10 @@ impl TaskDispatcher {
                 let snapshot = buffer.snapshot().as_inner().clone();
                 let changedtick = result.changedtick;
                 let applied = highlight_service.apply_task_result(task_id, result, &snapshot);
-                let Some(state) = Self::current_buffer_state(model, buffer_id, changedtick) else {
+                if Self::current_buffer_state(model, buffer_id, changedtick).is_none() {
                     return CommandOutcome::default();
-                };
-                if applied {
-                    state.highlights = highlight_service.all_spans(buffer_id);
                 }
-                model.window_buffers().any(|(_, b_id)| b_id == buffer_id)
+                applied && model.window_buffers().any(|(_, b_id)| b_id == buffer_id)
             }
             TaskResult::DisplayMapExpansion {
                 window_id,
@@ -161,7 +158,13 @@ mod tests {
                 changedtick: revision,
                 start,
                 end,
-                highlights: None,
+                highlights: Some(textmate::HighlightSnapshot {
+                    changedtick: revision,
+                    start,
+                    end,
+                    rows: Vec::new(),
+                    checkpoints: Vec::new(),
+                }),
             },
         }
     }

@@ -41,6 +41,7 @@ impl EditorViewModel {
     pub fn build(
         model: &EditorModel,
         controller: &InputController,
+        highlights: &textmate::HighlightService,
         layout: &LayoutSnapshot,
     ) -> Self {
         let mode = controller.mode();
@@ -95,10 +96,17 @@ impl EditorViewModel {
             } else {
                 window_layout.rect
             };
-            let highlights = model.buffer_state(buffer_id).map(|s| s.highlights.as_slice());
+            let highlights = highlights.published_rows(buffer_id);
             text_models.insert(
                 window_id,
-                textview::build_text(buffer, window, inner_rect, window_id == active_window, mode, highlights),
+                textview::build_text(
+                    buffer,
+                    window,
+                    inner_rect,
+                    window_id == active_window,
+                    mode,
+                    highlights,
+                ),
             );
         }
 
@@ -196,7 +204,8 @@ mod tests {
     #[test]
     fn build_projects_active_buffer_mode_cursor_and_text() {
         let (model, controller, layout, main) = fixture();
-        let view_model = EditorViewModel::build(&model, &controller, &layout);
+        let highlights = textmate::HighlightService::new();
+        let view_model = EditorViewModel::build(&model, &controller, &highlights, &layout);
 
         assert_eq!(view_model.get_mode_name(), "NORMAL");
         assert_eq!(view_model.get_cursor_position(), Some((1, 1)));
@@ -210,8 +219,9 @@ mod tests {
     #[test]
     fn build_is_deterministic_for_immutable_inputs() {
         let (model, controller, layout, main) = fixture();
-        let first = EditorViewModel::build(&model, &controller, &layout);
-        let second = EditorViewModel::build(&model, &controller, &layout);
+        let highlights = textmate::HighlightService::new();
+        let first = EditorViewModel::build(&model, &controller, &highlights, &layout);
+        let second = EditorViewModel::build(&model, &controller, &highlights, &layout);
 
         assert_eq!(first.get_buffer_ids(), second.get_buffer_ids());
         assert_eq!(first.get_mode_name(), second.get_mode_name());

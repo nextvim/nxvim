@@ -4,7 +4,7 @@ use crate::terminal::TerminalSession;
 use crate::view::{EditorViewModel, LayoutSnapshot};
 use crossterm::event;
 use std::io::{Write, stdout};
-use text::{ToPoint, Point, ToOffset};
+use text::{Point, ToOffset, ToPoint};
 use vim_ui::BufferedRenderer;
 
 /// Owns terminal lifecycle, source polling, command dispatch, and rendering.
@@ -177,13 +177,34 @@ impl Runtime {
         let window = self.app.model.window_state(window_id)?;
 
         let hot_window = window.display_map.hot_window();
+        self.app
+            .services
+            .highlight
+            .project_edits(buffer_id.get(), revision, &snapshot);
         let start = snapshot.anchor_before(Point::new(hot_window.start, 0).to_offset(&snapshot));
-        let end = snapshot.anchor_after(Point::new(hot_window.end.min(snapshot.row_count()), 0).to_offset(&snapshot));
+        let end = snapshot.anchor_after(
+            Point::new(hot_window.end.min(snapshot.row_count()), 0).to_offset(&snapshot),
+        );
 
-        if self.app.services.highlight.should_highlight(buffer_id.get(), revision, start, end, &snapshot) {
+        if self.app.services.highlight.should_highlight(
+            buffer_id.get(),
+            revision,
+            start,
+            end,
+            &snapshot,
+        ) {
             let start_offset = start.to_offset(&snapshot);
-            let checkpoint = self.app.services.highlight.nearest_checkpoint(buffer_id.get(), start_offset, &snapshot, revision);
-            let existing_checkpoints = self.app.services.highlight.existing_checkpoints(buffer_id.get(), &snapshot, revision);
+            let checkpoint = self.app.services.highlight.nearest_checkpoint(
+                buffer_id.get(),
+                start_offset,
+                &snapshot,
+                revision,
+            );
+            let existing_checkpoints = self.app.services.highlight.existing_checkpoints(
+                buffer_id.get(),
+                &snapshot,
+                revision,
+            );
             let sequence = window.sequence.clone();
 
             let owner = crate::app::services::TaskOwner {
@@ -191,7 +212,10 @@ impl Runtime {
                 window_id: Some(window_id),
                 revision,
             };
-            self.app.services.highlight.begin_highlight(buffer_id.get(), revision);
+            self.app
+                .services
+                .highlight
+                .begin_highlight(buffer_id.get(), revision);
 
             let file_path = buffer.path().and_then(|p| p.to_str()).map(String::from);
 
@@ -223,7 +247,7 @@ impl Runtime {
                         end,
                         highlights,
                     })
-                }
+                },
             );
 
             if let Some(task_id) = task {
@@ -255,7 +279,12 @@ impl Runtime {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let layout = self.layout_snapshot(rect);
         crate::app::ui::ViewSynchronizer::synchronize_viewports(&mut self.app.model, &layout);
-        let view_model = EditorViewModel::build(&self.app.model, &self.app.controller, &layout);
+        let view_model = EditorViewModel::build(
+            &self.app.model,
+            &self.app.controller,
+            &self.app.services.highlight,
+            &layout,
+        );
         self.app.ui.draw(&view_model, &mut self.buffered_renderer)?;
         self.buffered_renderer.flush(out)?;
         out.flush()?;

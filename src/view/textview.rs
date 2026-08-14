@@ -1,4 +1,4 @@
-use text::{Point, ToPoint, ToOffset};
+use text::{Point, ToPoint};
 use vim_ui::{Rect, Renderer, UIContext, View, WindowId};
 
 use crate::model::WindowState;
@@ -36,7 +36,7 @@ pub fn build_text(
     inner_rect: Rect,
     active: bool,
     mode: vim_input::Mode,
-    highlights: Option<&[textmate::HighlightSpan]>,
+    highlights: Option<&std::collections::HashMap<u32, Vec<textmate::HighlightSpan>>>,
 ) -> vim_ui::TextViewModel {
     let mut rows = Vec::new();
     let mut saved_cursor = None;
@@ -63,18 +63,8 @@ pub fn build_text(
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line_chars.len();
 
-        let line_start_offset = Point::new(buffer_row, 0).to_offset(buffer.snapshot().as_inner());
-        let line_end_offset = Point::new(buffer_row, buffer.snapshot().as_inner().line_len(buffer_row)).to_offset(buffer.snapshot().as_inner());
-
-        let line_highlights: Vec<_> = if let Some(h_spans) = highlights {
-            h_spans.iter().filter(|s| {
-                let start = s.start.to_offset(buffer.snapshot().as_inner());
-                let end = s.end.to_offset(buffer.snapshot().as_inner());
-                start <= line_end_offset && end >= line_start_offset
-            }).collect()
-        } else {
-            Vec::new()
-        };
+        let line_highlights = highlights.and_then(|rows| rows.get(&buffer_row));
+        let mut highlight_index = 0;
 
         let gutter_text = if window.show_gutter {
             format!(" {:2} ", buffer_row + 1)
@@ -112,14 +102,15 @@ pub fn build_text(
             let mut style = vim_ui::Style::default();
             if selection_state.selected_cell || selection_state.at_cursor_head {
                 style.bg = Some(vim_ui::Color::Blue);
-            } else {
-                let point_offset = point.to_offset(buffer.snapshot().as_inner());
-                if let Some(span) = line_highlights.iter().find(|s| {
-                    let start = s.start.to_offset(buffer.snapshot().as_inner());
-                    let end = s.end.to_offset(buffer.snapshot().as_inner());
-                    point_offset >= start && point_offset < end
-                }) {
-                    style.fg = Some(vim_ui::Color::Rgb(span.foreground[0], span.foreground[1], span.foreground[2]));
+            } else if let Some(line_highlights) = line_highlights {
+                if let Some(span) =
+                    highlight_at_column(line_highlights, &mut highlight_index, point.column)
+                {
+                    style.fg = Some(vim_ui::Color::Rgb(
+                        span.foreground[0],
+                        span.foreground[1],
+                        span.foreground[2],
+                    ));
                 }
             }
 
@@ -206,6 +197,19 @@ pub fn build_text(
     }
 }
 
+fn highlight_at_column<'a>(
+    spans: &'a [textmate::HighlightSpan],
+    index: &mut usize,
+    byte_column: u32,
+) -> Option<&'a textmate::HighlightSpan> {
+    while *index < spans.len() && spans[*index].end_column <= byte_column {
+        *index += 1;
+    }
+    spans
+        .get(*index)
+        .filter(|span| span.start_column <= byte_column && byte_column < span.end_column)
+}
+
 fn fallback_cursor(
     buffer: &vim_buffer::Buffer,
     window: &WindowState,
@@ -258,6 +262,42 @@ fn text_cursor(row: u32, column: u32, mode: vim_input::Mode) -> vim_ui::model::T
         position: vim_ui::model::DisplayPosition { row, column },
         shape: cursor_shape(mode),
         visible: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::highlight_at_column;
+
+    fn span(start_column: u32, end_column: u32) -> textmate::HighlightSpan {
+        textmate::HighlightSpan {
+            start_column,
+            end_column,
+            scopes: Vec::new(),
+            foreground: [1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn span_cursor_starts_at_a_horizontally_scrolled_column() {
+        let spans = vec![span(0, 3), span(3, 8), span(10, 12)];
+        let mut index = 0;
+
+        assert_eq!(highlight_at_column(&spans, &mut index, 6), Some(&spans[1]));
+        assert_eq!(index, 1);
+        assert_eq!(highlight_at_column(&spans, &mut index, 9), None);
+        assert_eq!(highlight_at_column(&spans, &mut index, 10), Some(&spans[2]));
+    }
+
+    #[test]
+    fn span_cursor_uses_utf8_byte_columns() {
+        let spans = vec![span(4, 9)];
+        let mut index = 0;
+
+        // `café`: the final character occupies byte columns 7..9.
+        assert_eq!(highlight_at_column(&spans, &mut index, 7), Some(&spans[0]));
+        assert_eq!(highlight_at_column(&spans, &mut index, 8), Some(&spans[0]));
+        assert_eq!(highlight_at_column(&spans, &mut index, 9), None);
     }
 }
 

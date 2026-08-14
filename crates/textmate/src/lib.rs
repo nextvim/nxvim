@@ -3,28 +3,37 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
-use vim_buffer::BufferId;
 use background_worker::TaskId;
-use std::{path::Path, sync::OnceLock, cmp::Ordering};
 use rope::Point;
+use std::{cmp::Ordering, path::Path, sync::OnceLock};
 use syntect::{
     easy::ScopeRangeIterator,
     highlighting::{Highlighter, Theme, ThemeSet},
     parsing::{ParseState, ScopeStack, SyntaxSet},
 };
-use text::{BufferSnapshot, ToOffset, Anchor, ToPoint};
+use text::{Anchor, BufferSnapshot, ToOffset, ToPoint};
+use vim_buffer::BufferId;
 
-/// A contiguous byte-column range with the TextMate scopes active for it.
+/// A half-open UTF-8 byte-column range within one buffer row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightSpan {
-    pub start: Anchor,
-    pub end: Anchor,
+    pub start_column: u32,
+    pub end_column: u32,
     pub scopes: Vec<String>,
     pub foreground: [u8; 3],
 }
 
+/// Highlighting for one covered buffer row. An empty `spans` vector still
+/// records that the row was parsed and needs no styled ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightedRow {
+    pub row: u32,
+    pub spans: Vec<HighlightSpan>,
+}
+
 #[derive(Clone)]
 pub struct ParseStateCheckpoint {
+    pub changedtick: u64,
     pub anchor: Anchor,
     pub cached_offset: usize,
     pub parse_state: ParseState,
@@ -43,22 +52,13 @@ impl std::fmt::Debug for ParseStateCheckpoint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CachedHighlightChunk {
-    pub start: Anchor,
-    pub end: Anchor,
-    pub cached_start_offset: usize,
-    pub cached_end_offset: usize,
-    pub spans: Vec<HighlightSpan>,
-}
-
 /// Background-computed highlighting data for one buffer version and interval.
 #[derive(Clone)]
 pub struct HighlightSnapshot {
     pub changedtick: u64,
     pub start: Anchor,
     pub end: Anchor,
-    pub style_cache: Vec<CachedHighlightChunk>,
+    pub rows: Vec<HighlightedRow>,
     pub checkpoints: Vec<ParseStateCheckpoint>,
 }
 
@@ -68,7 +68,7 @@ impl std::fmt::Debug for HighlightSnapshot {
             .field("changedtick", &self.changedtick)
             .field("start", &self.start)
             .field("end", &self.end)
-            .field("style_cache", &self.style_cache)
+            .field("rows", &self.rows)
             .field("checkpoints", &self.checkpoints)
             .finish()
     }
@@ -79,35 +79,18 @@ impl PartialEq for HighlightSnapshot {
         self.changedtick == other.changedtick
             && self.start == other.start
             && self.end == other.end
-            && self.style_cache == other.style_cache
+            && self.rows == other.rows
     }
 }
 
 impl Eq for HighlightSnapshot {}
 
 impl HighlightSnapshot {
-    pub fn spans_for_row(&self, row: u32, snapshot: &BufferSnapshot) -> Option<Vec<HighlightSpan>> {
-        let row_start_offset = Point::new(row, 0).to_offset(snapshot);
-        let row_end_offset = Point::new(row, snapshot.line_len(row)).to_offset(snapshot);
-
-        let mut row_spans = Vec::new();
-        for chunk in &self.style_cache {
-            if chunk.cached_start_offset <= row_end_offset && chunk.cached_end_offset >= row_start_offset {
-                for span in &chunk.spans {
-                    let span_start = span.start.to_offset(snapshot);
-                    let span_end = span.end.to_offset(snapshot);
-                    if span_start <= row_end_offset && span_end >= row_start_offset {
-                        row_spans.push(span.clone());
-                    }
-                }
-            }
-        }
-
-        if row_spans.is_empty() {
-            None
-        } else {
-            Some(row_spans)
-        }
+    pub fn spans_for_row(&self, row: u32) -> Option<&[HighlightSpan]> {
+        self.rows
+            .binary_search_by_key(&row, |highlighted| highlighted.row)
+            .ok()
+            .map(|index| self.rows[index].spans.as_slice())
     }
 }
 
@@ -151,7 +134,11 @@ pub fn parse_scopes_cancellable(
     let end_offset = end.to_offset(snapshot);
 
     let (mut parser, mut stack, current_offset) = if let Some(cp) = resume_checkpoint {
-        (cp.parse_state, cp.scope_stack, cp.anchor.to_offset(snapshot))
+        (
+            cp.parse_state,
+            cp.scope_stack,
+            cp.anchor.to_offset(snapshot),
+        )
     } else {
         (ParseState::new(syntax), ScopeStack::new(), 0)
     };
@@ -159,7 +146,7 @@ pub fn parse_scopes_cancellable(
     let start_row = snapshot.offset_to_point(current_offset).row;
     let end_row = end.to_point(snapshot).row.min(snapshot.row_count());
 
-    let mut style_cache = Vec::new();
+    let mut rows = Vec::new();
     let mut checkpoints = Vec::new();
     let highlighter = Highlighter::new(highlight_theme());
 
@@ -174,6 +161,7 @@ pub fn parse_scopes_cancellable(
         // Periodically save checkpoints (every 64 lines)
         if row > 0 && row % 64 == 0 && line_start_offset >= start_offset {
             checkpoints.push(ParseStateCheckpoint {
+                changedtick,
                 anchor: snapshot.anchor_before(line_start_offset),
                 cached_offset: line_start_offset,
                 parse_state: parser.clone(),
@@ -183,7 +171,10 @@ pub fn parse_scopes_cancellable(
 
         // Check for state convergence if we parsed beyond the target end range
         if line_start_offset >= end_offset {
-            if let Some(existing_cp) = existing_checkpoints.iter().find(|cp| cp.cached_offset == line_start_offset) {
+            if let Some(existing_cp) = existing_checkpoints
+                .iter()
+                .find(|cp| cp.cached_offset == line_start_offset)
+            {
                 // Since ParseState might not implement PartialEq, we compare ScopeStack as convergence metric
                 if existing_cp.scope_stack == stack {
                     break;
@@ -191,7 +182,10 @@ pub fn parse_scopes_cancellable(
             }
         }
 
-        let mut text: String = snapshot.as_rope().chunks_in_range(line_start_offset..line_end_offset).collect();
+        let mut text: String = snapshot
+            .as_rope()
+            .chunks_in_range(line_start_offset..line_end_offset)
+            .collect();
         text.push('\n');
         let parsed = parser.parse_line(&text, &syntax_set).ok()?;
 
@@ -205,11 +199,14 @@ pub fn parse_scopes_cancellable(
                     continue;
                 }
                 let scope_style = highlighter.style_for_stack(stack.as_slice());
-                let span_start = (line_start_offset + range.start).min(snapshot.len());
-                let span_end = (line_start_offset + range.end).min(snapshot.len());
+                let start_column = range.start.min(snapshot.line_len(row) as usize) as u32;
+                let end_column = range.end.min(snapshot.line_len(row) as usize) as u32;
+                if start_column == end_column {
+                    continue;
+                }
                 spans.push(HighlightSpan {
-                    start: snapshot.anchor_before(span_start),
-                    end: snapshot.anchor_after(span_end),
+                    start_column,
+                    end_column,
                     scopes: stack.as_slice().iter().map(ToString::to_string).collect(),
                     foreground: [
                         scope_style.foreground.r,
@@ -219,13 +216,7 @@ pub fn parse_scopes_cancellable(
                 });
             }
 
-            style_cache.push(CachedHighlightChunk {
-                start: snapshot.anchor_before(line_start_offset),
-                end: snapshot.anchor_after(line_end_offset),
-                cached_start_offset: line_start_offset,
-                cached_end_offset: line_end_offset,
-                spans,
-            });
+            rows.push(HighlightedRow { row, spans });
         } else {
             for (_, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
                 if stack.apply(&operation).is_err() {
@@ -239,7 +230,7 @@ pub fn parse_scopes_cancellable(
         changedtick,
         start,
         end,
-        style_cache,
+        rows,
         checkpoints,
     })
 }
@@ -265,7 +256,9 @@ struct BufferHighlightState {
     pending_tasks: HashMap<TaskId, HighlightRange>,
     completed_ranges: Vec<HighlightRange>,
     checkpoints: Vec<ParseStateCheckpoint>,
-    style_cache: Vec<CachedHighlightChunk>,
+    rows: HashMap<u32, Vec<HighlightSpan>>,
+    published_snapshot: Option<BufferSnapshot>,
+    valid_checkpoint_prefix_end: usize,
     cache_changedtick: Option<u64>,
 }
 
@@ -278,23 +271,142 @@ impl BufferHighlightState {
                 cp.cached_offset = cp.anchor.to_offset(snapshot);
             }
             self.checkpoints.sort_by_key(|cp| cp.cached_offset);
+        }
+    }
 
-            for chunk in &mut self.style_cache {
-                chunk.cached_start_offset = chunk.start.to_offset(snapshot);
-                chunk.cached_end_offset = chunk.end.to_offset(snapshot);
+    fn nearest_checkpoint(
+        &self,
+        target_offset: usize,
+        changedtick: u64,
+    ) -> Option<ParseStateCheckpoint> {
+        self.checkpoints.iter().rev().find_map(|checkpoint| {
+            (checkpoint.cached_offset <= target_offset
+                && (checkpoint.changedtick == changedtick
+                    || checkpoint.cached_offset < self.valid_checkpoint_prefix_end))
+                .then(|| checkpoint.clone())
+        })
+    }
+}
+
+fn project_rows(
+    rows: &mut HashMap<u32, Vec<HighlightSpan>>,
+    old: std::ops::Range<Point>,
+    new: std::ops::Range<Point>,
+    snapshot: &BufferSnapshot,
+) {
+    let fallback = rows
+        .get(&old.start.row)
+        .and_then(|spans| {
+            spans
+                .iter()
+                .find(|span| {
+                    span.start_column <= old.start.column && old.start.column <= span.end_column
+                })
+                .or_else(|| spans.last())
+        })
+        .cloned();
+    let old_end_spans = (old.end.row != old.start.row)
+        .then(|| rows.get(&old.end.row).cloned())
+        .flatten();
+    let row_delta = new.end.row as i64 - old.end.row as i64;
+    let mut projected =
+        HashMap::with_capacity(rows.len() + new.end.row.saturating_sub(new.start.row) as usize);
+
+    for (row, mut spans) in rows.drain() {
+        if row < old.start.row {
+            projected.insert(row, spans);
+        } else if row > old.end.row {
+            let shifted = (row as i64 + row_delta).max(0) as u32;
+            projected.insert(shifted, spans);
+        } else if row == old.start.row {
+            if old.start.row == old.end.row && new.start.row == new.end.row {
+                project_same_line_spans(
+                    &mut spans,
+                    old.start.column..old.end.column,
+                    new.end.column,
+                );
+            } else {
+                spans.retain(|span| span.start_column < old.start.column);
+                for span in &mut spans {
+                    span.end_column = span.end_column.min(old.start.column);
+                }
+                if let Some(style) = fallback.as_ref() {
+                    let mut inserted = style.clone();
+                    inserted.start_column = old.start.column;
+                    inserted.end_column = if new.end.row == new.start.row {
+                        new.end.column
+                    } else {
+                        snapshot.line_len(new.start.row)
+                    };
+                    if inserted.start_column < inserted.end_column {
+                        spans.push(inserted);
+                    }
+                }
             }
-            self.style_cache.sort_by_key(|chunk| chunk.cached_start_offset);
+            projected.insert(new.start.row, spans);
         }
     }
 
-    fn nearest_checkpoint(&self, target_offset: usize) -> Option<ParseStateCheckpoint> {
-        let idx = self.checkpoints.partition_point(|cp| cp.cached_offset <= target_offset);
-        if idx > 0 {
-            Some(self.checkpoints[idx - 1].clone())
-        } else {
-            None
+    if old.start.row != old.end.row && new.end.row == new.start.row {
+        if let Some(tail) = old_end_spans {
+            let target = projected.entry(new.start.row).or_default();
+            for mut span in tail {
+                if span.end_column <= old.end.column {
+                    continue;
+                }
+                span.start_column = new
+                    .end
+                    .column
+                    .saturating_add(span.start_column.saturating_sub(old.end.column));
+                span.end_column = new
+                    .end
+                    .column
+                    .saturating_add(span.end_column.saturating_sub(old.end.column));
+                target.push(span);
+            }
+            target.sort_by_key(|span| span.start_column);
         }
     }
+
+    if new.end.row > new.start.row {
+        for row in new.start.row + 1..=new.end.row {
+            let spans = fallback
+                .as_ref()
+                .and_then(|style| {
+                    let line_len = snapshot.line_len(row);
+                    (line_len > 0).then(|| {
+                        let mut span = style.clone();
+                        span.start_column = 0;
+                        span.end_column = line_len;
+                        vec![span]
+                    })
+                })
+                .unwrap_or_default();
+            projected.insert(row, spans);
+        }
+    }
+
+    *rows = projected;
+}
+
+fn project_same_line_spans(
+    spans: &mut Vec<HighlightSpan>,
+    old: std::ops::Range<u32>,
+    new_end: u32,
+) {
+    let delta = new_end as i64 - old.end as i64;
+    for span in spans.iter_mut() {
+        if span.end_column <= old.start {
+            continue;
+        }
+        if span.start_column >= old.end {
+            span.start_column = (span.start_column as i64 + delta).max(0) as u32;
+            span.end_column = (span.end_column as i64 + delta).max(0) as u32;
+        } else {
+            span.end_column = (span.end_column as i64 + delta).max(old.start as i64) as u32;
+        }
+    }
+    spans.retain(|span| span.start_column < span.end_column);
 }
 
 pub struct HighlightService {
@@ -308,6 +420,35 @@ impl HighlightService {
         }
     }
 
+    /// Projects the bounded published window through edits since its source
+    /// snapshot. This preserves visual continuity; projected rows are fallback
+    /// styling and are replaced by the next authoritative worker result.
+    pub fn project_edits(&mut self, buffer_id: u64, changedtick: u64, snapshot: &BufferSnapshot) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        let Some(previous) = state.published_snapshot.as_ref() else {
+            return;
+        };
+        if previous.version == snapshot.version {
+            return;
+        }
+
+        let mut edits: Vec<_> = snapshot.edits_since::<Point>(&previous.version).collect();
+        if let Some(first_dirty_row) = edits.iter().map(|edit| edit.new.start.row).min() {
+            let dirty_offset = Point::new(first_dirty_row, 0).to_offset(snapshot);
+            state.valid_checkpoint_prefix_end = state.valid_checkpoint_prefix_end.min(dirty_offset);
+        }
+        state.changedtick = Some(changedtick);
+        state.pending_tasks.clear();
+        state.completed_ranges.clear();
+        edits.reverse();
+        for edit in edits {
+            project_rows(&mut state.rows, edit.old, edit.new, snapshot);
+        }
+        state.published_snapshot = Some(snapshot.clone());
+    }
+
     pub fn should_highlight(
         &mut self,
         buffer_id: u64,
@@ -316,14 +457,19 @@ impl HighlightService {
         end: Anchor,
         snapshot: &BufferSnapshot,
     ) -> bool {
-        let state = self.buffers.entry(buffer_id).or_insert_with(|| BufferHighlightState {
-            changedtick: None,
-            pending_tasks: HashMap::new(),
-            completed_ranges: Vec::new(),
-            checkpoints: Vec::new(),
-            style_cache: Vec::new(),
-            cache_changedtick: None,
-        });
+        let state = self
+            .buffers
+            .entry(buffer_id)
+            .or_insert_with(|| BufferHighlightState {
+                changedtick: None,
+                pending_tasks: HashMap::new(),
+                completed_ranges: Vec::new(),
+                checkpoints: Vec::new(),
+                rows: HashMap::new(),
+                published_snapshot: None,
+                valid_checkpoint_prefix_end: usize::MAX,
+                cache_changedtick: None,
+            });
         state.ensure_cache_resolved(changedtick, snapshot);
 
         let start_offset = start.to_offset(snapshot);
@@ -354,7 +500,9 @@ impl HighlightService {
                 pending_tasks: HashMap::new(),
                 completed_ranges: Vec::new(),
                 checkpoints: Vec::new(),
-                style_cache: Vec::new(),
+                rows: HashMap::new(),
+                published_snapshot: None,
+                valid_checkpoint_prefix_end: usize::MAX,
                 cache_changedtick: None,
             });
         if state.changedtick != Some(changedtick) {
@@ -385,16 +533,35 @@ impl HighlightService {
         }
     }
 
-    pub fn nearest_checkpoint(&mut self, buffer_id: u64, target_offset: usize, snapshot: &BufferSnapshot, changedtick: u64) -> Option<ParseStateCheckpoint> {
+    pub fn nearest_checkpoint(
+        &mut self,
+        buffer_id: u64,
+        target_offset: usize,
+        snapshot: &BufferSnapshot,
+        changedtick: u64,
+    ) -> Option<ParseStateCheckpoint> {
         let state = self.buffers.get_mut(&buffer_id)?;
         state.ensure_cache_resolved(changedtick, snapshot);
-        state.nearest_checkpoint(target_offset)
+        state.nearest_checkpoint(target_offset, changedtick)
     }
 
-    pub fn existing_checkpoints(&mut self, buffer_id: u64, snapshot: &BufferSnapshot, changedtick: u64) -> Vec<ParseStateCheckpoint> {
+    pub fn existing_checkpoints(
+        &mut self,
+        buffer_id: u64,
+        snapshot: &BufferSnapshot,
+        changedtick: u64,
+    ) -> Vec<ParseStateCheckpoint> {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.ensure_cache_resolved(changedtick, snapshot);
-            state.checkpoints.clone()
+            state
+                .checkpoints
+                .iter()
+                .filter(|checkpoint| {
+                    checkpoint.changedtick == changedtick
+                        || checkpoint.cached_offset < state.valid_checkpoint_prefix_end
+                })
+                .cloned()
+                .collect()
         } else {
             Vec::new()
         }
@@ -420,27 +587,32 @@ impl HighlightService {
             return false;
         }
 
+        let Some(highlights) = completed.highlights else {
+            return false;
+        };
+
         state.ensure_cache_resolved(completed.changedtick, snapshot);
 
         let completed_start = completed.start.to_offset(snapshot);
         let completed_end = completed.end.to_offset(snapshot);
 
-        state.style_cache.retain(|chunk| {
-            chunk.cached_end_offset <= completed_start || chunk.cached_start_offset >= completed_end
-        });
+        let completed_start_row = completed.start.to_point(snapshot).row;
+        let completed_end_row = completed.end.to_point(snapshot).row;
+        state
+            .rows
+            .retain(|row, _| *row < completed_start_row || *row > completed_end_row);
 
-        state.checkpoints.retain(|cp| {
-            cp.cached_offset < completed_start || cp.cached_offset > completed_end
-        });
+        state
+            .checkpoints
+            .retain(|cp| cp.cached_offset < completed_start || cp.cached_offset > completed_end);
 
-        let Some(highlights) = completed.highlights else {
-            return false;
-        };
-
-        state.style_cache.extend(highlights.style_cache);
+        state.rows = highlights
+            .rows
+            .into_iter()
+            .map(|row| (row.row, row.spans))
+            .collect();
+        state.published_snapshot = Some(snapshot.clone());
         state.checkpoints.extend(highlights.checkpoints);
-
-        state.style_cache.sort_by_key(|c| c.cached_start_offset);
         state.checkpoints.sort_by_key(|cp| cp.cached_offset);
 
         state.completed_ranges.retain(|cached| {
@@ -466,38 +638,14 @@ impl HighlightService {
     ) -> Option<Vec<HighlightSpan>> {
         let state = self.buffers.get_mut(&buffer_id.get())?;
         state.ensure_cache_resolved(changedtick, snapshot);
-
-        let row_start_offset = Point::new(row, 0).to_offset(snapshot);
-        let row_end_offset = Point::new(row, snapshot.line_len(row)).to_offset(snapshot);
-
-        let mut row_spans = Vec::new();
-        let start_idx = state.style_cache.partition_point(|chunk| chunk.cached_end_offset < row_start_offset);
-        for chunk in &state.style_cache[start_idx..] {
-            if chunk.cached_start_offset > row_end_offset {
-                break;
-            }
-            for span in &chunk.spans {
-                let span_start = span.start.to_offset(snapshot);
-                let span_end = span.end.to_offset(snapshot);
-                if span_start <= row_end_offset && span_end >= row_start_offset {
-                    row_spans.push(span.clone());
-                }
-            }
-        }
-
-        if row_spans.is_empty() {
-            None
-        } else {
-            Some(row_spans)
-        }
+        state.rows.get(&row).cloned()
     }
 
-    pub fn all_spans(&self, buffer_id: BufferId) -> Vec<HighlightSpan> {
-        if let Some(state) = self.buffers.get(&buffer_id.get()) {
-            state.style_cache.iter().flat_map(|chunk| chunk.spans.clone()).collect()
-        } else {
-            Vec::new()
-        }
+    /// Returns the currently published rows without cloning the cache.
+    /// Task results update the map completely before the single-threaded UI
+    /// observes it on the next redraw.
+    pub fn published_rows(&self, buffer_id: BufferId) -> Option<&HashMap<u32, Vec<HighlightSpan>>> {
+        self.buffers.get(&buffer_id.get()).map(|state| &state.rows)
     }
 
     pub fn is_highlighting(&self) -> bool {
@@ -538,13 +686,7 @@ mod tests {
                 changedtick,
                 start,
                 end,
-                style_cache: vec![CachedHighlightChunk {
-                    start,
-                    end,
-                    cached_start_offset: 0,
-                    cached_end_offset: 0,
-                    spans,
-                }],
+                rows: vec![HighlightedRow { row: 0, spans }],
                 checkpoints: Vec::new(),
             }),
         }
@@ -565,8 +707,8 @@ mod tests {
         service.begin_highlight(1, 7);
         service.set_pending_task(1, TaskId(1), 7, start, end);
         let span = HighlightSpan {
-            start,
-            end,
+            start_column: 0,
+            end_column: 3,
             scopes: vec!["source".to_owned()],
             foreground: [1, 2, 3],
         };
@@ -584,6 +726,129 @@ mod tests {
             Some(vec![span])
         );
         assert!(service.is_highlighting());
+    }
+
+    #[test]
+    fn projects_same_line_insertions_without_clearing_published_style() {
+        let mut buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "one".to_owned(),
+        );
+        let old_snapshot = buffer.snapshot().clone();
+        let start = old_snapshot.anchor_before(0);
+        let end = old_snapshot.anchor_after(old_snapshot.len());
+        let span = HighlightSpan {
+            start_column: 0,
+            end_column: 3,
+            scopes: vec!["source".to_owned()],
+            foreground: [1, 2, 3],
+        };
+
+        let mut service = HighlightService::new();
+        service.begin_highlight(1, 7);
+        service.set_pending_task(1, TaskId(1), 7, start, end);
+        assert!(service.apply_task_result(
+            TaskId(1),
+            result(7, vec![span], start, end),
+            &old_snapshot,
+        ));
+
+        buffer.edit([(1..1, "x")]);
+        let new_snapshot = buffer.snapshot();
+        service.project_edits(1, 8, new_snapshot);
+
+        let projected = &service
+            .published_rows(vim_buffer::BufferId::new(1).unwrap())
+            .unwrap()[&0][0];
+        assert_eq!(projected.start_column, 0);
+        assert_eq!(projected.end_column, 4);
+    }
+
+    #[test]
+    fn projects_rows_across_newline_insertions() {
+        let mut buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "one\ntwo".to_owned(),
+        );
+        let old_snapshot = buffer.snapshot().clone();
+        let start = old_snapshot.anchor_before(0);
+        let end = old_snapshot.anchor_after(old_snapshot.len());
+        let highlights =
+            parse_scopes_cancellable(&old_snapshot, 7, None, start, end, None, &[], || false)
+                .unwrap();
+
+        let mut service = HighlightService::new();
+        service.begin_highlight(1, 7);
+        service.set_pending_task(1, TaskId(1), 7, start, end);
+        assert!(service.apply_task_result(
+            TaskId(1),
+            HighlightTaskResult {
+                buffer_id: 1,
+                changedtick: 7,
+                start,
+                end,
+                highlights: Some(highlights),
+            },
+            &old_snapshot,
+        ));
+
+        buffer.edit([(0..0, "new\n")]);
+        let new_snapshot = buffer.snapshot();
+        service.project_edits(1, 8, new_snapshot);
+
+        let rows = service
+            .published_rows(vim_buffer::BufferId::new(1).unwrap())
+            .unwrap();
+        assert!(rows.contains_key(&0));
+        assert!(rows.contains_key(&1));
+        assert!(rows.contains_key(&2));
+    }
+
+    #[test]
+    fn failed_result_preserves_published_rows() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "one".to_owned(),
+        );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+        let span = HighlightSpan {
+            start_column: 0,
+            end_column: 3,
+            scopes: vec!["source".to_owned()],
+            foreground: [1, 2, 3],
+        };
+
+        let mut service = HighlightService::new();
+        service.begin_highlight(1, 7);
+        service.set_pending_task(1, TaskId(1), 7, start, end);
+        assert!(service.apply_task_result(
+            TaskId(1),
+            result(7, vec![span.clone()], start, end),
+            snapshot,
+        ));
+
+        service.set_pending_task(1, TaskId(2), 7, start, end);
+        assert!(!service.apply_task_result(
+            TaskId(2),
+            HighlightTaskResult {
+                buffer_id: 1,
+                changedtick: 7,
+                start,
+                end,
+                highlights: None,
+            },
+            snapshot,
+        ));
+
+        assert_eq!(
+            service.published_rows(vim_buffer::BufferId::new(1).unwrap()),
+            Some(&HashMap::from([(0, vec![span])])),
+        );
     }
 
     #[test]
@@ -615,7 +880,7 @@ mod tests {
                     changedtick: 7,
                     start: start1,
                     end: end1,
-                    style_cache: Vec::new(),
+                    rows: Vec::new(),
                     checkpoints: Vec::new(),
                 }),
             },
@@ -647,12 +912,14 @@ mod tests {
         let start = snapshot.anchor_before(0);
         let end = snapshot.anchor_after(snapshot.len());
         let highlights =
-            parse_scopes_cancellable(snapshot, 1, Some("test.rs"), start, end, None, &[], || false)
-                .unwrap();
+            parse_scopes_cancellable(snapshot, 1, Some("test.rs"), start, end, None, &[], || {
+                false
+            })
+            .unwrap();
 
         assert!(
             highlights
-                .spans_for_row(2, snapshot)
+                .spans_for_row(2)
                 .unwrap()
                 .iter()
                 .any(|span| { span.scopes.iter().any(|scope| scope.contains("comment")) })
@@ -668,12 +935,57 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
         let start = snapshot.anchor_before(4); // "two" starts at offset 4
-        let end = snapshot.anchor_after(7);   // "two" ends at offset 7
+        let end = snapshot.anchor_after(7); // "two" ends at offset 7
         let highlights =
             parse_scopes_cancellable(snapshot, 0, None, start, end, None, &[], || false).unwrap();
 
         assert_eq!(highlights.start.to_point(snapshot).row, 1);
-        assert_eq!(highlights.style_cache.len(), 1);
+        assert_eq!(highlights.rows.len(), 1);
+    }
+
+    #[test]
+    fn empty_rows_are_explicitly_covered() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "one\n\nthree".to_owned(),
+        );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+        let highlights =
+            parse_scopes_cancellable(snapshot, 0, None, start, end, None, &[], || false).unwrap();
+
+        assert_eq!(highlights.spans_for_row(1), Some([].as_slice()));
+    }
+
+    #[test]
+    fn span_columns_are_row_local_utf8_byte_boundaries() {
+        let source = "let café = \"é\";";
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            source.to_owned(),
+        );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+        let highlights =
+            parse_scopes_cancellable(snapshot, 0, Some("test.rs"), start, end, None, &[], || {
+                false
+            })
+            .unwrap();
+
+        let spans = highlights.spans_for_row(0).unwrap();
+        assert!(!spans.is_empty());
+        assert!(spans.iter().all(|span| {
+            let start = span.start_column as usize;
+            let end = span.end_column as usize;
+            start < end
+                && end <= source.len()
+                && source.is_char_boundary(start)
+                && source.is_char_boundary(end)
+        }));
     }
 
     #[test]
@@ -686,6 +998,8 @@ mod tests {
         let snapshot = buffer.snapshot();
         let start = snapshot.anchor_before(0);
         let end = snapshot.anchor_after(snapshot.len());
-        assert!(parse_scopes_cancellable(snapshot, 0, None, start, end, None, &[], || true).is_none());
+        assert!(
+            parse_scopes_cancellable(snapshot, 0, None, start, end, None, &[], || true).is_none()
+        );
     }
 }
