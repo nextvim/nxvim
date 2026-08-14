@@ -33,20 +33,16 @@ impl TaskDispatcher {
                 true
             }
             TaskResult::Highlight {
-                window_id,
                 buffer_id,
                 revision,
                 highlights,
                 ..
             } => {
-                if !Self::window_is_current(model, window_id, buffer_id, revision) {
-                    return CommandOutcome::default();
-                }
-                let Some(window) = model.window_state_mut(window_id) else {
+                let Some(state) = Self::current_buffer_state(model, buffer_id, revision) else {
                     return CommandOutcome::default();
                 };
-                window.highlights = highlights;
-                true
+                state.highlights = highlights;
+                model.window_buffers().any(|(_, b_id)| b_id == buffer_id)
             }
             TaskResult::DisplayMapExpansion {
                 window_id,

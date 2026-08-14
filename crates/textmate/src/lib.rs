@@ -5,44 +5,50 @@ use std::{
 
 use vim_buffer::BufferId;
 use background_worker::TaskId;
-use std::{path::Path, sync::OnceLock};
+use std::{path::Path, sync::OnceLock, cmp::Ordering};
 use rope::Point;
 use syntect::{
     easy::ScopeRangeIterator,
     highlighting::{Highlighter, Theme, ThemeSet},
     parsing::{ParseState, ScopeStack, SyntaxSet},
 };
-use text::{BufferSnapshot, ToOffset};
+use text::{BufferSnapshot, ToOffset, Anchor, ToPoint};
 
 /// A contiguous byte-column range with the TextMate scopes active for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightSpan {
-    pub start: u32,
-    pub end: u32,
+    pub start: Anchor,
+    pub end: Anchor,
     pub scopes: Vec<String>,
     pub foreground: [u8; 3],
 }
 
-/// Background-computed highlighting data for one buffer version and row interval.
+/// Background-computed highlighting data for one buffer version and interval.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HighlightSnapshot {
     pub changedtick: u64,
-    pub start_row: u32,
-    pub rows: Vec<Vec<HighlightSpan>>,
+    pub start: Anchor,
+    pub end: Anchor,
+    pub spans: Vec<HighlightSpan>,
 }
 
 impl HighlightSnapshot {
-    pub fn end_row(&self) -> u32 {
-        self.start_row.saturating_add(self.rows.len() as u32)
+    pub fn contains_range(&self, start: Anchor, end: Anchor, snapshot: &BufferSnapshot) -> bool {
+        self.start.cmp(&start, snapshot).is_le() && self.end.cmp(&end, snapshot).is_ge()
     }
 
-    pub fn contains_rows(&self, start_row: u32, end_row: u32) -> bool {
-        self.start_row <= start_row && self.end_row() >= end_row
-    }
-
-    pub fn spans_for_row(&self, row: u32) -> Option<&[HighlightSpan]> {
-        let index = row.checked_sub(self.start_row)?;
-        self.rows.get(index as usize).map(Vec::as_slice)
+    pub fn spans_for_row(&self, row: u32, snapshot: &BufferSnapshot) -> Option<Vec<HighlightSpan>> {
+        let mut row_spans = Vec::new();
+        for span in &self.spans {
+            if span.start.to_point(snapshot).row == row {
+                row_spans.push(span.clone());
+            }
+        }
+        if row_spans.is_empty() {
+            None
+        } else {
+            Some(row_spans)
+        }
     }
 }
 
@@ -63,14 +69,14 @@ fn highlight_theme() -> &'static Theme {
     })
 }
 
-/// Parses TextMate scopes for `[start_row, end_row)`. Callers include a lookbehind
-/// window in `start_row` so multiline state can settle before visible rows.
+/// Parses TextMate scopes for `[start, end)`. Callers include a lookbehind
+/// window in `start` so multiline state can settle before visible rows.
 pub fn parse_scopes_cancellable(
     snapshot: &BufferSnapshot,
     changedtick: u64,
     file_path: Option<&str>,
-    start_row: u32,
-    end_row: u32,
+    start: Anchor,
+    end: Anchor,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Option<HighlightSnapshot> {
     let syntax_set = syntax_set();
@@ -79,24 +85,31 @@ pub fn parse_scopes_cancellable(
         .and_then(|extension| extension.to_str())
         .and_then(|extension| syntax_set.find_syntax_by_extension(extension))
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
-    let start_row = start_row.min(snapshot.row_count());
+
+    let start_point = start.to_point(snapshot);
+    let end_point = end.to_point(snapshot);
+    let start_row = start_point.row.min(snapshot.row_count());
+    let mut end_row = end_point.row;
+    if end_point.column > 0 {
+        end_row += 1;
+    }
     let end_row = end_row.max(start_row).min(snapshot.row_count());
+
     let mut parser = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
     let highlighter = Highlighter::new(highlight_theme());
-    let mut rows = Vec::with_capacity(end_row.saturating_sub(start_row) as usize);
+    let mut spans = Vec::new();
 
     for row in start_row..end_row {
         if is_cancelled() {
             return None;
         }
 
-        let start = Point::new(row, 0).to_offset(snapshot);
-        let end = Point::new(row, snapshot.line_len(row)).to_offset(snapshot);
-        let mut text: String = snapshot.as_rope().chunks_in_range(start..end).collect();
+        let line_start_offset = Point::new(row, 0).to_offset(snapshot);
+        let line_end_offset = Point::new(row, snapshot.line_len(row)).to_offset(snapshot);
+        let mut text: String = snapshot.as_rope().chunks_in_range(line_start_offset..line_end_offset).collect();
         text.push('\n');
         let parsed = parser.parse_line(&text, &syntax_set).ok()?;
-        let mut spans = Vec::new();
 
         for (range, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
             if stack.apply(&operation).is_err() {
@@ -106,9 +119,11 @@ pub fn parse_scopes_cancellable(
                 continue;
             }
             let scope_style = highlighter.style_for_stack(stack.as_slice());
+            let span_start = (line_start_offset + range.start).min(snapshot.len());
+            let span_end = (line_start_offset + range.end).min(snapshot.len());
             spans.push(HighlightSpan {
-                start: u32::try_from(range.start).ok()?,
-                end: u32::try_from(range.end).ok()?,
+                start: snapshot.anchor_before(span_start),
+                end: snapshot.anchor_after(span_end),
                 scopes: stack.as_slice().iter().map(ToString::to_string).collect(),
                 foreground: [
                     scope_style.foreground.r,
@@ -117,13 +132,13 @@ pub fn parse_scopes_cancellable(
                 ],
             });
         }
-        rows.push(spans);
     }
 
     Some(HighlightSnapshot {
         changedtick,
-        start_row,
-        rows,
+        start,
+        end,
+        spans,
     })
 }
 
@@ -131,23 +146,23 @@ pub fn parse_scopes_cancellable(
 pub struct HighlightTaskResult {
     pub buffer_id: u64,
     pub changedtick: u64,
-    pub start_row: u32,
-    pub end_row: u32,
+    pub start: Anchor,
+    pub end: Anchor,
     pub highlights: Option<HighlightSnapshot>,
 }
 
 #[derive(Clone, Copy)]
 struct HighlightRange {
     changedtick: u64,
-    start_row: u32,
-    end_row: u32,
+    start: Anchor,
+    end: Anchor,
 }
 
 struct BufferHighlightState {
     changedtick: Option<u64>,
     pending_tasks: HashMap<TaskId, HighlightRange>,
     completed_ranges: Vec<HighlightRange>,
-    style_cache: HashMap<u32, Vec<HighlightSpan>>,
+    style_cache: Vec<HighlightSpan>,
 }
 
 pub struct HighlightService {
@@ -165,19 +180,20 @@ impl HighlightService {
         &self,
         buffer_id: u64,
         changedtick: u64,
-        start_row: u32,
-        end_row: u32,
+        start: Anchor,
+        end: Anchor,
+        snapshot: &BufferSnapshot,
     ) -> bool {
         self.buffers.get(&buffer_id).is_none_or(|state| {
             state.changedtick != Some(changedtick)
                 || (!state.completed_ranges.iter().any(|completed| {
                     completed.changedtick == changedtick
-                        && completed.start_row <= start_row
-                        && completed.end_row >= end_row
+                        && completed.start.cmp(&start, snapshot).is_le()
+                        && completed.end.cmp(&end, snapshot).is_ge()
                 }) && !state.pending_tasks.values().any(|pending| {
                     pending.changedtick == changedtick
-                        && pending.start_row <= start_row
-                        && pending.end_row >= end_row
+                        && pending.start.cmp(&start, snapshot).is_le()
+                        && pending.end.cmp(&end, snapshot).is_ge()
                 }))
         })
     }
@@ -190,7 +206,7 @@ impl HighlightService {
                 changedtick: None,
                 pending_tasks: HashMap::new(),
                 completed_ranges: Vec::new(),
-                style_cache: HashMap::new(),
+                style_cache: Vec::new(),
             });
         if state.changedtick != Some(changedtick) {
             state.changedtick = Some(changedtick);
@@ -205,16 +221,16 @@ impl HighlightService {
         buffer_id: u64,
         task_id: TaskId,
         changedtick: u64,
-        start_row: u32,
-        end_row: u32,
+        start: Anchor,
+        end: Anchor,
     ) {
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
             state.pending_tasks.insert(
                 task_id,
                 HighlightRange {
                     changedtick,
-                    start_row,
-                    end_row,
+                    start,
+                    end,
                 },
             );
         }
@@ -224,6 +240,7 @@ impl HighlightService {
         &mut self,
         task_id: TaskId,
         completed: HighlightTaskResult,
+        snapshot: &BufferSnapshot,
     ) -> bool {
         let Some(state) = self.buffers.get_mut(&completed.buffer_id) else {
             return false;
@@ -233,37 +250,50 @@ impl HighlightService {
         };
         if state.changedtick != Some(completed.changedtick)
             || pending.changedtick != completed.changedtick
-            || pending.start_row != completed.start_row
-            || pending.end_row != completed.end_row
+            || pending.start.cmp(&completed.start, snapshot) != Ordering::Equal
+            || pending.end.cmp(&completed.end, snapshot) != Ordering::Equal
         {
             return false;
         }
         let Some(highlights) = completed.highlights else {
             return false;
         };
-        let start_row = highlights.start_row;
-        let end_row = highlights.end_row();
-        for (offset, spans) in highlights.rows.into_iter().enumerate() {
-            state.style_cache.insert(start_row + offset as u32, spans);
-        }
+        state.style_cache.retain(|span| {
+            span.end.cmp(&completed.start, snapshot).is_le()
+                || span.start.cmp(&completed.end, snapshot).is_ge()
+        });
+        state.style_cache.extend(highlights.spans);
         state.completed_ranges.retain(|cached| {
             cached.changedtick == completed.changedtick
-                && (cached.end_row <= start_row || cached.start_row >= end_row)
+                && (cached.end.cmp(&completed.start, snapshot).is_le()
+                    || cached.start.cmp(&completed.end, snapshot).is_ge())
         });
         state.completed_ranges.push(HighlightRange {
             changedtick: completed.changedtick,
-            start_row,
-            end_row,
+            start: completed.start,
+            end: completed.end,
         });
         true
     }
 
-    pub fn spans(&self, buffer_id: BufferId, row: u32) -> Option<&[HighlightSpan]> {
-        self.buffers
-            .get(&buffer_id.get())?
-            .style_cache
-            .get(&row)
-            .map(Vec::as_slice)
+    pub fn spans(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        snapshot: &BufferSnapshot,
+    ) -> Option<Vec<HighlightSpan>> {
+        let state = self.buffers.get(&buffer_id.get())?;
+        let mut row_spans = Vec::new();
+        for span in &state.style_cache {
+            if span.start.to_point(snapshot).row == row {
+                row_spans.push(span.clone());
+            }
+        }
+        if row_spans.is_empty() {
+            None
+        } else {
+            Some(row_spans)
+        }
     }
 
     pub fn is_highlighting(&self) -> bool {
@@ -286,64 +316,98 @@ impl Default for HighlightService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clock::ReplicaId;
+    use text::{Buffer, BufferId};
 
-    fn result(changedtick: u64, spans: Vec<HighlightSpan>) -> HighlightTaskResult {
+    fn result(
+        changedtick: u64,
+        spans: Vec<HighlightSpan>,
+        start: Anchor,
+        end: Anchor,
+    ) -> HighlightTaskResult {
         HighlightTaskResult {
             buffer_id: 1,
             changedtick,
-            start_row: 0,
-            end_row: 1,
+            start,
+            end,
             highlights: Some(HighlightSnapshot {
                 changedtick,
-                start_row: 0,
-                rows: vec![spans],
+                start,
+                end,
+                spans,
             }),
         }
     }
 
     #[test]
     fn retains_style_cache_while_new_version_is_pending() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "one\ntwo".to_owned(),
+        );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+
         let mut service = HighlightService::new();
         service.begin_highlight(1, 7);
-        service.set_pending_task(1, TaskId(1), 7, 0, 1);
+        service.set_pending_task(1, TaskId(1), 7, start, end);
         let span = HighlightSpan {
-            start: 0,
-            end: 1,
+            start,
+            end,
             scopes: vec!["source".to_owned()],
             foreground: [1, 2, 3],
         };
-        assert!(service.apply_task_result(TaskId(1), result(7, vec![span.clone()])));
+        assert!(service.apply_task_result(
+            TaskId(1),
+            result(7, vec![span.clone()], start, end),
+            snapshot
+        ));
 
         service.begin_highlight(1, 8);
-        service.set_pending_task(1, TaskId(2), 8, 0, 1);
+        service.set_pending_task(1, TaskId(2), 8, start, end);
 
         assert_eq!(
-            service.spans(BufferId::new(1).unwrap(), 0),
-            Some([span].as_slice())
+            service.spans(vim_buffer::BufferId::new(1).unwrap(), 0, snapshot),
+            Some(vec![span])
         );
         assert!(service.is_highlighting());
     }
 
     #[test]
     fn applies_finished_result_while_another_task_is_pending() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "one\ntwo".to_owned(),
+        );
+        let snapshot = buffer.snapshot();
+        let start1 = snapshot.anchor_before(0);
+        let end1 = snapshot.anchor_after(3);
+        let start2 = snapshot.anchor_before(3);
+        let end2 = snapshot.anchor_after(snapshot.len());
+
         let mut service = HighlightService::new();
         service.begin_highlight(1, 7);
-        service.set_pending_task(1, TaskId(1), 7, 0, 32);
-        service.set_pending_task(1, TaskId(2), 7, 32, 64);
+        service.set_pending_task(1, TaskId(1), 7, start1, end1);
+        service.set_pending_task(1, TaskId(2), 7, start2, end2);
 
         assert!(service.apply_task_result(
             TaskId(1),
             HighlightTaskResult {
                 buffer_id: 1,
                 changedtick: 7,
-                start_row: 0,
-                end_row: 32,
+                start: start1,
+                end: end1,
                 highlights: Some(HighlightSnapshot {
                     changedtick: 7,
-                    start_row: 0,
-                    rows: vec![Vec::new(); 32],
+                    start: start1,
+                    end: end1,
+                    spans: Vec::new(),
                 }),
             },
+            snapshot
         ));
         assert!(service.is_highlighting());
         assert!(
@@ -353,27 +417,30 @@ mod tests {
                 .unwrap()
                 .completed_ranges
                 .iter()
-                .any(|completed| completed.start_row == 0 && completed.end_row == 32)
+                .any(|completed| {
+                    completed.start.cmp(&start1, snapshot) == Ordering::Equal
+                        && completed.end.cmp(&end1, snapshot) == Ordering::Equal
+                })
         );
     }
 
     #[test]
     fn preserves_multiline_parse_state() {
-        use clock::ReplicaId;
-        use text::{Buffer, BufferId};
         let buffer = Buffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "fn main() {\n/* comment\nstill comment */\n}".to_owned(),
         );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
         let highlights =
-            parse_scopes_cancellable(buffer.snapshot(), 1, Some("test.rs"), 0, 4, || false)
+            parse_scopes_cancellable(snapshot, 1, Some("test.rs"), start, end, || false)
                 .unwrap();
 
-        assert_eq!(highlights.rows.len(), 4);
         assert!(
             highlights
-                .spans_for_row(2)
+                .spans_for_row(2, snapshot)
                 .unwrap()
                 .iter()
                 .any(|span| { span.scopes.iter().any(|scope| scope.contains("comment")) })
@@ -382,29 +449,31 @@ mod tests {
 
     #[test]
     fn stops_at_requested_row() {
-        use clock::ReplicaId;
-        use text::{Buffer, BufferId};
         let buffer = Buffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "one\ntwo\nthree".to_owned(),
         );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(4); // "two" starts at offset 4
+        let end = snapshot.anchor_after(7);   // "two" ends at offset 7
         let highlights =
-            parse_scopes_cancellable(buffer.snapshot(), 0, None, 1, 2, || false).unwrap();
+            parse_scopes_cancellable(snapshot, 0, None, start, end, || false).unwrap();
 
-        assert_eq!(highlights.start_row, 1);
-        assert_eq!(highlights.rows.len(), 1);
+        assert_eq!(highlights.start.to_point(snapshot).row, 1);
+        assert_eq!(highlights.spans.len(), 1);
     }
 
     #[test]
     fn cancellation_discards_partial_snapshot() {
-        use clock::ReplicaId;
-        use text::{Buffer, BufferId};
         let buffer = Buffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "one\ntwo".to_owned(),
         );
-        assert!(parse_scopes_cancellable(buffer.snapshot(), 0, None, 0, 2, || true).is_none());
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+        assert!(parse_scopes_cancellable(snapshot, 0, None, start, end, || true).is_none());
     }
 }

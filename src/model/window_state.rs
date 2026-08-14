@@ -23,7 +23,6 @@ impl Default for Viewport {
 pub struct WindowState {
     pub buffer_id: BufferId,
     pub display_map: display_map::DisplayMap,
-    pub highlights: Vec<textmate::HighlightSpan>,
     pub selections: vim_buffer::SelectionSet,
     pub sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub last_version: Option<clock::Global>,
@@ -47,7 +46,6 @@ impl WindowState {
         Self {
             buffer_id: buffer.id(),
             display_map,
-            highlights: Vec::new(),
             selections: vim_buffer::SelectionSet::new(),
             sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_version: None,
@@ -100,7 +98,12 @@ impl WindowState {
         if self.show_gutter != show_gutter {
             self.show_gutter = show_gutter;
             let snapshot = self.display_map.snapshot().buffer_snapshot().clone();
-            let wrap_width = wrap_width(&snapshot, self.viewport.width, self.viewport.has_border, show_gutter);
+            let wrap_width = wrap_width(
+                &snapshot,
+                self.viewport.width,
+                self.viewport.has_border,
+                show_gutter,
+            );
             self.display_map.set_wrap_width(Some(wrap_width));
             self.scroll_to_cursor();
         }
@@ -143,7 +146,6 @@ impl WindowState {
         Self {
             buffer_id,
             display_map,
-            highlights: Vec::new(),
             selections,
             sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_version: None,
@@ -215,7 +217,7 @@ mod tests {
             has_border: false,
         };
         let mut window = WindowState::new(&buffer, viewport);
-        
+
         let wrap_width_with_gutter = window.display_map.wrap_width.unwrap();
         assert!(wrap_width_with_gutter < 80);
 
@@ -225,7 +227,12 @@ mod tests {
     }
 }
 
-fn wrap_width(snapshot: &text::BufferSnapshot, width: u32, has_border: bool, show_gutter: bool) -> u32 {
+fn wrap_width(
+    snapshot: &text::BufferSnapshot,
+    width: u32,
+    has_border: bool,
+    show_gutter: bool,
+) -> u32 {
     let gutter_width = if show_gutter {
         let digit_count = snapshot.row_count().max(1).to_string().len();
         (digit_count.max(2) + 2) as u32

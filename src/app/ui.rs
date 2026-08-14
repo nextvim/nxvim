@@ -121,6 +121,7 @@ impl ViewSynchronizer {
             return false;
         };
         window.set_title("MAIN WINDOW".to_string());
+        window.set_draw_border(false);
         window.set_view(Box::new(crate::view::TextView::new(new_window_id)));
         true
     }
@@ -146,6 +147,7 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
     }
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
+        w.set_draw_border(false);
         w.set_view(Box::new(crate::view::TextView::new(main_id)));
     }
     if let Some(w) = ui.window_mut(right_id) {
