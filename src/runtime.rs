@@ -4,6 +4,7 @@ use crate::terminal::TerminalSession;
 use crate::view::{EditorViewModel, LayoutSnapshot};
 use crossterm::event;
 use std::io::{Write, stdout};
+use text::ToPoint;
 use vim_ui::BufferedRenderer;
 
 /// Owns terminal lifecycle, source polling, command dispatch, and rendering.
@@ -29,10 +30,12 @@ impl Runtime {
         let mut out = stdout();
         let rect = self.app.ui.screen_rect();
         self.redraw(rect, &mut out)?;
+        self.schedule_display_map_expansions();
 
         let mut should_redraw = false;
 
         'main_loop: loop {
+            self.schedule_display_map_expansions();
             let current_rect = self.app.ui.screen_rect();
             if let Ok(new_rect) = self.terminal.size() {
                 if new_rect != current_rect {
@@ -98,6 +101,73 @@ impl Runtime {
             self.app.view_ids,
             effect,
         );
+    }
+
+    fn schedule_display_map_expansions(&mut self) {
+        const CHUNK_ROWS: u32 = 4_096;
+        let window_ids = self
+            .app
+            .model
+            .window_buffers()
+            .map(|(window_id, _)| window_id)
+            .collect::<Vec<_>>();
+
+        for window_id in window_ids {
+            let Some(buffer_id) = self.app.model.window_buffer(window_id) else {
+                continue;
+            };
+            let Some(revision) = self
+                .app
+                .model
+                .buffer_state(buffer_id)
+                .map(|state| state.revision)
+            else {
+                continue;
+            };
+            let Ok(buffer) = self.app.model.get_buffer(buffer_id) else {
+                continue;
+            };
+            let snapshot = buffer.snapshot().as_inner().clone();
+            let Some(window) = self.app.model.window_state(window_id) else {
+                continue;
+            };
+            if window.pending_display_map.is_some() {
+                continue;
+            }
+            let cursor_row = if window.selections.selections.is_empty() {
+                0
+            } else {
+                window.selections.primary().head().to_point(&snapshot).row
+            };
+            let Some(requested_rows) = window
+                .display_map
+                .nearest_missing_range(cursor_row, CHUNK_ROWS)
+            else {
+                continue;
+            };
+            let Some(input) = window.display_map.expansion_input(requested_rows.clone()) else {
+                continue;
+            };
+            let generation = input.generation.clone();
+            let sequence = window.sequence.clone();
+            let owner = crate::app::services::TaskOwner {
+                buffer_id: Some(buffer_id),
+                window_id: Some(window_id),
+                revision,
+            };
+            let task = self.app.services.spawn_cancellable_task(
+                "display_map",
+                sequence,
+                owner,
+                crate::app::services::TaskType::DisplayMap,
+                move |token| display_map::build_expansion(input, &token),
+            );
+            if task.is_some()
+                && let Some(window) = self.app.model.window_state_mut(window_id)
+            {
+                window.pending_display_map = Some((generation, requested_rows));
+            }
+        }
     }
 
     fn resize(&mut self, rect: vim_ui::Rect) {

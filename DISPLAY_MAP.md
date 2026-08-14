@@ -350,21 +350,22 @@ Acceptance:
 - [x] A map containing only a middle hot interval maps that interval correctly without processing the full prefix.
 - [x] Access to cold mapping is explicit and cannot masquerade as exact.
 
-### Phase 4: Add cancellable lazy expansion through Services
+### Phase 4: Add cancellable lazy expansion through Services (Completed)
 
-- Replace full-map task payloads with `DisplayMapExpansion`.
-- Schedule nearest missing chunks after synchronous `WindowState` updates.
-- Apply generation and owner checks in `TaskDispatcher`.
-- Merge expansions rather than assigning `window.display_map = map`.
-- Cancel stale work on edits, jumps, configuration changes, buffer switches, and window closure.
-- Avoid redraw for irrelevant offscreen merges.
+- [x] Replace full-map task payloads with `DisplayMapExpansion`.
+- [x] Schedule one nearest missing chunk per window after synchronous viewport updates.
+- [x] Apply buffer revision, window owner, display generation, and configuration checks in `TaskDispatcher`.
+- [x] Merge expansions rather than assigning `window.display_map = map`.
+- [x] Cancel stale work on edits, jumps, configuration changes, and buffer/window lifecycle changes.
+- [x] Avoid redraw for irrelevant offscreen merges; re-anchor scrolling only when earlier coverage shifts the viewport.
+- [x] Check cancellation between rows and within long-line wrapping loops.
 
 Acceptance:
 
-- Input remains responsive while cold coverage grows.
-- Editing during expansion cancels or rejects stale results.
-- Switching buffers cannot install an old map.
-- Lazy completion eventually yields exact whole-document coverage for an unchanged idle buffer.
+- [x] Input remains responsive while cold coverage grows on the dedicated worker.
+- [x] Editing during expansion cancels or rejects stale results.
+- [x] Switching buffers cannot install an old map.
+- [x] Lazy scheduling continues chunk-by-chunk until an unchanged document is fully exact.
 
 ### Phase 5: Incremental edits across warm/cold coverage
 

@@ -47,14 +47,12 @@ pub enum TaskResult {
         revision: u64,
         highlights: Vec<textmate::HighlightSpan>,
     },
-    DisplayMap {
+    DisplayMapExpansion {
         task_id: TaskId,
         window_id: WindowId,
         buffer_id: BufferId,
         revision: u64,
-        map: display_map::DisplayMap,
-        height: u32,
-        layout_width: u32,
+        expansion: display_map::DisplayMapExpansion,
     },
 }
 
@@ -62,7 +60,6 @@ pub(super) struct TaskMetadata {
     pub owner: TaskOwner,
     pub task_type: TaskType,
 }
-
 
 pub struct Services {
     background_workers: background_worker::WorkerManager,
@@ -159,10 +156,14 @@ impl Services {
         let task_id = self
             .background_workers
             .spawn_cancellable_task(worker_name, sequence, job)?;
-        self.task_metadata
-            .lock()
-            .unwrap()
-            .insert(task_id, TaskMetadata { owner, task_type });
+        let mut metadata = self.task_metadata.lock().unwrap();
+        if task_type == TaskType::DisplayMap {
+            metadata.retain(|_, existing| {
+                existing.task_type != TaskType::DisplayMap
+                    || existing.owner.window_id != owner.window_id
+            });
+        }
+        metadata.insert(task_id, TaskMetadata { owner, task_type });
         Some(task_id)
     }
 
@@ -196,20 +197,13 @@ impl Services {
                 revision: owner.revision,
                 highlights: result.downcast::<Vec<textmate::HighlightSpan>>().ok()?,
             }),
-            TaskType::DisplayMap => {
-                let (map, height, layout_width) = result
-                    .downcast::<(display_map::DisplayMap, u32, u32)>()
-                    .ok()?;
-                Some(TaskResult::DisplayMap {
-                    task_id,
-                    window_id: owner.window_id?,
-                    buffer_id: owner.buffer_id?,
-                    revision: owner.revision,
-                    map,
-                    height,
-                    layout_width,
-                })
-            }
+            TaskType::DisplayMap => Some(TaskResult::DisplayMapExpansion {
+                task_id,
+                window_id: owner.window_id?,
+                buffer_id: owner.buffer_id?,
+                revision: owner.revision,
+                expansion: result.downcast::<display_map::DisplayMapExpansion>().ok()?,
+            }),
         }
     }
 }
@@ -228,6 +222,49 @@ mod tests {
     use std::time::{Duration, Instant};
     use vim_buffer::BufferId;
     use vim_ui::WindowId;
+
+    #[test]
+    fn display_map_expansion_is_decoded_with_owner_metadata() {
+        let mut services = Services::new();
+        let buffer_id = BufferId::new(7).unwrap();
+        let window_id = WindowId::new(8);
+        let buffer = text::Buffer::new(
+            clock::ReplicaId::LOCAL,
+            text::BufferId::new(7).unwrap(),
+            "one\ntwo\nthree",
+        );
+        let map = display_map::DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 0..1);
+        let input = map.expansion_input(1..3).unwrap();
+        services
+            .spawn_cancellable_task(
+                "display_map",
+                Arc::new(AtomicU64::new(0)),
+                TaskOwner {
+                    buffer_id: Some(buffer_id),
+                    window_id: Some(window_id),
+                    revision: 9,
+                },
+                TaskType::DisplayMap,
+                move |token| display_map::build_expansion(input, &token),
+            )
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !services.poll() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let results = services.drain_results();
+
+        assert!(matches!(
+            results.as_slice(),
+            [TaskResult::DisplayMapExpansion {
+                buffer_id: result_buffer_id,
+                window_id: result_window_id,
+                revision: 9,
+                ..
+            }] if *result_buffer_id == buffer_id && *result_window_id == window_id
+        ));
+    }
 
     #[test]
     fn drain_results_decodes_owner_and_revision() {

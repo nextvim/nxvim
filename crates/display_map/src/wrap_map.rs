@@ -302,12 +302,9 @@ impl WrapMap {
         let rows = normalize_rows(buffer, rows);
         let mut transforms = SumTree::default();
         for row in rows {
-            if cancellation.is_cancelled() {
-                return None;
-            }
             append_coalesced(
                 &mut transforms,
-                build_row_transforms(buffer, wrap_width, row..row + 1),
+                build_row_transforms_cancellable(buffer, wrap_width, row, cancellation)?,
             );
         }
         Some(transforms)
@@ -359,6 +356,38 @@ fn build_windowed_transforms(
         }
     }
     transforms
+}
+
+fn build_row_transforms_cancellable(
+    buffer: &BufferSnapshot,
+    wrap_width: Option<u32>,
+    row: u32,
+    cancellation: &background_worker::CancellationToken,
+) -> Option<SumTree<Transform>> {
+    if cancellation.is_cancelled() || row >= buffer.row_count() {
+        return None;
+    }
+    let mut transforms = SumTree::default();
+    let line_len = buffer.line_len(row);
+    let mut column = 0;
+    if let Some(width) = wrap_width.filter(|width| *width > 0) {
+        while line_len.saturating_sub(column) > width {
+            if cancellation.is_cancelled() {
+                return None;
+            }
+            push_isomorphic(&mut transforms, Point::new(0, width));
+            transforms.push(Transform::wrap(), ());
+            column += width;
+        }
+    }
+    push_isomorphic(
+        &mut transforms,
+        Point::new(0, line_len.saturating_sub(column)),
+    );
+    if row < buffer.max_point().row {
+        transforms.push(Transform::isomorphic(Point::new(1, 0)), ());
+    }
+    Some(transforms)
 }
 
 fn build_row_transforms(
@@ -517,35 +546,44 @@ fn coverage_after_edits(exact: &[Range<u32>], edits: &[RowEdit]) -> Vec<Range<u3
 }
 
 fn split_transforms(tree: &SumTree<Transform>, split_rows: &[u32]) -> SumTree<Transform> {
-    let mut result = SumTree::default();
-    let mut cursor = tree.cursor::<Point>(());
-    cursor.next();
-    let mut splits = split_rows.to_vec();
-    splits.sort_unstable();
-    splits.dedup();
-
-    while let Some(transform) = cursor.item() {
-        let start = cursor.start().row;
-        let end = cursor.end().row;
-        if transform.is_isomorphic() && end > start + 1 {
-            let mut current = start;
-            for split in splits
-                .iter()
-                .copied()
-                .filter(|split| *split > start && *split < end)
-            {
-                result.push(Transform::isomorphic(Point::new(split - current, 0)), ());
-                current = split;
-            }
-            result.push(
-                Transform::isomorphic(Point::new(end - current, transform.summary.input.column)),
-                (),
-            );
-        } else {
-            result.push(transform.clone(), ());
-        }
-        cursor.next();
+    let mut result = tree.clone();
+    let mut rows = split_rows.to_vec();
+    rows.sort_unstable();
+    rows.dedup();
+    for row in rows {
+        result = split_transform_at_row(&result, row);
     }
+    result
+}
+
+fn split_transform_at_row(tree: &SumTree<Transform>, row: u32) -> SumTree<Transform> {
+    let target = Point::new(row, 0);
+    let mut locating_cursor = tree.cursor::<Point>(());
+    locating_cursor.seek(&target, Bias::Right);
+    let Some(transform) = locating_cursor.item() else {
+        return tree.clone();
+    };
+    let item_start = *locating_cursor.start();
+    let item_end = locating_cursor.end();
+    if !transform.is_isomorphic() || row <= item_start.row || row >= item_end.row {
+        return tree.clone();
+    }
+
+    let mut cursor = tree.cursor::<Point>(());
+    let mut result = cursor.slice(&item_start, Bias::Right);
+    result.push(
+        Transform::isomorphic(Point::new(row - item_start.row, 0)),
+        (),
+    );
+    result.push(
+        Transform::isomorphic(Point::new(
+            item_end.row - row,
+            transform.summary.input.column,
+        )),
+        (),
+    );
+    cursor.seek(&item_end, Bias::Right);
+    result.append(cursor.suffix(), ());
     result
 }
 

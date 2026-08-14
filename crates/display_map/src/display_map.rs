@@ -308,6 +308,43 @@ impl DisplayMap {
         self.wrap_map.snapshot().covers_exactly(rows)
     }
 
+    pub fn hot_window(&self) -> Range<u32> {
+        self.buffer_window.clone()
+    }
+
+    pub fn nearest_missing_range(&self, target_row: u32, chunk_size: u32) -> Option<Range<u32>> {
+        let row_count = self.original_buffer.row_count();
+        if row_count == 0 || chunk_size == 0 {
+            return None;
+        }
+        let exact = self.exact_coverage().exact_rows;
+        let mut gaps = Vec::new();
+        let mut start = 0;
+        for range in exact {
+            if start < range.start {
+                gaps.push(start..range.start);
+            }
+            start = start.max(range.end);
+        }
+        if start < row_count {
+            gaps.push(start..row_count);
+        }
+        let gap = gaps.into_iter().min_by_key(|gap| {
+            if gap.contains(&target_row) {
+                0
+            } else if target_row < gap.start {
+                gap.start - target_row
+            } else {
+                target_row.saturating_sub(gap.end.saturating_sub(1))
+            }
+        })?;
+        let preferred = target_row.clamp(gap.start, gap.end.saturating_sub(1));
+        let mut chunk_start = preferred.saturating_sub(chunk_size / 2).max(gap.start);
+        let chunk_end = chunk_start.saturating_add(chunk_size).min(gap.end);
+        chunk_start = chunk_end.saturating_sub(chunk_size).max(gap.start);
+        Some(chunk_start..chunk_end)
+    }
+
     pub fn expansion_input(&self, requested_rows: Range<u32>) -> Option<DisplayMapExpansionInput> {
         if !self.folds.is_empty() {
             return None;
@@ -615,6 +652,29 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual fully-mapped large-file regression; run with --ignored --nocapture"]
+    fn fully_mapped_large_buffer_edit_baseline() {
+        const ROW_COUNT: u32 = 200_000;
+        const LINE_BYTES: usize = 11;
+        let mut buffer = large_buffer(ROW_COUNT);
+        let mut map = DisplayMap::new(buffer.snapshot().clone(), Some(80));
+        let edit_offset = (ROW_COUNT as usize - 1) * LINE_BYTES + 1;
+        buffer.edit([(edit_offset..edit_offset, "x")]);
+
+        crate::wrap_map::reset_build_stats();
+        let started = Instant::now();
+        map.sync(buffer.snapshot().clone());
+        let elapsed = started.elapsed();
+        let stats = crate::wrap_map::build_stats();
+
+        eprintln!(
+            "fully mapped edit: rows={ROW_COUNT} elapsed={elapsed:?} rows_built={} transforms_created={}",
+            stats.rows, stats.transforms
+        );
+        assert!(stats.rows <= 2, "{stats:?}");
+    }
+
+    #[test]
     #[ignore = "manual Phase 2 measurement; run with --ignored --nocapture"]
     fn large_buffer_edit_sync_baseline() {
         const ROW_COUNT: u32 = 100_000;
@@ -704,6 +764,26 @@ mod tests {
         .unwrap();
         map.set_wrap_width(Some(40));
         assert_eq!(map.apply_expansion(stale), Err(StaleExpansion));
+    }
+
+    #[test]
+    fn nearest_missing_range_prioritizes_bounded_adjacent_chunks() {
+        let buffer = large_buffer(20_000);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 9_950..10_050);
+
+        assert_eq!(
+            map.nearest_missing_range(10_000, 1_000),
+            Some(10_050..11_050)
+        );
+
+        let expansion = build_expansion(
+            map.expansion_input(10_050..11_050).unwrap(),
+            &background_worker::CancellationToken::default(),
+        )
+        .unwrap();
+        map.apply_expansion(expansion).unwrap();
+
+        assert_eq!(map.nearest_missing_range(10_000, 1_000), Some(8_950..9_950));
     }
 
     #[test]

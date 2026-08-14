@@ -1,3 +1,4 @@
+use std::ops::Range;
 use text::ToPoint;
 use vim_buffer::BufferId;
 
@@ -27,6 +28,7 @@ pub struct WindowState {
     pub sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub last_version: Option<clock::Global>,
     pub viewport: Viewport,
+    pub pending_display_map: Option<(display_map::DisplayMapGeneration, Range<u32>)>,
 }
 
 impl WindowState {
@@ -49,6 +51,7 @@ impl WindowState {
             sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_version: None,
             viewport: Viewport::default(),
+            pending_display_map: None,
         }
     }
 
@@ -80,6 +83,7 @@ impl WindowState {
 
         self.sequence
             .store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+        self.pending_display_map = None;
         self.last_version = Some(snapshot.version.clone());
         self.viewport = viewport;
 
@@ -131,6 +135,7 @@ impl WindowState {
             sequence: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_version: None,
             viewport,
+            pending_display_map: None,
         }
     }
 }
