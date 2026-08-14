@@ -34,7 +34,6 @@ impl Runtime {
         let mut should_redraw = false;
 
         'main_loop: loop {
-            self.schedule_display_map_expansions();
             let current_rect = self.app.ui.screen_rect();
             if let Ok(new_rect) = self.terminal.size() {
                 if new_rect != current_rect {
@@ -57,14 +56,23 @@ impl Runtime {
 
             commands.extend(std::iter::from_fn(|| self.app.script.try_next_command()));
 
-            if commands.is_empty() && event::poll(std::time::Duration::from_millis(50))? {
-                let terminal_event = event::read()?;
-                if let event::Event::Resize(width, height) = terminal_event {
-                    self.resize(vim_ui::Rect::new(0, 0, width, height));
-                    should_redraw = true;
-                } else if let Some(command) = self.app.controller.feed_event(terminal_event) {
-                    commands.push(command);
+            let mut is_idle = false;
+            if commands.is_empty() {
+                if event::poll(std::time::Duration::from_millis(50))? {
+                    let terminal_event = event::read()?;
+                    if let event::Event::Resize(width, height) = terminal_event {
+                        self.resize(vim_ui::Rect::new(0, 0, width, height));
+                        should_redraw = true;
+                    } else if let Some(command) = self.app.controller.feed_event(terminal_event) {
+                        commands.push(command);
+                    }
+                } else {
+                    is_idle = true;
                 }
+            }
+
+            if is_idle {
+                self.schedule_display_map_expansions();
             }
 
             for command in commands {

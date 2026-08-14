@@ -151,6 +151,7 @@ impl DisplayMap {
         if self.folds == folds && self.original_buffer.version == buffer.version {
             return;
         }
+        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
         let folds_changed = self.folds != folds;
         if folds_changed {
             self.config_revision = self.config_revision.wrapping_add(1);
@@ -166,6 +167,10 @@ impl DisplayMap {
             self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
         } else {
             self.wrap_map.sync(self.fold_map.folded_buffer().clone());
+        }
+        let new_snap = self.snapshot();
+        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
+            self.scroll_y = display_point.row();
         }
     }
 
@@ -192,6 +197,7 @@ impl DisplayMap {
         if self.wrap_width == width {
             return;
         }
+        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
         self.config_revision = self.config_revision.wrapping_add(1);
         self.wrap_width = width;
         self.wrap_map = WrapMap::new_windowed(
@@ -199,10 +205,19 @@ impl DisplayMap {
             width,
             self.buffer_window.clone(),
         );
+        let new_snap = self.snapshot();
+        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
+            self.scroll_y = display_point.row();
+        }
     }
 
     pub fn apply_wrap_snapshot(&mut self, snapshot: WrapSnapshot) {
+        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
         self.wrap_map.set_snapshot(snapshot);
+        let new_snap = self.snapshot();
+        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
+            self.scroll_y = display_point.row();
+        }
     }
 
     pub fn sync(&mut self, buffer: BufferSnapshot) {
@@ -218,6 +233,7 @@ impl DisplayMap {
         if self.original_buffer.version == buffer.version && self.buffer_window == buffer_window {
             return;
         }
+        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
         let row_count = buffer.row_count();
         let start = buffer_window.start.min(row_count);
         let end = buffer_window.end.max(start).min(row_count);
@@ -242,6 +258,10 @@ impl DisplayMap {
             self.tab_map = TabMap::new(folded.clone());
             self.block_map = BlockMap::new(folded.clone());
             self.wrap_map = WrapMap::new_windowed(folded, self.wrap_width, buffer_window);
+        }
+        let new_snap = self.snapshot();
+        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
+            self.scroll_y = display_point.row();
         }
     }
 
@@ -364,8 +384,13 @@ impl DisplayMap {
         if expansion.generation != self.generation() || expansion.config != self.config() {
             return Err(StaleExpansion);
         }
+        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
         self.wrap_map
             .apply_expansion(expansion.exact_rows, expansion.transforms);
+        let new_snap = self.snapshot();
+        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
+            self.scroll_y = display_point.row();
+        }
         Ok(())
     }
 }

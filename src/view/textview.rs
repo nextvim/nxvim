@@ -46,6 +46,12 @@ pub fn build_text(
     let start_row = scroll_y;
     let end_row = (scroll_y + inner_rect.height as u32).min(row_count);
 
+    let resolved_selections = if window.selections.selections.is_empty() {
+        None
+    } else {
+        Some(vim_buffer::ResolvedSelectionSet::new(&window.selections, buffer.as_text_buffer()))
+    };
+
     for row in start_row..end_row {
         let line = display_map_snapshot.line_text(row);
         let buffer_row = display_map_snapshot.buffer_row_for_display_row(row);
@@ -61,12 +67,10 @@ pub fn build_text(
             let character = if is_eol { ' ' } else { line_chars[column] };
             let display_point = display_map::DisplayPoint::new(row, (column as u32) + scroll_x);
             let point = display_map_snapshot.display_point_to_point(display_point);
-            let selection_state = if window.selections.selections.is_empty() {
-                vim_buffer::SelectionCellState::default()
+            let selection_state = if let Some(ref resolved) = resolved_selections {
+                resolved.is_selected(point.row, point.column)
             } else {
-                window
-                    .selections
-                    .is_selected(point.row, point.column, buffer.as_text_buffer())
+                vim_buffer::SelectionCellState::default()
             };
 
             if active && selection_state.at_cursor_head {

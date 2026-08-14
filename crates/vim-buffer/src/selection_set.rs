@@ -102,7 +102,27 @@ impl SelectionSet {
     }
 
     pub fn update(&mut self, _buffer: &Buffer, selection: &Selection<Anchor>) {
-        if let Some(selected) = self.selections.iter_mut().find(|s| s.id == selection.id) {
+        let id = selection.id;
+        // 1. Try direct index lookup
+        if id < self.selections.len() && self.selections[id].id == id {
+            self.selections[id] = selection.clone();
+            return;
+        }
+        // 2. Try nearby indices (in case selections were shifted/reordered slightly)
+        let len = self.selections.len();
+        if len > 0 {
+            let guess = id.min(len - 1);
+            let start_idx = guess.saturating_sub(4);
+            let end_idx = (guess + 4).min(len);
+            for i in start_idx..end_idx {
+                if self.selections[i].id == id {
+                    self.selections[i] = selection.clone();
+                    return;
+                }
+            }
+        }
+        // 3. Fallback to full search
+        if let Some(selected) = self.selections.iter_mut().find(|s| s.id == id) {
             *selected = selection.clone();
         }
     }
@@ -361,69 +381,7 @@ impl SelectionSet {
     }
 
     pub fn is_selected(&self, row: u32, column: u32, buffer: &Buffer) -> SelectionCellState {
-        let primary_head = self.primary().head().to_point(buffer);
-        let at_primary_cursor_head = row == primary_head.row && column == primary_head.column;
-        let mut at_cursor_head = false;
-        for cursor in self.selections.iter() {
-            let head = cursor.head();
-            let tail = cursor.tail();
-            let ordering = head.cmp(&tail, buffer);
-            let head_point = head.to_point(buffer);
-            at_cursor_head |= row == head_point.row && column == head_point.column;
-
-            // A collapsed selection is a cursor, not selected text.
-            if ordering == Ordering::Equal {
-                continue;
-            }
-
-            let (start, end, normalized) = if ordering == Ordering::Less {
-                (head_point, tail.to_point(buffer), false)
-            } else {
-                (tail.to_point(buffer), head_point, true)
-            };
-
-            // If row is outside this selection's vertical bounds, try next selection
-            if row < start.row || row > end.row {
-                continue;
-            }
-
-            // Row is within selection's vertical range
-            let selected;
-            // Horizontal bounds depending on whether we're on boundary rows
-            if start.row == end.row {
-                // Single-line selection
-                selected = column >= start.column && column <= end.column;
-            } else if row == start.row {
-                selected = column >= start.column;
-            } else if row == end.row {
-                selected = column <= end.column;
-            } else {
-                // Middle rows: all columns inside are selected for VisualLine; for VisualBlock, each row
-                // has its own start/end via separate selections, so this path is fine as 'selected = true'
-                selected = true;
-            }
-
-            if selected {
-                let at_head = if normalized {
-                    row == end.row && column == end.column
-                } else {
-                    row == start.row && column == start.column
-                };
-                let selected_line = true; // row is within [start.row, end.row]
-                return SelectionCellState {
-                    selected_cell: true,
-                    selected_line,
-                    at_cursor_head: at_cursor_head || at_head,
-                    at_primary_cursor_head,
-                };
-            }
-        }
-        SelectionCellState {
-            selected_cell: false,
-            selected_line: false,
-            at_cursor_head,
-            at_primary_cursor_head,
-        }
+        ResolvedSelectionSet::new(self, buffer).is_selected(row, column)
     }
 
     pub fn has_selection(&self, buffer: &Buffer) -> bool {
@@ -840,6 +798,107 @@ impl SelectionSet {
                     }
                 }
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedSelection {
+    pub head: Point,
+    pub tail: Point,
+    pub start: Point,
+    pub end: Point,
+    pub is_collapsed: bool,
+    pub reversed: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedSelectionSet {
+    pub primary_head: Point,
+    pub selections: Vec<ResolvedSelection>,
+}
+
+impl ResolvedSelectionSet {
+    pub fn new(selection_set: &SelectionSet, buffer: &Buffer) -> Self {
+        let primary_head = selection_set.primary().head().to_point(buffer);
+        let selections = selection_set
+            .selections
+            .iter()
+            .map(|cursor| {
+                let head = cursor.head().to_point(buffer);
+                let tail = cursor.tail().to_point(buffer);
+                let ordering = cursor.head().cmp(&cursor.tail(), buffer);
+                let is_collapsed = ordering == Ordering::Equal;
+                let (start, end, reversed) = if ordering == Ordering::Less {
+                    (head, tail, false)
+                } else {
+                    (tail, head, true)
+                };
+                ResolvedSelection {
+                    head,
+                    tail,
+                    start,
+                    end,
+                    is_collapsed,
+                    reversed,
+                }
+            })
+            .collect();
+        Self {
+            primary_head,
+            selections,
+        }
+    }
+
+    pub fn is_selected(&self, row: u32, column: u32) -> SelectionCellState {
+        let at_primary_cursor_head = row == self.primary_head.row && column == self.primary_head.column;
+        let mut at_cursor_head = false;
+        for cursor in self.selections.iter() {
+            at_cursor_head |= row == cursor.head.row && column == cursor.head.column;
+
+            if cursor.is_collapsed {
+                continue;
+            }
+
+            // If row is outside this selection's vertical bounds, try next selection
+            if row < cursor.start.row || row > cursor.end.row {
+                continue;
+            }
+
+            // Row is within selection's vertical range
+            let selected;
+            // Horizontal bounds depending on whether we're on boundary rows
+            if cursor.start.row == cursor.end.row {
+                // Single-line selection
+                selected = column >= cursor.start.column && column <= cursor.end.column;
+            } else if row == cursor.start.row {
+                selected = column >= cursor.start.column;
+            } else if row == cursor.end.row {
+                selected = column <= cursor.end.column;
+            } else {
+                selected = true;
+            }
+
+            if selected {
+                let at_head = if cursor.reversed {
+                    row == cursor.end.row && column == cursor.end.column
+                } else {
+                    row == cursor.start.row && column == cursor.start.column
+                };
+                let selected_line = true; // row is within [start.row, end.row]
+                return SelectionCellState {
+                    selected_cell: true,
+                    selected_line,
+                    at_cursor_head: at_cursor_head || at_head,
+                    at_primary_cursor_head,
+                };
+            }
+        }
+        SelectionCellState {
+            selected_cell: false,
+            selected_line: false,
+            at_cursor_head,
+            at_primary_cursor_head,
         }
     }
 }
