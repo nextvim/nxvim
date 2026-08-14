@@ -96,7 +96,6 @@ impl EditorViewModel {
             } else {
                 window_layout.rect
             };
-            let highlights = highlights.published_rows(buffer_id);
             text_models.insert(
                 window_id,
                 textview::build_text(

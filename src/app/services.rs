@@ -14,7 +14,6 @@ pub type TaskId = background_worker::TaskId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskType {
-    Highlight,
     DisplayMap,
     Indexer,
     Treesitter,
@@ -39,10 +38,6 @@ pub enum TaskResult {
         buffer_id: BufferId,
         revision: u64,
         result: Result<vim_indexer::IndexTaskResult, String>,
-    },
-    Highlight {
-        task_id: TaskId,
-        result: textmate::HighlightTaskResult,
     },
     DisplayMapExpansion {
         task_id: TaskId,
@@ -188,10 +183,7 @@ impl Services {
                     .downcast::<Result<vim_indexer::IndexTaskResult, String>>()
                     .ok()?,
             }),
-            TaskType::Highlight => Some(TaskResult::Highlight {
-                task_id,
-                result: result.downcast::<textmate::HighlightTaskResult>().ok()?,
-            }),
+
             TaskType::DisplayMap => Some(TaskResult::DisplayMapExpansion {
                 task_id,
                 window_id: owner.window_id?,
@@ -265,32 +257,26 @@ mod tests {
     fn drain_results_decodes_owner_and_revision() {
         let mut services = Services::new();
         let buffer_id = BufferId::new(7).unwrap();
+        let window_id = WindowId::new(8);
         let owner = TaskOwner {
             buffer_id: Some(buffer_id),
-            window_id: Some(WindowId::new(8)),
+            window_id: Some(window_id),
             revision: 9,
         };
         let buffer = text::Buffer::new(
             clock::ReplicaId::LOCAL,
             text::BufferId::new(7).unwrap(),
-            "one\ntwo".to_owned(),
+            "one\ntwo\nthree",
         );
-        let snapshot = buffer.snapshot();
-        let start = snapshot.anchor_before(0);
-        let end = snapshot.anchor_after(snapshot.len());
+        let map = display_map::DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 0..1);
+        let input = map.expansion_input(1..3).unwrap();
         services
             .spawn_task(
                 "display_map",
                 Arc::new(AtomicU64::new(0)),
                 owner,
-                TaskType::Highlight,
-                move || textmate::HighlightTaskResult {
-                    buffer_id: 7,
-                    changedtick: 9,
-                    start,
-                    end,
-                    highlights: None,
-                },
+                TaskType::DisplayMap,
+                move || display_map::build_expansion(input, &background_worker::CancellationToken::default()).unwrap(),
             )
             .unwrap();
 
@@ -303,14 +289,12 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(matches!(
             &results[0],
-            TaskResult::Highlight {
-                result: textmate::HighlightTaskResult {
-                    buffer_id: 7,
-                    changedtick: 9,
-                    ..
-                },
+            TaskResult::DisplayMapExpansion {
+                buffer_id: b,
+                window_id: w,
+                revision: 9,
                 ..
-            }
+            } if *b == buffer_id && *w == window_id
         ));
     }
 }

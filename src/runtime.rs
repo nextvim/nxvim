@@ -4,7 +4,7 @@ use crate::terminal::TerminalSession;
 use crate::view::{EditorViewModel, LayoutSnapshot};
 use crossterm::event;
 use std::io::{Write, stdout};
-use text::{Point, ToOffset, ToPoint};
+use text::ToPoint;
 use vim_ui::BufferedRenderer;
 
 /// Owns terminal lifecycle, source polling, command dispatch, and rendering.
@@ -171,95 +171,27 @@ impl Runtime {
 
     fn schedule_window_highlight(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
         let buffer_id = self.app.model.window_buffer(window_id)?;
-        let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
         let window = self.app.model.window_state(window_id)?;
 
-        let hot_window = window.display_map.hot_window();
-        self.app
-            .services
-            .highlight
-            .project_edits(buffer_id.get(), revision, &snapshot);
-        let start = snapshot.anchor_before(Point::new(hot_window.start, 0).to_offset(&snapshot));
-        let end = snapshot.anchor_after(
-            Point::new(hot_window.end.min(snapshot.row_count()), 0).to_offset(&snapshot),
+        let display_map_snapshot = window.display_map.snapshot();
+        let scroll_y = display_map_snapshot.scroll_y;
+        let viewport_height = window.viewport.height as u32;
+        let start_row = display_map_snapshot.buffer_row_for_display_row(scroll_y);
+        let end_row = display_map_snapshot.buffer_row_for_display_row(
+            (scroll_y + viewport_height).min(display_map_snapshot.row_count())
         );
 
-        if self.app.services.highlight.should_highlight(
+        let file_path = buffer.path().and_then(|p| p.to_str());
+
+        self.app.services.highlight.highlight_run(
             buffer_id.get(),
-            revision,
-            start,
-            end,
             &snapshot,
-        ) {
-            let start_offset = start.to_offset(&snapshot);
-            let checkpoint = self.app.services.highlight.nearest_checkpoint(
-                buffer_id.get(),
-                start_offset,
-                &snapshot,
-                revision,
-            );
-            let existing_checkpoints = self.app.services.highlight.existing_checkpoints(
-                buffer_id.get(),
-                &snapshot,
-                revision,
-            );
-            let sequence = window.sequence.clone();
-
-            let owner = crate::app::services::TaskOwner {
-                buffer_id: Some(buffer_id),
-                window_id: Some(window_id),
-                revision,
-            };
-            self.app
-                .services
-                .highlight
-                .begin_highlight(buffer_id.get(), revision);
-
-            let file_path = buffer.path().and_then(|p| p.to_str()).map(String::from);
-
-            let task = self.app.services.spawn_cancellable_task(
-                "highlight",
-                sequence,
-                owner,
-                crate::app::services::TaskType::Highlight,
-                move |token| {
-                    let snapshot = snapshot;
-                    let path_str = file_path.as_deref();
-                    let cancel_fn = move || token.is_cancelled();
-
-                    let highlights = textmate::parse_scopes_cancellable(
-                        &snapshot,
-                        revision,
-                        path_str,
-                        start,
-                        end,
-                        checkpoint,
-                        &existing_checkpoints,
-                        cancel_fn,
-                    );
-
-                    Some(textmate::HighlightTaskResult {
-                        buffer_id: buffer_id.get(),
-                        changedtick: revision,
-                        start,
-                        end,
-                        highlights,
-                    })
-                },
-            );
-
-            if let Some(task_id) = task {
-                self.app.services.highlight.set_pending_task(
-                    buffer_id.get(),
-                    task_id,
-                    revision,
-                    start,
-                    end,
-                );
-            }
-        }
+            file_path,
+            start_row,
+            end_row,
+        );
 
         Some(())
     }
@@ -279,6 +211,17 @@ impl Runtime {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let layout = self.layout_snapshot(rect);
         crate::app::ui::ViewSynchronizer::synchronize_viewports(&mut self.app.model, &layout);
+
+        let window_ids: Vec<_> = self
+            .app
+            .model
+            .window_buffers()
+            .map(|(window_id, _)| window_id)
+            .collect();
+        for window_id in window_ids {
+            self.schedule_window_highlight(window_id);
+        }
+
         let view_model = EditorViewModel::build(
             &self.app.model,
             &self.app.controller,

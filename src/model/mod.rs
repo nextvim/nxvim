@@ -103,6 +103,10 @@ impl EditorModel {
         self.buffers.get(id)
     }
 
+    pub fn get_buffer_mut(&mut self, id: BufferId) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
+        self.buffers.get_mut(id)
+    }
+
     /// Buffers that may be presented and selected as editor tabs.
     pub fn list(&self) -> Vec<BufferId> {
         self.editable_buffers()

@@ -112,6 +112,10 @@ impl Buffers {
         self.inner.get(id)
     }
 
+    pub fn get_mut(&mut self, id: BufferId) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
+        self.inner.get_mut(id)
+    }
+
     pub fn list(&self) -> Vec<BufferId> {
         self.inner.list()
     }

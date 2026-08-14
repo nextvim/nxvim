@@ -36,7 +36,7 @@ pub fn build_text(
     inner_rect: Rect,
     active: bool,
     mode: vim_input::Mode,
-    highlights: Option<&std::collections::HashMap<u32, Vec<textmate::HighlightSpan>>>,
+    highlight_service: &textmate::HighlightService,
 ) -> vim_ui::TextViewModel {
     let mut rows = Vec::new();
     let mut saved_cursor = None;
@@ -63,7 +63,7 @@ pub fn build_text(
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line_chars.len();
 
-        let line_highlights = highlights.and_then(|rows| rows.get(&buffer_row));
+        let line_highlights = highlight_service.highlight_row(buffer.id().get(), buffer_row);
         let mut highlight_index = 0;
 
         let gutter_text = if window.show_gutter {
