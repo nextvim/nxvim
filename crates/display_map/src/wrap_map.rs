@@ -93,6 +93,7 @@ pub struct WrapSnapshot {
     pub(crate) buffer: BufferSnapshot,
     pub(crate) wrap_width: Option<u32>,
     transforms: SumTree<Transform>,
+    exact_rows: Vec<Range<u32>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,13 +103,13 @@ enum TransformKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Transform {
+pub(crate) struct Transform {
     summary: TransformSummary,
     kind: TransformKind,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct TransformSummary {
+pub(crate) struct TransformSummary {
     input: Point,
     output: WrapPoint,
 }
@@ -197,12 +198,14 @@ impl WrapMap {
     }
 
     pub fn new_windowed(buffer: BufferSnapshot, wrap_width: Option<u32>, rows: Range<u32>) -> Self {
+        let rows = normalize_rows(&buffer, rows);
         Self {
             wrap_width,
             snapshot: WrapSnapshot {
-                transforms: build_windowed_transforms(&buffer, wrap_width, rows),
+                transforms: build_windowed_transforms(&buffer, wrap_width, rows.clone()),
                 buffer,
                 wrap_width,
+                exact_rows: non_empty_range(rows).into_iter().collect(),
             },
         }
     }
@@ -218,29 +221,96 @@ impl WrapMap {
             .collect::<Vec<_>>();
 
         if edits.is_empty() {
+            let row_count = buffer.row_count();
             self.snapshot = WrapSnapshot {
                 transforms: build_transforms(&buffer, self.wrap_width),
                 buffer,
                 wrap_width: self.wrap_width,
+                exact_rows: non_empty_range(0..row_count).into_iter().collect(),
             };
             return;
         }
 
-        let transforms = rebuild_edited_rows(
-            &self.snapshot,
-            &buffer,
-            self.wrap_width,
-            merge_row_edits(&edits),
-        );
+        let row_edits = merge_row_edits(&edits);
+        let transforms =
+            rebuild_edited_rows(&self.snapshot, &buffer, self.wrap_width, row_edits.clone());
+        let was_fully_exact = self
+            .snapshot
+            .covers_exactly(0..self.snapshot.buffer.row_count());
+        let exact_rows = if was_fully_exact {
+            non_empty_range(0..buffer.row_count()).into_iter().collect()
+        } else {
+            coverage_after_edits(&self.snapshot.exact_rows, &row_edits)
+        };
         self.snapshot = WrapSnapshot {
             transforms,
             buffer,
             wrap_width: self.wrap_width,
+            exact_rows,
         };
     }
 
     pub fn snapshot(&self) -> WrapSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn sync_windowed(&mut self, buffer: BufferSnapshot, rows: Range<u32>) {
+        if buffer.version != self.snapshot.buffer.version {
+            self.sync(buffer);
+        }
+        let rows = normalize_rows(&self.snapshot.buffer, rows);
+        for missing in missing_ranges(&self.snapshot.exact_rows, rows) {
+            let transforms =
+                build_row_transforms(&self.snapshot.buffer, self.wrap_width, missing.clone());
+            self.apply_expansion(missing, transforms);
+        }
+    }
+
+    pub(crate) fn apply_expansion(
+        &mut self,
+        exact_rows: Range<u32>,
+        transforms: SumTree<Transform>,
+    ) {
+        let exact_rows = normalize_rows(&self.snapshot.buffer, exact_rows);
+        if exact_rows.is_empty() {
+            return;
+        }
+        let split_rows = [exact_rows.start, exact_rows.end];
+        let split = split_transforms(&self.snapshot.transforms, split_rows.as_slice());
+        let mut cursor = split.cursor::<Point>(());
+        let mut merged = cursor.slice(&Point::new(exact_rows.start, 0), Bias::Right);
+        append_coalesced(&mut merged, transforms);
+        cursor.seek(&Point::new(exact_rows.end, 0), Bias::Right);
+        append_coalesced(&mut merged, cursor.suffix());
+        self.snapshot.transforms = merged;
+        self.snapshot.exact_rows = merge_ranges(
+            self.snapshot
+                .exact_rows
+                .iter()
+                .cloned()
+                .chain(std::iter::once(exact_rows))
+                .collect(),
+        );
+    }
+
+    pub(crate) fn build_expansion_transforms(
+        buffer: &BufferSnapshot,
+        wrap_width: Option<u32>,
+        rows: Range<u32>,
+        cancellation: &background_worker::CancellationToken,
+    ) -> Option<SumTree<Transform>> {
+        let rows = normalize_rows(buffer, rows);
+        let mut transforms = SumTree::default();
+        for row in rows {
+            if cancellation.is_cancelled() {
+                return None;
+            }
+            append_coalesced(
+                &mut transforms,
+                build_row_transforms(buffer, wrap_width, row..row + 1),
+            );
+        }
+        Some(transforms)
     }
 
     pub fn set_snapshot(&mut self, snapshot: WrapSnapshot) {
@@ -250,10 +320,12 @@ impl WrapMap {
     pub fn set_wrap_width(&mut self, wrap_width: Option<u32>) {
         if self.wrap_width != wrap_width {
             self.wrap_width = wrap_width;
+            let row_count = self.snapshot.buffer.row_count();
             self.snapshot = WrapSnapshot {
                 transforms: build_transforms(&self.snapshot.buffer, wrap_width),
                 buffer: self.snapshot.buffer.clone(),
                 wrap_width,
+                exact_rows: non_empty_range(0..row_count).into_iter().collect(),
             };
         }
     }
@@ -322,7 +394,7 @@ fn build_row_transforms(
     transforms
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RowEdit {
     old: Range<u32>,
     new: Range<u32>,
@@ -352,13 +424,143 @@ fn merge_row_edits(edits: &[Edit<Point>]) -> Vec<RowEdit> {
     row_edits
 }
 
+fn normalize_rows(buffer: &BufferSnapshot, rows: Range<u32>) -> Range<u32> {
+    let row_count = buffer.row_count();
+    let start = rows.start.min(row_count);
+    start..rows.end.max(start).min(row_count)
+}
+
+fn non_empty_range(range: Range<u32>) -> Option<Range<u32>> {
+    (range.start < range.end).then_some(range)
+}
+
+fn merge_ranges(mut ranges: Vec<Range<u32>>) -> Vec<Range<u32>> {
+    ranges.retain(|range| range.start < range.end);
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<u32>> = Vec::new();
+    for range in ranges {
+        if let Some(previous) = merged.last_mut()
+            && range.start <= previous.end
+        {
+            previous.end = previous.end.max(range.end);
+        } else {
+            merged.push(range);
+        }
+    }
+    merged
+}
+
+fn missing_ranges(exact: &[Range<u32>], requested: Range<u32>) -> Vec<Range<u32>> {
+    let mut missing = Vec::new();
+    let mut current = requested.start;
+    for range in exact {
+        if range.end <= current {
+            continue;
+        }
+        if range.start >= requested.end {
+            break;
+        }
+        if range.start > current {
+            missing.push(current..range.start.min(requested.end));
+        }
+        current = current.max(range.end);
+        if current >= requested.end {
+            break;
+        }
+    }
+    if current < requested.end {
+        missing.push(current..requested.end);
+    }
+    missing
+}
+
+fn map_old_row(row: u32, edits: &[RowEdit]) -> u32 {
+    let mut old_cursor = 0;
+    let mut new_cursor = 0;
+    for edit in edits {
+        if row <= edit.old.start {
+            return new_cursor + row.saturating_sub(old_cursor);
+        }
+        if row < edit.old.end {
+            return edit.new.start;
+        }
+        old_cursor = edit.old.end;
+        new_cursor = edit.new.end;
+    }
+    new_cursor + row.saturating_sub(old_cursor)
+}
+
+fn coverage_after_edits(exact: &[Range<u32>], edits: &[RowEdit]) -> Vec<Range<u32>> {
+    let mut preserved = Vec::new();
+    for range in exact {
+        let mut current = range.start;
+        for edit in edits {
+            if edit.old.end <= current {
+                continue;
+            }
+            if edit.old.start >= range.end {
+                break;
+            }
+            if current < edit.old.start {
+                preserved.push(map_old_row(current, edits)..map_old_row(edit.old.start, edits));
+            }
+            current = current.max(edit.old.end);
+            if current >= range.end {
+                break;
+            }
+        }
+        if current < range.end {
+            preserved.push(map_old_row(current, edits)..map_old_row(range.end, edits));
+        }
+    }
+    merge_ranges(preserved)
+}
+
+fn split_transforms(tree: &SumTree<Transform>, split_rows: &[u32]) -> SumTree<Transform> {
+    let mut result = SumTree::default();
+    let mut cursor = tree.cursor::<Point>(());
+    cursor.next();
+    let mut splits = split_rows.to_vec();
+    splits.sort_unstable();
+    splits.dedup();
+
+    while let Some(transform) = cursor.item() {
+        let start = cursor.start().row;
+        let end = cursor.end().row;
+        if transform.is_isomorphic() && end > start + 1 {
+            let mut current = start;
+            for split in splits
+                .iter()
+                .copied()
+                .filter(|split| *split > start && *split < end)
+            {
+                result.push(Transform::isomorphic(Point::new(split - current, 0)), ());
+                current = split;
+            }
+            result.push(
+                Transform::isomorphic(Point::new(end - current, transform.summary.input.column)),
+                (),
+            );
+        } else {
+            result.push(transform.clone(), ());
+        }
+        cursor.next();
+    }
+    result
+}
+
 fn rebuild_edited_rows(
     old_snapshot: &WrapSnapshot,
     new_buffer: &BufferSnapshot,
     wrap_width: Option<u32>,
     row_edits: Vec<RowEdit>,
 ) -> SumTree<Transform> {
-    let mut old_cursor = old_snapshot.transforms.cursor::<Point>(());
+    let split_rows = row_edits
+        .iter()
+        .flat_map(|edit| [edit.old.start, edit.old.end])
+        .collect::<Vec<_>>();
+    let split = split_transforms(&old_snapshot.transforms, &split_rows);
+    let mut old_cursor = split.cursor::<Point>(());
     let mut row_edits = row_edits.into_iter().peekable();
     let Some(first_edit) = row_edits.peek() else {
         return old_snapshot.transforms.clone();
@@ -469,11 +671,22 @@ impl WrapSnapshot {
         self.transforms.summary().output
     }
 
-    pub fn to_wrap_point(&self, point: Point) -> WrapPoint {
+    pub fn try_to_wrap_point(&self, point: Point) -> Option<WrapPoint> {
         let point = self.clip_buffer_point(point);
+        if !self.covers_row(point.row) {
+            return None;
+        }
+        Some(self.to_wrap_point_unchecked(point))
+    }
+
+    pub fn to_wrap_point(&self, point: Point) -> WrapPoint {
+        self.try_to_wrap_point(point)
+            .expect("accessed cold wrap-map region")
+    }
+
+    fn to_wrap_point_unchecked(&self, point: Point) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<Dimensions<WrapPoint, Point>>(());
         cursor.seek(&point, Bias::Right);
-
         let output_start = cursor.start().0;
         let input_start = cursor.start().1;
         if cursor.item().is_some_and(Transform::is_isomorphic) {
@@ -483,11 +696,20 @@ impl WrapSnapshot {
         }
     }
 
-    pub fn from_wrap_point(&self, point: WrapPoint) -> Point {
+    pub fn try_from_wrap_point(&self, point: WrapPoint) -> Option<Point> {
         let point = self.clip_wrap_point(point);
+        let mapped = self.from_wrap_point_unchecked(point);
+        self.covers_row(mapped.row).then_some(mapped)
+    }
+
+    pub fn from_wrap_point(&self, point: WrapPoint) -> Point {
+        self.try_from_wrap_point(point)
+            .expect("accessed cold wrap-map region")
+    }
+
+    fn from_wrap_point_unchecked(&self, point: WrapPoint) -> Point {
         let mut cursor = self.transforms.cursor::<Dimensions<WrapPoint, Point>>(());
         cursor.seek(&point, Bias::Right);
-
         let output_start = cursor.start().0;
         let input_start = cursor.start().1;
         if cursor.item().is_some_and(Transform::is_isomorphic) {
@@ -495,6 +717,22 @@ impl WrapSnapshot {
         } else {
             input_start
         }
+    }
+
+    pub fn exact_coverage(&self) -> Vec<Range<u32>> {
+        self.exact_rows.clone()
+    }
+
+    pub fn covers_exactly(&self, rows: Range<u32>) -> bool {
+        rows.is_empty()
+            || self
+                .exact_rows
+                .iter()
+                .any(|exact| exact.start <= rows.start && exact.end >= rows.end)
+    }
+
+    fn covers_row(&self, row: u32) -> bool {
+        self.exact_rows.iter().any(|range| range.contains(&row))
     }
 
     pub fn buffer_snapshot(&self) -> &BufferSnapshot {

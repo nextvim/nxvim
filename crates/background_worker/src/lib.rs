@@ -61,6 +61,15 @@ impl CancellationToken {
     }
 }
 
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self {
+            task_id: TaskId(0),
+            latest_task_id: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
 struct BackgroundTask {
     task_id: TaskId,
     latest_task_id: Arc<AtomicU64>,
@@ -86,7 +95,7 @@ impl BackgroundWorker {
         let name = name.into();
         let (task_tx, task_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
-        
+
         let thread_name = format!("worker-{}", name);
         let worker_name_clone = name.clone();
         let worker_thread = thread::Builder::new()
@@ -212,7 +221,9 @@ impl WorkerManager {
 
     /// Registers a new worker if it does not already exist.
     pub fn add_worker(&mut self, name: &str) {
-        self.workers.entry(name.to_string()).or_insert_with(|| BackgroundWorker::new(name));
+        self.workers
+            .entry(name.to_string())
+            .or_insert_with(|| BackgroundWorker::new(name));
     }
 
     /// Gets a reference to a worker by name.
@@ -221,12 +232,19 @@ impl WorkerManager {
     }
 
     /// Spawns a task on a specific worker.
-    pub fn spawn_task<T, F>(&self, worker_name: &str, sequence: Arc<AtomicU64>, job: F) -> Option<TaskId>
+    pub fn spawn_task<T, F>(
+        &self,
+        worker_name: &str,
+        sequence: Arc<AtomicU64>,
+        job: F,
+    ) -> Option<TaskId>
     where
         T: Any + Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        self.workers.get(worker_name).map(|w| w.spawn_task(sequence, job))
+        self.workers
+            .get(worker_name)
+            .map(|w| w.spawn_task(sequence, job))
     }
 
     /// Spawns a cancellable task on a specific worker.
@@ -240,7 +258,9 @@ impl WorkerManager {
         T: Any + Send + 'static,
         F: FnOnce(CancellationToken) -> Option<T> + Send + 'static,
     {
-        self.workers.get(worker_name).map(|w| w.spawn_cancellable_task(sequence, job))
+        self.workers
+            .get(worker_name)
+            .map(|w| w.spawn_cancellable_task(sequence, job))
     }
 
     /// Polls all managed workers for finished tasks, sending them to the handler.
@@ -348,23 +368,35 @@ mod tests {
         let seq_2 = manager.worker("worker-2").unwrap().cancellation_sequence();
 
         let t1 = manager.spawn_task("worker-1", seq_1, || 10_i32).unwrap();
-        let t2 = manager.spawn_task("worker-2", seq_2, || String::from("hello")).unwrap();
+        let t2 = manager
+            .spawn_task("worker-2", seq_2, || String::from("hello"))
+            .unwrap();
 
         // Wait a bit to ensure they run and complete
         thread::sleep(Duration::from_millis(50));
 
-        let mut handler = TestHandler { results: Vec::new() };
+        let mut handler = TestHandler {
+            results: Vec::new(),
+        };
         let count = manager.poll(&mut handler);
 
         assert_eq!(count, 2);
         assert_eq!(handler.results.len(), 2);
 
         // Find results
-        let r1 = handler.results.iter().find(|r| r.task_id == t1 && r.worker_name == "worker-1").unwrap();
+        let r1 = handler
+            .results
+            .iter()
+            .find(|r| r.task_id == t1 && r.worker_name == "worker-1")
+            .unwrap();
         assert_eq!(r1.worker_name, "worker-1");
         assert_eq!(*r1.downcast_ref::<i32>().unwrap(), 10);
 
-        let r2 = handler.results.iter().find(|r| r.task_id == t2 && r.worker_name == "worker-2").unwrap();
+        let r2 = handler
+            .results
+            .iter()
+            .find(|r| r.task_id == t2 && r.worker_name == "worker-2")
+            .unwrap();
         assert_eq!(r2.worker_name, "worker-2");
         assert_eq!(r2.downcast_ref::<String>().unwrap(), "hello");
     }

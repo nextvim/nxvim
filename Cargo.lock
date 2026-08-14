@@ -654,6 +654,7 @@ dependencies = [
 name = "display_map"
 version = "0.1.0"
 dependencies = [
+ "background-worker",
  "clock",
  "collections",
  "parking_lot",

@@ -12,6 +12,7 @@ text = { path = "../zed/crates/text" }
 util = { path = "../zed/crates/util" }
 ztracing = { path = "../zed/crates/ztracing" }
 clock = { path = "../zed/crates/clock" }
+background_worker = { package = "background-worker", path = "../background_worker" }
 
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }

@@ -25,6 +25,40 @@ impl DisplayPoint {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayMapConfig {
+    pub wrap_width: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayMapGeneration {
+    pub buffer_version: clock::Global,
+    pub config_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayCoverage {
+    pub exact_rows: Vec<Range<u32>>,
+}
+
+pub struct DisplayMapExpansionInput {
+    pub buffer: BufferSnapshot,
+    pub generation: DisplayMapGeneration,
+    pub config: DisplayMapConfig,
+    pub requested_rows: Range<u32>,
+}
+
+pub struct DisplayMapExpansion {
+    pub generation: DisplayMapGeneration,
+    pub requested_rows: Range<u32>,
+    pub exact_rows: Range<u32>,
+    config: DisplayMapConfig,
+    transforms: sum_tree::SumTree<crate::wrap_map::Transform>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaleExpansion;
+
 pub struct DisplayMap {
     original_buffer: BufferSnapshot,
     folds: Vec<Fold>,
@@ -43,6 +77,7 @@ pub struct DisplayMap {
     pub margin_top: u32,
     pub margin_bottom: u32,
     buffer_window: Range<u32>,
+    config_revision: u64,
 }
 
 pub struct DisplaySnapshot {
@@ -104,6 +139,7 @@ impl DisplayMap {
             margin_top: 0,
             margin_bottom: 0,
             buffer_window,
+            config_revision: 0,
         }
     }
 
@@ -116,6 +152,9 @@ impl DisplayMap {
             return;
         }
         let folds_changed = self.folds != folds;
+        if folds_changed {
+            self.config_revision = self.config_revision.wrapping_add(1);
+        }
         self.folds = folds;
         self.original_buffer = buffer.clone();
         self.fold_map = FoldMap::new(&buffer, self.folds.clone());
@@ -153,6 +192,7 @@ impl DisplayMap {
         if self.wrap_width == width {
             return;
         }
+        self.config_revision = self.config_revision.wrapping_add(1);
         self.wrap_width = width;
         self.wrap_map = WrapMap::new_windowed(
             self.fold_map.folded_buffer().clone(),
@@ -167,10 +207,14 @@ impl DisplayMap {
 
     pub fn sync(&mut self, buffer: BufferSnapshot) {
         let row_count = buffer.row_count();
-        self.sync_windowed(buffer, 0..row_count);
+        self.sync_hot_window(buffer, 0..row_count);
     }
 
     pub fn sync_windowed(&mut self, buffer: BufferSnapshot, buffer_window: Range<u32>) {
+        self.sync_hot_window(buffer, buffer_window);
+    }
+
+    pub fn sync_hot_window(&mut self, buffer: BufferSnapshot, buffer_window: Range<u32>) {
         if self.original_buffer.version == buffer.version && self.buffer_window == buffer_window {
             return;
         }
@@ -179,22 +223,25 @@ impl DisplayMap {
         let end = buffer_window.end.max(start).min(row_count);
         let buffer_window = start..end;
 
-        let coverage_unchanged = self.buffer_window == buffer_window;
+        let buffer_changed = self.original_buffer.version != buffer.version;
         self.original_buffer = buffer.clone();
         self.buffer_window = buffer_window.clone();
-        self.fold_map = FoldMap::new(&buffer, self.folds.clone());
-        self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
-        self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
-        self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
 
-        if coverage_unchanged && self.folds.is_empty() {
-            self.wrap_map.sync(buffer);
+        if self.folds.is_empty() {
+            if buffer_changed {
+                self.fold_map = FoldMap::new(&buffer, Vec::new());
+                self.inlay_map = InlayMap::new(buffer.clone());
+                self.tab_map = TabMap::new(buffer.clone());
+                self.block_map = BlockMap::new(buffer.clone());
+            }
+            self.wrap_map.sync_windowed(buffer, buffer_window);
         } else {
-            self.wrap_map = WrapMap::new_windowed(
-                self.fold_map.folded_buffer().clone(),
-                self.wrap_width,
-                buffer_window,
-            );
+            self.fold_map = FoldMap::new(&buffer, self.folds.clone());
+            let folded = self.fold_map.folded_buffer().clone();
+            self.inlay_map = InlayMap::new(folded.clone());
+            self.tab_map = TabMap::new(folded.clone());
+            self.block_map = BlockMap::new(folded.clone());
+            self.wrap_map = WrapMap::new_windowed(folded, self.wrap_width, buffer_window);
         }
     }
 
@@ -237,6 +284,53 @@ impl DisplayMap {
             }
         }
     }
+
+    pub fn generation(&self) -> DisplayMapGeneration {
+        DisplayMapGeneration {
+            buffer_version: self.original_buffer.version.clone(),
+            config_revision: self.config_revision,
+        }
+    }
+
+    pub fn config(&self) -> DisplayMapConfig {
+        DisplayMapConfig {
+            wrap_width: self.wrap_width,
+        }
+    }
+
+    pub fn exact_coverage(&self) -> DisplayCoverage {
+        DisplayCoverage {
+            exact_rows: self.wrap_map.snapshot().exact_coverage(),
+        }
+    }
+
+    pub fn covers_exactly(&self, rows: Range<u32>) -> bool {
+        self.wrap_map.snapshot().covers_exactly(rows)
+    }
+
+    pub fn expansion_input(&self, requested_rows: Range<u32>) -> Option<DisplayMapExpansionInput> {
+        if !self.folds.is_empty() {
+            return None;
+        }
+        Some(DisplayMapExpansionInput {
+            buffer: self.original_buffer.clone(),
+            generation: self.generation(),
+            config: self.config(),
+            requested_rows,
+        })
+    }
+
+    pub fn apply_expansion(
+        &mut self,
+        expansion: DisplayMapExpansion,
+    ) -> Result<(), StaleExpansion> {
+        if expansion.generation != self.generation() || expansion.config != self.config() {
+            return Err(StaleExpansion);
+        }
+        self.wrap_map
+            .apply_expansion(expansion.exact_rows, expansion.transforms);
+        Ok(())
+    }
 }
 
 impl DisplaySnapshot {
@@ -264,27 +358,52 @@ impl DisplaySnapshot {
         DisplayPoint(self.wrap_snapshot.max_point())
     }
 
-    pub fn point_to_display_point(&self, point: Point) -> DisplayPoint {
+    pub fn try_point_to_display_point(&self, point: Point) -> Option<DisplayPoint> {
         let folded_point = self.fold_map.to_folded_point(point);
-        DisplayPoint(self.wrap_snapshot.to_wrap_point(folded_point))
+        self.wrap_snapshot
+            .try_to_wrap_point(folded_point)
+            .map(DisplayPoint)
+    }
+
+    pub fn point_to_display_point(&self, point: Point) -> DisplayPoint {
+        self.try_point_to_display_point(point)
+            .expect("accessed cold display-map region")
+    }
+
+    pub fn try_display_point_to_point(&self, display_point: DisplayPoint) -> Option<Point> {
+        let folded_point = self.wrap_snapshot.try_from_wrap_point(display_point.0)?;
+        Some(self.fold_map.from_folded_point(folded_point))
     }
 
     pub fn display_point_to_point(&self, display_point: DisplayPoint) -> Point {
-        let folded_point = self.wrap_snapshot.from_wrap_point(display_point.0);
-        self.fold_map.from_folded_point(folded_point)
+        self.try_display_point_to_point(display_point)
+            .expect("accessed cold display-map region")
+    }
+
+    pub fn try_anchor_to_display_point(&self, anchor: Anchor) -> Option<DisplayPoint> {
+        self.try_point_to_display_point(anchor.to_point(&self.original_buffer))
     }
 
     pub fn anchor_to_display_point(&self, anchor: Anchor) -> DisplayPoint {
-        let point = anchor.to_point(&self.original_buffer);
-        self.point_to_display_point(point)
+        self.try_anchor_to_display_point(anchor)
+            .expect("accessed cold display-map region")
+    }
+
+    pub fn try_display_point_to_anchor(
+        &self,
+        display_point: DisplayPoint,
+        bias: Bias,
+    ) -> Option<Anchor> {
+        let point = self.try_display_point_to_point(display_point)?;
+        Some(match bias {
+            Bias::Left => self.original_buffer.anchor_before(point),
+            Bias::Right => self.original_buffer.anchor_after(point),
+        })
     }
 
     pub fn display_point_to_anchor(&self, display_point: DisplayPoint, bias: Bias) -> Anchor {
-        let point = self.display_point_to_point(display_point);
-        match bias {
-            Bias::Left => self.original_buffer.anchor_before(point),
-            Bias::Right => self.original_buffer.anchor_after(point),
-        }
+        self.try_display_point_to_anchor(display_point, bias)
+            .expect("accessed cold display-map region")
     }
 
     /// Returns the buffer row for a given display row.
@@ -322,6 +441,32 @@ impl DisplaySnapshot {
     }
 }
 
+pub fn build_expansion(
+    input: DisplayMapExpansionInput,
+    cancellation: &background_worker::CancellationToken,
+) -> Option<DisplayMapExpansion> {
+    if input.generation.buffer_version != input.buffer.version {
+        return None;
+    }
+    let row_count = input.buffer.row_count();
+    let start = input.requested_rows.start.min(row_count);
+    let end = input.requested_rows.end.max(start).min(row_count);
+    let exact_rows = start..end;
+    let transforms = WrapMap::build_expansion_transforms(
+        &input.buffer,
+        input.config.wrap_width,
+        exact_rows.clone(),
+        cancellation,
+    )?;
+    Some(DisplayMapExpansion {
+        generation: input.generation,
+        requested_rows: input.requested_rows,
+        exact_rows,
+        config: input.config,
+        transforms,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,8 +492,18 @@ mod tests {
         let map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(4), 1..2);
         let snapshot = map.snapshot();
 
-        assert_eq!(snapshot.point_to_display_point(Point::new(0, 7)).row(), 0);
-        assert_eq!(snapshot.point_to_display_point(Point::new(1, 7)).row(), 2);
+        assert!(
+            snapshot
+                .try_point_to_display_point(Point::new(0, 7))
+                .is_none()
+        );
+        assert_eq!(
+            snapshot
+                .try_point_to_display_point(Point::new(1, 7))
+                .unwrap()
+                .row(),
+            2
+        );
         assert!(map.covers_buffer_rows(&(1..2)));
         assert!(!map.covers_buffer_rows(&(0..2)));
     }
@@ -501,6 +656,110 @@ mod tests {
                 .iter()
                 .all(|(_, elapsed, _)| *elapsed > Duration::ZERO)
         );
+    }
+
+    #[test]
+    fn exact_coverage_includes_the_final_row() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "first\nlast");
+        let map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 1..2);
+
+        assert!(map.covers_exactly(1..2));
+        assert!(
+            map.snapshot()
+                .try_point_to_display_point(Point::new(1, 4))
+                .is_some()
+        );
+        assert!(!map.covers_exactly(0..1));
+    }
+
+    #[test]
+    fn moving_hot_window_preserves_existing_exact_coverage() {
+        let buffer = large_buffer(100);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 40..60);
+
+        map.sync_hot_window(buffer.snapshot().clone(), 70..80);
+
+        assert_eq!(map.exact_coverage().exact_rows, vec![40..60, 70..80]);
+        assert!(map.covers_exactly(40..60));
+        assert!(map.covers_exactly(70..80));
+    }
+
+    #[test]
+    fn expansion_merges_and_stale_configuration_is_rejected() {
+        let buffer = large_buffer(100);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 40..60);
+        let expansion = build_expansion(
+            map.expansion_input(10..30).unwrap(),
+            &background_worker::CancellationToken::default(),
+        )
+        .unwrap();
+
+        map.apply_expansion(expansion).unwrap();
+        assert_eq!(map.exact_coverage().exact_rows, vec![10..30, 40..60]);
+
+        let stale = build_expansion(
+            map.expansion_input(70..80).unwrap(),
+            &background_worker::CancellationToken::default(),
+        )
+        .unwrap();
+        map.set_wrap_width(Some(40));
+        assert_eq!(map.apply_expansion(stale), Err(StaleExpansion));
+    }
+
+    #[test]
+    fn expansion_split_preserves_document_end_extent() {
+        let text = (0..100)
+            .map(|row| {
+                if row == 99 {
+                    "final-row".to_string()
+                } else {
+                    format!("row-{row}\n")
+                }
+            })
+            .collect::<String>();
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 40..60);
+        let before = map.snapshot().max_point();
+
+        let expansion = build_expansion(
+            map.expansion_input(70..80).unwrap(),
+            &background_worker::CancellationToken::default(),
+        )
+        .unwrap();
+        map.apply_expansion(expansion).unwrap();
+
+        let after = map.snapshot().max_point();
+        assert_eq!(after, before);
+        assert_eq!(after.column(), "final-row".len() as u32);
+    }
+
+    #[test]
+    fn edits_shift_unaffected_coverage_and_invalidate_touched_rows() {
+        use text::ToOffset;
+
+        let mut buffer = large_buffer(100);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 40..60);
+        let expansion = build_expansion(
+            map.expansion_input(70..80).unwrap(),
+            &background_worker::CancellationToken::default(),
+        )
+        .unwrap();
+        map.apply_expansion(expansion).unwrap();
+
+        let insert_at = Point::new(5, 0).to_offset(buffer.snapshot());
+        buffer.edit([(insert_at..insert_at, "new\n".repeat(5))]);
+        map.sync_hot_window(buffer.snapshot().clone(), 45..65);
+
+        assert!(map.covers_exactly(45..65));
+        assert!(map.covers_exactly(75..85));
+
+        let edit_at = Point::new(78, 1).to_offset(buffer.snapshot());
+        buffer.edit([(edit_at..edit_at + 1, "x")]);
+        map.sync_hot_window(buffer.snapshot().clone(), 45..65);
+
+        assert!(map.covers_exactly(75..78));
+        assert!(!map.covers_exactly(75..85));
+        assert!(map.covers_exactly(79..85));
     }
 
     #[test]

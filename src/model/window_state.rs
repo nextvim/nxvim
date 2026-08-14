@@ -64,7 +64,16 @@ impl WindowState {
             height,
             has_border,
         };
-        if self.viewport == viewport && self.last_version.as_ref() == Some(&snapshot.version) {
+        let cursor_row = if self.selections.selections.is_empty() {
+            0
+        } else {
+            self.selections.primary().head().to_point(&snapshot).row
+        };
+        let buffer_window = hot_window(cursor_row, height, snapshot.row_count());
+        if self.viewport == viewport
+            && self.last_version.as_ref() == Some(&snapshot.version)
+            && self.display_map.covers_exactly(buffer_window.clone())
+        {
             self.scroll_to_cursor();
             return;
         }
@@ -75,14 +84,8 @@ impl WindowState {
         self.viewport = viewport;
 
         let wrap_width = wrap_width(&snapshot, width, has_border);
-        let cursor_row = if self.selections.selections.is_empty() {
-            0
-        } else {
-            self.selections.primary().head().to_point(&snapshot).row
-        };
-        let buffer_window = hot_window(cursor_row, height, snapshot.row_count());
 
-        self.display_map.sync_windowed(snapshot, buffer_window);
+        self.display_map.sync_hot_window(snapshot, buffer_window);
         self.display_map.set_wrap_width(Some(wrap_width));
         self.scroll_to_cursor();
     }
@@ -143,13 +146,44 @@ fn hot_window(cursor_row: u32, height: u32, row_count: u32) -> std::ops::Range<u
 
 #[cfg(test)]
 mod tests {
-    use super::hot_window;
+    use super::{Viewport, WindowState, hot_window};
+    use clock::ReplicaId;
+    use vim_buffer::{Buffer, BufferId};
 
     #[test]
     fn hot_window_is_bounded_around_the_cursor() {
         assert_eq!(hot_window(0, 24, 100_000), 0..49);
         assert_eq!(hot_window(50_000, 24, 100_000), 49_952..50_049);
         assert_eq!(hot_window(99_999, 24, 100_000), 99_951..100_000);
+    }
+
+    #[test]
+    fn cursor_only_jump_moves_hot_coverage_before_scrolling() {
+        let text = (0..1_000)
+            .map(|row| format!("row {row}\n"))
+            .collect::<String>();
+        let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let viewport = Viewport::default();
+        let mut window = WindowState::new(&buffer, viewport);
+        window.update(
+            buffer.snapshot().as_inner().clone(),
+            viewport.width,
+            viewport.height,
+            viewport.has_border,
+        );
+
+        window
+            .selections
+            .move_to_line(false, 999, buffer.as_text_buffer());
+        window.update(
+            buffer.snapshot().as_inner().clone(),
+            viewport.width,
+            viewport.height,
+            viewport.has_border,
+        );
+
+        assert!(window.display_map.covers_exactly(951..1_000));
+        assert!(window.display_map.scroll_y > 900);
     }
 }
 

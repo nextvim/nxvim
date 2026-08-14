@@ -337,18 +337,18 @@ Acceptance:
 - The visible viewport is correct with wrapped lines before and inside the hot range.
 - Moving within the hot range does not rebuild unchanged rows.
 
-### Phase 3: Introduce explicit coverage
+### Phase 3: Introduce explicit coverage (Completed)
 
-- Represent exact and cold intervals in the wrap/display transform tree.
-- Make exactness queryable.
-- Ensure mapping APIs cannot silently return approximate coordinates for cold regions.
-- Add methods to produce immutable expansion inputs and merge expansion outputs.
-- Test interval invalidation, shifting after inserted/deleted lines, overlap handling, and coalescing.
+- [x] Represent exact intervals as explicit normalized coverage metadata alongside the transform tree; all other rows are cold.
+- [x] Make exactness queryable through `exact_coverage` and `covers_exactly`.
+- [x] Ensure mapping APIs cannot silently return approximate coordinates for cold regions by adding `try_*` APIs and making infallible APIs reject cold access.
+- [x] Add methods to produce immutable expansion inputs and merge validated expansion outputs.
+- [x] Test final-row accounting, interval invalidation and shifting after edits, overlap/coalescing, hot-window movement, suffix splitting, and stale configuration rejection.
 
 Acceptance:
 
-- A map containing only a middle hot interval maps that interval correctly without processing the full prefix.
-- Access to cold mapping is explicit and cannot masquerade as exact.
+- [x] A map containing only a middle hot interval maps that interval correctly without processing the full prefix.
+- [x] Access to cold mapping is explicit and cannot masquerade as exact.
 
 ### Phase 4: Add cancellable lazy expansion through Services
 
