@@ -126,7 +126,7 @@ impl Runtime {
         const CHUNK_ROWS: u32 = 4_096;
 
         let buffer_id = self.app.model.window_buffer(window_id)?;
-        let revision = self.app.model.buffer_state(buffer_id)?.revision;
+        let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
         let window = self.app.model.window_state(window_id)?;
@@ -171,7 +171,7 @@ impl Runtime {
 
     fn schedule_window_highlight(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
         let buffer_id = self.app.model.window_buffer(window_id)?;
-        let revision = self.app.model.buffer_state(buffer_id)?.revision;
+        let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
         let window = self.app.model.window_state(window_id)?;

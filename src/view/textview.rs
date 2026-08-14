@@ -1,4 +1,4 @@
-use text::{Point, ToPoint};
+use text::{Point, ToPoint, ToOffset};
 use vim_ui::{Rect, Renderer, UIContext, View, WindowId};
 
 use crate::model::WindowState;
@@ -36,6 +36,7 @@ pub fn build_text(
     inner_rect: Rect,
     active: bool,
     mode: vim_input::Mode,
+    highlights: Option<&[textmate::HighlightSpan]>,
 ) -> vim_ui::TextViewModel {
     let mut rows = Vec::new();
     let mut saved_cursor = None;
@@ -61,6 +62,19 @@ pub fn build_text(
         let mut spans = Vec::<vim_ui::model::TextSpan>::new();
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line_chars.len();
+
+        let line_start_offset = Point::new(buffer_row, 0).to_offset(buffer.snapshot().as_inner());
+        let line_end_offset = Point::new(buffer_row, buffer.snapshot().as_inner().line_len(buffer_row)).to_offset(buffer.snapshot().as_inner());
+
+        let line_highlights: Vec<_> = if let Some(h_spans) = highlights {
+            h_spans.iter().filter(|s| {
+                let start = s.start.to_offset(buffer.snapshot().as_inner());
+                let end = s.end.to_offset(buffer.snapshot().as_inner());
+                start <= line_end_offset && end >= line_start_offset
+            }).collect()
+        } else {
+            Vec::new()
+        };
 
         let gutter_text = if window.show_gutter {
             format!(" {:2} ", buffer_row + 1)
@@ -98,6 +112,15 @@ pub fn build_text(
             let mut style = vim_ui::Style::default();
             if selection_state.selected_cell || selection_state.at_cursor_head {
                 style.bg = Some(vim_ui::Color::Blue);
+            } else {
+                let point_offset = point.to_offset(buffer.snapshot().as_inner());
+                if let Some(span) = line_highlights.iter().find(|s| {
+                    let start = s.start.to_offset(buffer.snapshot().as_inner());
+                    let end = s.end.to_offset(buffer.snapshot().as_inner());
+                    point_offset >= start && point_offset < end
+                }) {
+                    style.fg = Some(vim_ui::Color::Rgb(span.foreground[0], span.foreground[1], span.foreground[2]));
+                }
             }
 
             if let Some(span) = spans.last_mut().filter(|span| span.style == style) {

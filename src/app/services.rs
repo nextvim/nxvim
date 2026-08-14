@@ -73,6 +73,7 @@ impl Services {
     pub fn new() -> Self {
         let mut background_workers = background_worker::WorkerManager::new();
         background_workers.add_worker("display_map");
+        background_workers.add_worker("highlight");
         Self {
             background_workers,
             clipboard: clipboard::Clipboard::new(),

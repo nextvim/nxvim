@@ -95,9 +95,10 @@ impl EditorViewModel {
             } else {
                 window_layout.rect
             };
+            let highlights = model.buffer_state(buffer_id).map(|s| s.highlights.as_slice());
             text_models.insert(
                 window_id,
-                textview::build_text(buffer, window, inner_rect, window_id == active_window, mode),
+                textview::build_text(buffer, window, inner_rect, window_id == active_window, mode, highlights),
             );
         }
 
