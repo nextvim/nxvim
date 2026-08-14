@@ -819,6 +819,22 @@ impl Editor {
                 self.insert_text(buffer, &mut buffer_display_context.selections, text);
             }
             Action::DeleteChar { count } | Action::Delete { count } => {
+                if *count > 1 && buffer_display_context.selections.has_selection(buffer.as_text_buffer()) {
+                    if mode == Mode::VisualLine {
+                        buffer_display_context.selections.move_down(
+                            true,
+                            count.saturating_sub(1),
+                            buffer.as_text_buffer(),
+                        );
+                    } else {
+                        buffer_display_context.selections.move_right(
+                            true,
+                            count.saturating_sub(1),
+                            buffer.as_text_buffer(),
+                        );
+                    }
+                }
+
                 let text = if buffer_display_context
                     .selections
                     .has_selection(buffer.as_text_buffer())
@@ -849,6 +865,22 @@ impl Editor {
                 }
             }
             Action::DeleteCharBefore { count } => {
+                if *count > 1 && buffer_display_context.selections.has_selection(buffer.as_text_buffer()) {
+                    if mode == Mode::VisualLine {
+                        buffer_display_context.selections.move_down(
+                            true,
+                            count.saturating_sub(1),
+                            buffer.as_text_buffer(),
+                        );
+                    } else {
+                        buffer_display_context.selections.move_right(
+                            true,
+                            count.saturating_sub(1),
+                            buffer.as_text_buffer(),
+                        );
+                    }
+                }
+
                 let text = if buffer_display_context
                     .selections
                     .has_selection(buffer.as_text_buffer())
@@ -1555,38 +1587,31 @@ impl Editor {
         selections: &mut SelectionSet,
         count: u32,
     ) {
+        if count > 1 && selections.has_selection(buffer.as_text_buffer()) {
+            selections.move_down(true, count.saturating_sub(1), buffer.as_text_buffer());
+        }
         if self.delete_text(buffer, selections, 0) {
             return;
         }
         let mut edits = Vec::new();
-        for _ in 0..count {
-            let cursors = selections.selections.clone();
-            for cursor in cursors.iter() {
-                let mut point = cursor.head().to_point(buffer.as_text_buffer());
-                let (start, end) = {
-                    point.column = 0;
-                    let start = buffer
-                        .as_text_buffer()
-                        .offset_for_anchor(&buffer.as_text_buffer().anchor_at(&point, Bias::Left));
-                    if point.row < buffer.as_text_buffer().row_count() {
-                        point.row += 1;
-                    } else {
-                        point.column = buffer.as_text_buffer().line_len(point.row);
-                    }
-                    let end = buffer.as_text_buffer().clip_offset(
-                        buffer.as_text_buffer().offset_for_anchor(
-                            &buffer.as_text_buffer().anchor_at(&point, Bias::Right),
-                        ),
-                        Bias::Right,
-                    );
-                    (start, end)
-                };
-                if start != end {
-                    edits.push(vim_buffer::TextRange {
-                        start: vim_buffer::ByteOffset(start),
-                        end: vim_buffer::ByteOffset(end),
-                    });
-                }
+        let cursors = selections.selections.clone();
+        for cursor in cursors.iter() {
+            let point = cursor.head().to_point(buffer.as_text_buffer());
+            let start_row = point.row;
+            let end_row = (start_row + count).min(buffer.as_text_buffer().row_count());
+
+            let start = Point::new(start_row, 0).to_offset(buffer.as_text_buffer());
+            let end_point = Point::new(end_row, 0);
+            let end = buffer
+                .as_text_buffer()
+                .clip_point(end_point, Bias::Right)
+                .to_offset(buffer.as_text_buffer());
+
+            if start != end {
+                edits.push(vim_buffer::TextRange {
+                    start: vim_buffer::ByteOffset(start),
+                    end: vim_buffer::ByteOffset(end),
+                });
             }
         }
 
