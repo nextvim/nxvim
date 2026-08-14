@@ -11,11 +11,13 @@ mod editor;
 mod editor_handler;
 pub(crate) mod input;
 mod save_handler;
+mod shared_operations;
 mod task_dispatcher;
 mod window_handler;
 
 pub use command::{Command, CommandOutcome, ViewEffect};
 pub use dispatcher::Dispatcher;
+pub use shared_operations::SharedOperations;
 
 #[cfg(test)]
 mod tests {

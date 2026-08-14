@@ -29,6 +29,7 @@ pub struct WindowState {
     pub last_version: Option<clock::Global>,
     pub viewport: Viewport,
     pub pending_display_map: Option<(display_map::DisplayMapGeneration, Range<u32>)>,
+    pub show_gutter: bool,
 }
 
 impl WindowState {
@@ -36,7 +37,7 @@ impl WindowState {
         let snapshot = buffer.snapshot().as_inner().clone();
         let mut selections = vim_buffer::SelectionSet::new();
         selections.add(buffer.as_text_buffer(), 0);
-        Self::from_parts(buffer.id(), snapshot, selections, viewport)
+        Self::from_parts(buffer.id(), snapshot, selections, viewport, true)
     }
 
     pub fn placeholder(buffer: &vim_buffer::Buffer) -> Self {
@@ -52,6 +53,7 @@ impl WindowState {
             last_version: None,
             viewport: Viewport::default(),
             pending_display_map: None,
+            show_gutter: true,
         }
     }
 
@@ -87,11 +89,21 @@ impl WindowState {
         self.last_version = Some(snapshot.version.clone());
         self.viewport = viewport;
 
-        let wrap_width = wrap_width(&snapshot, width, has_border);
+        let wrap_width = wrap_width(&snapshot, width, has_border, self.show_gutter);
 
         self.display_map.sync_hot_window(snapshot, buffer_window);
         self.display_map.set_wrap_width(Some(wrap_width));
         self.scroll_to_cursor();
+    }
+
+    pub fn set_show_gutter(&mut self, show_gutter: bool) {
+        if self.show_gutter != show_gutter {
+            self.show_gutter = show_gutter;
+            let snapshot = self.display_map.snapshot().buffer_snapshot().clone();
+            let wrap_width = wrap_width(&snapshot, self.viewport.width, self.viewport.has_border, show_gutter);
+            self.display_map.set_wrap_width(Some(wrap_width));
+            self.scroll_to_cursor();
+        }
     }
 
     pub fn scroll_to_cursor(&mut self) {
@@ -116,8 +128,9 @@ impl WindowState {
         snapshot: text::BufferSnapshot,
         selections: vim_buffer::SelectionSet,
         viewport: Viewport,
+        show_gutter: bool,
     ) -> Self {
-        let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border);
+        let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border, show_gutter);
         let cursor_row = selections.primary().head().to_point(&snapshot).row;
         let buffer_window = hot_window(cursor_row, viewport.height, snapshot.row_count());
         let mut display_map =
@@ -136,6 +149,7 @@ impl WindowState {
             last_version: None,
             viewport,
             pending_display_map: None,
+            show_gutter,
         }
     }
 }
@@ -190,11 +204,34 @@ mod tests {
         assert!(window.display_map.covers_exactly(951..1_000));
         assert!(window.display_map.scroll_y > 900);
     }
+
+    #[test]
+    fn toggling_gutter_updates_wrap_width() {
+        let text = "a".repeat(100);
+        let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let viewport = Viewport {
+            width: 80,
+            height: 24,
+            has_border: false,
+        };
+        let mut window = WindowState::new(&buffer, viewport);
+        
+        let wrap_width_with_gutter = window.display_map.wrap_width.unwrap();
+        assert!(wrap_width_with_gutter < 80);
+
+        window.set_show_gutter(false);
+        let wrap_width_without_gutter = window.display_map.wrap_width.unwrap();
+        assert_eq!(wrap_width_without_gutter, 80);
+    }
 }
 
-fn wrap_width(snapshot: &text::BufferSnapshot, width: u32, has_border: bool) -> u32 {
-    let digit_count = snapshot.row_count().max(1).to_string().len();
-    let gutter_width = (digit_count.max(2) + 2) as u32;
+fn wrap_width(snapshot: &text::BufferSnapshot, width: u32, has_border: bool, show_gutter: bool) -> u32 {
+    let gutter_width = if show_gutter {
+        let digit_count = snapshot.row_count().max(1).to_string().len();
+        (digit_count.max(2) + 2) as u32
+    } else {
+        0
+    };
     let border_width = if has_border { 2 } else { 0 };
     width.saturating_sub(gutter_width + border_width)
 }

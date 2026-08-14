@@ -1,7 +1,7 @@
 use vim_input::Action;
-use vim_ui::{NavigationDirection, SplitAxis, WindowId};
+use vim_ui::{NavigationDirection, WindowId};
 
-use super::command::{CommandOutcome, ViewEffect};
+use super::command::CommandOutcome;
 
 pub struct WindowHandler;
 
@@ -19,21 +19,26 @@ impl WindowHandler {
     }
 
     pub fn execute(active_window: WindowId, action: &Action) -> CommandOutcome {
-        let effect = match action {
-            Action::SplitHorizontal { .. } => ViewEffect::Split {
-                source: active_window,
-                axis: SplitAxis::Rows,
-            },
-            Action::SplitVertical { .. } => ViewEffect::Split {
-                source: active_window,
-                axis: SplitAxis::Columns,
-            },
-            Action::FocusLeftWindow => ViewEffect::FocusDirection(NavigationDirection::Left),
-            Action::FocusRightWindow => ViewEffect::FocusDirection(NavigationDirection::Right),
-            Action::FocusUpWindow => ViewEffect::FocusDirection(NavigationDirection::Up),
-            Action::FocusDownWindow => ViewEffect::FocusDirection(NavigationDirection::Down),
-            _ => return CommandOutcome::default(),
-        };
-        CommandOutcome::with_effect(effect)
+        match action {
+            Action::SplitHorizontal { .. } => {
+                super::shared_operations::SharedOperations::split_window(active_window, true)
+            }
+            Action::SplitVertical { .. } => {
+                super::shared_operations::SharedOperations::split_window(active_window, false)
+            }
+            Action::FocusLeftWindow => {
+                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Left)
+            }
+            Action::FocusRightWindow => {
+                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Right)
+            }
+            Action::FocusUpWindow => {
+                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Up)
+            }
+            Action::FocusDownWindow => {
+                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Down)
+            }
+            _ => CommandOutcome::default(),
+        }
     }
 }

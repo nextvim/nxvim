@@ -14,6 +14,11 @@ use vim_script::{
     source::SourceMap,
 };
 
+pub mod commands;
+pub mod registry;
+
+use registry::COMMAND_SPECS;
+
 pub struct ScriptRuntime {
     scheduler: Scheduler,
     commands: mpsc::Receiver<Command>,
@@ -26,43 +31,8 @@ impl ScriptRuntime {
         let (sender, commands) = mpsc::channel();
         let mut host = HostRuntime::new(Arc::new(EditorHost { sender }));
         host.capabilities.grant(Capability::Editor);
-        host.register_command(CommandDefinition {
-            name: "quit".to_owned(),
-            minimum_abbreviation: 1,
-            accepts_bang: true,
-            accepts_range: false,
-            accepts_count: false,
-            accepts_register: false,
-            required_capabilities: vec![Capability::Editor],
-        });
-
-        for (name, minimum_abbreviation) in [
-            ("bnext", 2),
-            ("bprev", 2),
-            ("nexttab", 1),
-            ("previoustab", 1),
-        ] {
-            host.register_command(CommandDefinition {
-                name: name.to_owned(),
-                minimum_abbreviation,
-                accepts_bang: false,
-                accepts_range: false,
-                accepts_count: false,
-                accepts_register: false,
-                required_capabilities: vec![Capability::Editor],
-            });
-        }
-
-        for (name, minimum_abbreviation) in [("save", 1), ("write", 1)] {
-            host.register_command(CommandDefinition {
-                name: name.to_owned(),
-                minimum_abbreviation,
-                accepts_bang: true,
-                accepts_range: false,
-                accepts_count: false,
-                accepts_register: false,
-                required_capabilities: vec![Capability::Editor],
-            });
+        for spec in COMMAND_SPECS {
+            host.register_command(CommandDefinition::from(spec));
         }
 
         let mut scheduler = Scheduler::default();
@@ -154,34 +124,7 @@ impl Host for EditorHost {
     fn execute_command(&self, request: CommandRequest) -> HostFuture {
         let sender = self.sender.clone();
         Box::pin(async move {
-            let command = match request.command.name.as_str() {
-                "quit" => Command::Editor {
-                    action: vim_input::Action::Quit,
-                    register: None,
-                },
-                "bnext" | "nexttab" => Command::Editor {
-                    action: vim_input::Action::NextTab { count: 1 },
-                    register: None,
-                },
-                "bprev" | "previoustab" => Command::Editor {
-                    action: vim_input::Action::PreviousTab { count: 1 },
-                    register: None,
-                },
-                "save" | "write" => {
-                    let argument = request.command.arguments.trim();
-                    Command::Save {
-                        path: (!argument.is_empty()).then(|| PathBuf::from(argument)),
-                        force: request.command.bang,
-                    }
-                }
-                name => {
-                    return Err(RuntimeError::coded(
-                        "E492",
-                        RuntimeErrorKind::InvalidCommand,
-                        format!("not an editor command: {name}"),
-                    ));
-                }
-            };
+            let command = commands::execute(request)?;
             sender.send(command).map_err(|_| {
                 RuntimeError::coded(
                     "E_HOST",
@@ -206,15 +149,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_central_registry_specifications() {
+        let mut host = HostRuntime::new(Arc::new(EditorHost {
+            sender: mpsc::channel().0,
+        }));
+        for spec in COMMAND_SPECS {
+            host.register_command(CommandDefinition::from(spec));
+        }
+
+        // Verify standard vs extension flag
+        for spec in COMMAND_SPECS {
+            if spec.is_extension {
+                assert!(
+                    spec.name == "save" || spec.name == "nexttab" || spec.name == "previoustab" || spec.name == "bprev"
+                );
+            } else {
+                assert!(
+                    spec.name != "save" && spec.name != "nexttab" && spec.name != "previoustab" && spec.name != "bprev"
+                );
+            }
+
+            // Test abbreviations and aliases
+            let def = host.commands.resolve(spec.name).unwrap();
+            assert_eq!(def.name, spec.name);
+
+            // Test alias resolution
+            for (alias, min_abbr) in spec.aliases {
+                let resolved = host.commands.resolve(alias).unwrap();
+                assert_eq!(resolved.name, spec.name);
+
+                // Test min abbreviation for alias
+                if alias.len() > *min_abbr {
+                    let abbr = &alias[..*min_abbr];
+                    let resolved_abbr = host.commands.resolve(abbr).unwrap();
+                    assert_eq!(resolved_abbr.name, spec.name);
+                }
+            }
+
+            // Test min abbreviation of canonical name
+            if spec.name.len() > spec.minimum_abbreviation {
+                let abbr = &spec.name[..spec.minimum_abbreviation];
+                let resolved = host.commands.resolve(abbr).unwrap();
+                assert_eq!(resolved.name, spec.name);
+            }
+        }
+    }
+
+    #[test]
     fn quit_and_its_abbreviation_are_dispatched() {
         for source in ["q", "quit"] {
             let mut runtime = ScriptRuntime::new();
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::Editor {
-                    action: vim_input::Action::Quit,
-                    register: None,
+                Some(Command::Quit {
+                    force: false,
                 })
             ));
         }
@@ -257,5 +246,19 @@ mod tests {
         let mut runtime = ScriptRuntime::new();
         assert!(runtime.execute("missing").is_err());
         assert!(runtime.try_next_command().is_none());
+    }
+
+    #[test]
+    fn delete_commands_with_range_and_register_are_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute(":1,2d a").unwrap();
+        let cmd = runtime.try_next_command().unwrap();
+        if let Command::Delete { range, count, register } = cmd {
+            assert!(range.is_some());
+            assert_eq!(count, None);
+            assert_eq!(register, Some('a'));
+        } else {
+            panic!("Expected Command::Delete, got {:?}", cmd);
+        }
     }
 }

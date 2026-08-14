@@ -18,24 +18,15 @@ fn discovers_initializes_and_executes_a_tier_one_plugin() {
     let mut host = HostRuntime::new(Arc::new(editor.clone()));
     host.capabilities.grant(Capability::FileSystemWrite);
     host.capabilities.grant(Capability::Settings);
-    host.register_command(CommandDefinition {
-        name: "set".into(),
-        minimum_abbreviation: 2,
-        accepts_bang: false,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::Settings],
-    });
-    host.register_command(CommandDefinition {
-        name: "write".into(),
-        minimum_abbreviation: 1,
-        accepts_bang: true,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::FileSystemWrite],
-    });
+    host.register_command(
+        CommandDefinition::new("set", 2)
+            .with_capabilities(vec![Capability::Settings]),
+    );
+    host.register_command(
+        CommandDefinition::new("write", 1)
+            .with_bang(true)
+            .with_capabilities(vec![Capability::FileSystemWrite]),
+    );
 
     let mut loader = ScriptLoader::with_host(RuntimePath::new([plugin_root()]), host);
     let report = loader.load_startup_plugins();

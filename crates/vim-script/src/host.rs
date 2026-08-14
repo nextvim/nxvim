@@ -574,6 +574,16 @@ impl HostRuntime {
                 format!("{} does not accept a range", definition.name),
             ));
         }
+        if definition.accepts_count || definition.accepts_register {
+            let (count, register, remaining) = parse_count_and_register(
+                &request.command.arguments,
+                definition.accepts_count,
+                definition.accepts_register,
+            );
+            request.command.count = count;
+            request.command.register = register;
+            request.command.arguments = remaining;
+        }
         if !self
             .capabilities
             .allows_all(&definition.required_capabilities)
@@ -586,6 +596,45 @@ impl HostRuntime {
         }
         Ok(self.host.execute_command(request))
     }
+}
+
+fn parse_count_and_register(
+    arguments: &str,
+    accepts_count: bool,
+    accepts_register: bool,
+) -> (Option<u64>, Option<char>, String) {
+    let mut count = None;
+    let mut register = None;
+    let mut remaining = String::new();
+
+    let words: Vec<&str> = arguments.split_whitespace().collect();
+    let mut idx = 0;
+
+    if idx < words.len() && accepts_register {
+        let word = words[idx];
+        if word.len() == 1 {
+            let ch = word.chars().next().unwrap();
+            let is_number = ch.is_ascii_digit();
+            if !is_number || !accepts_count {
+                register = Some(ch);
+                idx += 1;
+            }
+        }
+    }
+
+    if idx < words.len() && accepts_count {
+        let word = words[idx];
+        if let Ok(c) = word.parse::<u64>() {
+            count = Some(c);
+            idx += 1;
+        }
+    }
+
+    if idx < words.len() {
+        remaining = words[idx..].join(" ");
+    }
+
+    (count, register, remaining)
 }
 
 fn mapping_modes(name: &str) -> Option<(Vec<MapMode>, bool, bool)> {
@@ -842,15 +891,98 @@ pub struct CommandRequest {
     pub context: HostContext,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilenameBehavior {
+    None,
+    Optional,
+    Required,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarBehavior {
+    Chainable,
+    Argument,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddressInterpretation {
+    Lines,
+    Buffers,
+    Windows,
+    Tabs,
+    None,
+}
+
 #[derive(Clone, Debug)]
 pub struct CommandDefinition {
     pub name: String,
     pub minimum_abbreviation: usize,
+    pub aliases: Vec<(String, usize)>,
     pub accepts_bang: bool,
     pub accepts_range: bool,
     pub accepts_count: bool,
     pub accepts_register: bool,
+    pub accepts_opt: bool,
+    pub accepts_cmd: bool,
+    pub filename_behavior: FilenameBehavior,
+    pub bar_behavior: BarBehavior,
+    pub allowed_modifiers: Vec<String>,
     pub required_capabilities: Vec<Capability>,
+    pub default_range: Option<String>,
+    pub address_interpretation: AddressInterpretation,
+    pub handler_id: String,
+    pub vim_error_behavior: String,
+    pub is_extension: bool,
+}
+
+impl CommandDefinition {
+    pub fn new(name: impl Into<String>, minimum_abbreviation: usize) -> Self {
+        Self {
+            name: name.into(),
+            minimum_abbreviation,
+            aliases: Vec::new(),
+            accepts_bang: false,
+            accepts_range: false,
+            accepts_count: false,
+            accepts_register: false,
+            accepts_opt: false,
+            accepts_cmd: false,
+            filename_behavior: FilenameBehavior::None,
+            bar_behavior: BarBehavior::Chainable,
+            allowed_modifiers: Vec::new(),
+            required_capabilities: Vec::new(),
+            default_range: None,
+            address_interpretation: AddressInterpretation::None,
+            handler_id: String::new(),
+            vim_error_behavior: String::new(),
+            is_extension: false,
+        }
+    }
+
+    pub fn with_bang(mut self, value: bool) -> Self {
+        self.accepts_bang = value;
+        self
+    }
+
+    pub fn with_range(mut self, value: bool) -> Self {
+        self.accepts_range = value;
+        self
+    }
+
+    pub fn with_count(mut self, value: bool) -> Self {
+        self.accepts_count = value;
+        self
+    }
+
+    pub fn with_register(mut self, value: bool) -> Self {
+        self.accepts_register = value;
+        self
+    }
+
+    pub fn with_capabilities(mut self, caps: Vec<Capability>) -> Self {
+        self.required_capabilities = caps;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -866,17 +998,35 @@ impl CommandRegistry {
         if let Some(command) = self.commands.get(name) {
             return Ok(command);
         }
-        let mut matches = self.commands.values().filter(|command| {
-            name.len() >= command.minimum_abbreviation && command.name.starts_with(name)
-        });
-        let Some(command) = matches.next() else {
+        for command in self.commands.values() {
+            for (alias, _) in &command.aliases {
+                if alias == name {
+                    return Ok(command);
+                }
+            }
+        }
+        let mut matches = Vec::new();
+        for command in self.commands.values() {
+            if name.len() >= command.minimum_abbreviation && command.name.starts_with(name) {
+                matches.push(command);
+            } else {
+                for (alias, min_abbr) in &command.aliases {
+                    if name.len() >= *min_abbr && alias.starts_with(name) {
+                        matches.push(command);
+                        break;
+                    }
+                }
+            }
+        }
+        let mut matches_iter = matches.into_iter();
+        let Some(command) = matches_iter.next() else {
             return Err(RuntimeError::coded(
                 "E492",
                 RuntimeErrorKind::InvalidCommand,
                 format!("not an editor command: {name}"),
             ));
         };
-        if matches.next().is_some() {
+        if matches_iter.next().is_some() {
             return Err(RuntimeError::coded(
                 "E464",
                 RuntimeErrorKind::InvalidCommand,
@@ -954,5 +1104,192 @@ mod tests {
                 .arguments,
             "one two"
         );
+    }
+}
+
+pub trait RangeStateProvider {
+    fn cursor_line(&self) -> usize;
+    fn line_count(&self) -> usize;
+    fn get_mark(&self, name: char) -> Option<usize>;
+    fn search_pattern(&self, pattern: &str, forward: bool, start_line: usize) -> Option<usize>;
+}
+
+struct SemicolonProvider<'a, P: RangeStateProvider> {
+    base: &'a P,
+    temp_cursor: usize,
+}
+
+impl<'a, P: RangeStateProvider> RangeStateProvider for SemicolonProvider<'a, P> {
+    fn cursor_line(&self) -> usize {
+        self.temp_cursor
+    }
+    fn line_count(&self) -> usize {
+        self.base.line_count()
+    }
+    fn get_mark(&self, name: char) -> Option<usize> {
+        self.base.get_mark(name)
+    }
+    fn search_pattern(&self, pattern: &str, forward: bool, start_line: usize) -> Option<usize> {
+        self.base.search_pattern(pattern, forward, start_line)
+    }
+}
+
+pub fn resolve_address<P: RangeStateProvider>(
+    address: &crate::ast::Address,
+    provider: &P,
+) -> RuntimeResult<usize> {
+    use crate::ast::Address;
+    match address {
+        Address::Current => Ok(provider.cursor_line()),
+        Address::Last => Ok(provider.line_count()),
+        Address::Line(line) => {
+            let l = *line as usize;
+            if l <= provider.line_count() {
+                Ok(l)
+            } else {
+                Err(RuntimeError::coded(
+                    "E16",
+                    RuntimeErrorKind::InvalidCommand,
+                    format!("Invalid address: line {line} is beyond buffer end"),
+                ))
+            }
+        }
+        Address::WholeFile => Ok(1),
+        Address::Mark(mark) => {
+            if let Some(line) = provider.get_mark(*mark) {
+                Ok(line)
+            } else {
+                Err(RuntimeError::coded(
+                    "E20",
+                    RuntimeErrorKind::InvalidCommand,
+                    format!("Mark '{mark}' not set"),
+                ))
+            }
+        }
+        Address::Search { pattern, forward } => {
+            if let Some(line) = provider.search_pattern(pattern, *forward, provider.cursor_line()) {
+                Ok(line)
+            } else {
+                Err(RuntimeError::coded(
+                    "E486",
+                    RuntimeErrorKind::InvalidCommand,
+                    format!("Pattern not found: {pattern}"),
+                ))
+            }
+        }
+        Address::Offset { base, amount } => {
+            let base_val = resolve_address(base, provider)?;
+            let final_val = if *amount >= 0 {
+                base_val.saturating_add(*amount as usize)
+            } else {
+                base_val.saturating_sub((-*amount) as usize)
+            };
+            if final_val > provider.line_count() {
+                Ok(provider.line_count())
+            } else {
+                Ok(final_val)
+            }
+        }
+    }
+}
+
+pub fn resolve_range<P: RangeStateProvider>(
+    range: &crate::ast::CommandRange,
+    provider: &P,
+) -> RuntimeResult<(usize, usize)> {
+    let start = resolve_address(&range.start, provider)?;
+    let end = if let Some(end_addr) = &range.end {
+        if let Some(crate::ast::RangeSeparator::Semicolon) = range.separator {
+            let relative_provider = SemicolonProvider {
+                base: provider,
+                temp_cursor: start,
+            };
+            resolve_address(end_addr, &relative_provider)?
+        } else {
+            resolve_address(end_addr, provider)?
+        }
+    } else {
+        match &range.start {
+            crate::ast::Address::WholeFile => provider.line_count(),
+            _ => start,
+        }
+    };
+    
+    let (final_start, final_end) = if start > end {
+        (end, start)
+    } else {
+        (start, end)
+    };
+    
+    Ok((final_start, final_end))
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+
+    struct MockProvider;
+    impl RangeStateProvider for MockProvider {
+        fn cursor_line(&self) -> usize { 10 }
+        fn line_count(&self) -> usize { 100 }
+        fn get_mark(&self, name: char) -> Option<usize> {
+            if name == 'a' { Some(15) } else { None }
+        }
+        fn search_pattern(&self, pattern: &str, forward: bool, start_line: usize) -> Option<usize> {
+            if pattern == "match" {
+                if forward { Some(start_line + 5) } else { Some(start_line - 5) }
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn test_resolve_address_and_range() {
+        let provider = MockProvider;
+
+        // Current line (.)
+        let addr = crate::ast::Address::Current;
+        assert_eq!(resolve_address(&addr, &provider).unwrap(), 10);
+
+        // Last line ($)
+        let addr = crate::ast::Address::Last;
+        assert_eq!(resolve_address(&addr, &provider).unwrap(), 100);
+
+        // Mark
+        let addr = crate::ast::Address::Mark('a');
+        assert_eq!(resolve_address(&addr, &provider).unwrap(), 15);
+
+        // Search forward
+        let addr = crate::ast::Address::Search { pattern: "match".to_owned(), forward: true };
+        assert_eq!(resolve_address(&addr, &provider).unwrap(), 15);
+
+        // Offset
+        let addr = crate::ast::Address::Offset {
+            base: Box::new(crate::ast::Address::Current),
+            amount: 7,
+        };
+        assert_eq!(resolve_address(&addr, &provider).unwrap(), 17);
+    }
+
+    #[test]
+    fn test_parse_count_and_register() {
+        // Both register and count present
+        let (count, reg, rem) = parse_count_and_register("a 5 rest of args", true, true);
+        assert_eq!(count, Some(5));
+        assert_eq!(reg, Some('a'));
+        assert_eq!(rem, "rest of args");
+
+        // Only count present (register accepted, but first arg is a number)
+        let (count, reg, rem) = parse_count_and_register("5 rest of args", true, true);
+        assert_eq!(count, Some(5));
+        assert_eq!(reg, None);
+        assert_eq!(rem, "rest of args");
+
+        // Only register present
+        let (count, reg, rem) = parse_count_and_register("x rest of args", false, true);
+        assert_eq!(count, None);
+        assert_eq!(reg, Some('x'));
+        assert_eq!(rem, "rest of args");
     }
 }

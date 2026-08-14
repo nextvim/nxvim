@@ -18,14 +18,13 @@ impl BufferHandler {
         action: &Action,
     ) -> CommandOutcome {
         match action {
-            Action::NextTab { .. } => {
-                model.switch_next_buffer(active_window);
+            Action::NextTab { count } => {
+                super::shared_operations::SharedOperations::switch_buffer(model, active_window, true, *count as usize)
             }
-            Action::PreviousTab { .. } => {
-                model.switch_previous_buffer(active_window);
+            Action::PreviousTab { count } => {
+                super::shared_operations::SharedOperations::switch_buffer(model, active_window, false, *count as usize)
             }
-            _ => return CommandOutcome::default(),
+            _ => CommandOutcome::default(),
         }
-        CommandOutcome::redraw()
     }
 }

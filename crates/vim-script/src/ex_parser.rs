@@ -123,8 +123,89 @@ impl<'a> ExLineParser<'a> {
                 "noautocmd" => Some(CommandModifier::NoAutocmd),
                 "sandbox" => Some(CommandModifier::Sandbox),
                 "vertical" => Some(CommandModifier::Vertical),
-                "verbose" => Some(CommandModifier::Verbose(1)),
-                "tab" => Some(CommandModifier::Tab(None)),
+                "unsilent" => Some(CommandModifier::Unsilent),
+                "keeppatterns" => Some(CommandModifier::KeepPatterns),
+                "lockmarks" => Some(CommandModifier::LockMarks),
+                "horizontal" => Some(CommandModifier::Horizontal),
+                "aboveleft" => Some(CommandModifier::AboveLeft),
+                "belowright" => Some(CommandModifier::BelowRight),
+                "topleft" => Some(CommandModifier::TopLeft),
+                "botright" => Some(CommandModifier::BotRight),
+                "leftabove" => Some(CommandModifier::LeftAbove),
+                "rightbelow" => Some(CommandModifier::RightBelow),
+                "confirm" => Some(CommandModifier::Confirm),
+                "hide" => Some(CommandModifier::Hide),
+                "browse" => Some(CommandModifier::Browse),
+                "verbose" => {
+                    self.horizontal_space();
+                    let level = if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                        let mut num = 0;
+                        while let Some(ch) = self.peek() {
+                            if ch.is_ascii_digit() {
+                                num = num * 10 + (ch as u32 - '0' as u32);
+                                self.bump();
+                            } else {
+                                break;
+                            }
+                        }
+                        num
+                    } else {
+                        1
+                    };
+                    Some(CommandModifier::Verbose(level))
+                }
+                "tab" => {
+                    self.horizontal_space();
+                    let count = if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                        let mut num = 0;
+                        while let Some(ch) = self.peek() {
+                            if ch.is_ascii_digit() {
+                                num = num * 10 + (ch as u32 - '0' as u32);
+                                self.bump();
+                            } else {
+                                break;
+                            }
+                        }
+                        Some(num)
+                    } else {
+                        None
+                    };
+                    Some(CommandModifier::Tab(count))
+                }
+                "filter" => {
+                    let bang = if self.peek() == Some('!') {
+                        self.bump();
+                        true
+                    } else {
+                        false
+                    };
+                    self.horizontal_space();
+                    if let Some(delimiter) = self.peek() {
+                        if !delimiter.is_ascii_alphanumeric() && delimiter != ' ' && delimiter != '\t' {
+                            self.bump();
+                            let start = self.cursor;
+                            while let Some(ch) = self.peek() {
+                                if ch == delimiter {
+                                    break;
+                                }
+                                if ch == '\\' {
+                                    self.bump();
+                                }
+                                self.bump();
+                            }
+                            let end = self.cursor;
+                            if self.peek() == Some(delimiter) {
+                                self.bump();
+                            }
+                            let pattern = self.source[start..end].to_owned();
+                            Some(CommandModifier::Filter { pattern, bang })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             };
             let Some(modifier) = modifier else {

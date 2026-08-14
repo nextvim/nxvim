@@ -318,6 +318,20 @@ pub enum CommandModifier {
     Verbose(u32),
     Vertical,
     Tab(Option<u32>),
+    Unsilent,
+    KeepPatterns,
+    LockMarks,
+    Horizontal,
+    AboveLeft,
+    BelowRight,
+    TopLeft,
+    BotRight,
+    LeftAbove,
+    RightBelow,
+    Confirm,
+    Hide,
+    Browse,
+    Filter { pattern: String, bang: bool },
 }
 
 #[derive(Clone, Debug, PartialEq)]

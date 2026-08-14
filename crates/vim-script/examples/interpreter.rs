@@ -50,42 +50,23 @@ fn main() {
     host.register_function("echomsg", Arity::Exact(1), vec![Capability::Editor]);
 
     // Register host commands
-    host.register_command(CommandDefinition {
-        name: "set".into(),
-        minimum_abbreviation: 2,
-        accepts_bang: false,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::Settings],
-    });
-    host.register_command(CommandDefinition {
-        name: "highlight".into(),
-        minimum_abbreviation: 2,
-        accepts_bang: false,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::UserInterface],
-    });
-    host.register_command(CommandDefinition {
-        name: "syntax".into(),
-        minimum_abbreviation: 3,
-        accepts_bang: false,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::Editor],
-    });
-    host.register_command(CommandDefinition {
-        name: "write".into(),
-        minimum_abbreviation: 1,
-        accepts_bang: true,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::FileSystemWrite],
-    });
+    host.register_command(
+        CommandDefinition::new("set", 2)
+            .with_capabilities(vec![Capability::Settings]),
+    );
+    host.register_command(
+        CommandDefinition::new("highlight", 2)
+            .with_capabilities(vec![Capability::UserInterface]),
+    );
+    host.register_command(
+        CommandDefinition::new("syntax", 3)
+            .with_capabilities(vec![Capability::Editor]),
+    );
+    host.register_command(
+        CommandDefinition::new("write", 1)
+            .with_bang(true)
+            .with_capabilities(vec![Capability::FileSystemWrite]),
+    );
 
     let mut globals = HashMap::new();
     let mut sources = SourceMap::default();

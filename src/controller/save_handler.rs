@@ -15,18 +15,6 @@ impl SaveHandler {
         path: Option<&Path>,
         force: bool,
     ) -> CommandOutcome {
-        match model.save_window(active_window, path, force) {
-            Ok(saved) => {
-                model.status = Some(format!(
-                    "\"{}\" {} bytes written",
-                    saved.path.display(),
-                    saved.bytes_written
-                ));
-            }
-            Err(error) => {
-                model.status = Some(format!("Save failed: {error}"));
-            }
-        }
-        CommandOutcome::redraw()
+        super::shared_operations::SharedOperations::write(model, active_window, path, force)
     }
 }

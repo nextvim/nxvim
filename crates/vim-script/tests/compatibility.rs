@@ -176,15 +176,11 @@ fn editor_commands_are_sequential_and_capability_checked() -> RuntimeResult<()> 
         commands: commands.clone(),
     }));
     host.capabilities.grant(Capability::FileSystemWrite);
-    host.register_command(CommandDefinition {
-        name: "write".into(),
-        minimum_abbreviation: 1,
-        accepts_bang: true,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::FileSystemWrite],
-    });
+    host.register_command(
+        CommandDefinition::new("write", 1)
+            .with_bang(true)
+            .with_capabilities(vec![Capability::FileSystemWrite]),
+    );
     let mut scheduler = Scheduler::new(8);
     scheduler.set_host(host);
     let task = scheduler.spawn(compile_vm(":w\nlet g:after_write = 1\n"))?;

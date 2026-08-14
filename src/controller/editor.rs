@@ -819,7 +819,11 @@ impl Editor {
                 self.insert_text(buffer, &mut buffer_display_context.selections, text);
             }
             Action::DeleteChar { count } | Action::Delete { count } => {
-                if *count > 1 && buffer_display_context.selections.has_selection(buffer.as_text_buffer()) {
+                if *count > 1
+                    && buffer_display_context
+                        .selections
+                        .has_selection(buffer.as_text_buffer())
+                {
                     if mode == Mode::VisualLine {
                         buffer_display_context.selections.move_down(
                             true,
@@ -865,7 +869,11 @@ impl Editor {
                 }
             }
             Action::DeleteCharBefore { count } => {
-                if *count > 1 && buffer_display_context.selections.has_selection(buffer.as_text_buffer()) {
+                if *count > 1
+                    && buffer_display_context
+                        .selections
+                        .has_selection(buffer.as_text_buffer())
+                {
                     if mode == Mode::VisualLine {
                         buffer_display_context.selections.move_down(
                             true,

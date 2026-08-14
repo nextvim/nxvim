@@ -14,7 +14,49 @@ pub enum Command {
         path: Option<PathBuf>,
         force: bool,
     },
+    Quit {
+        force: bool,
+    },
+    Edit {
+        path: Option<PathBuf>,
+        force: bool,
+    },
+    Delete {
+        range: Option<vim_script::ast::CommandRange>,
+        count: Option<u64>,
+        register: Option<char>,
+    },
     Task(crate::app::services::TaskResult),
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::Editor { action, register } => f.debug_struct("Editor")
+                .field("action", action)
+                .field("register", register)
+                .finish(),
+            Command::PendingInput(seq) => f.debug_tuple("PendingInput").field(seq).finish(),
+            Command::InvalidInput => write!(f, "InvalidInput"),
+            Command::Save { path, force } => f.debug_struct("Save")
+                .field("path", path)
+                .field("force", force)
+                .finish(),
+            Command::Quit { force } => f.debug_struct("Quit")
+                .field("force", force)
+                .finish(),
+            Command::Edit { path, force } => f.debug_struct("Edit")
+                .field("path", path)
+                .field("force", force)
+                .finish(),
+            Command::Delete { range, count, register } => f.debug_struct("Delete")
+                .field("range", range)
+                .field("count", count)
+                .field("register", register)
+                .finish(),
+            Command::Task(_) => write!(f, "Task(...)"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

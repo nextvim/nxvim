@@ -91,7 +91,7 @@ impl Buffers {
         force: bool,
     ) -> Result<vim_buffer::SaveOutcome, vim_buffer::BufferError> {
         match path {
-            Some(path) => self.inner.save_as(id, path, force),
+            Some(path) => self.inner.write_to(id, path, force),
             None => self.inner.save(id, force),
         }
     }

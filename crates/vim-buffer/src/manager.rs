@@ -140,6 +140,27 @@ impl BufferManager {
         self.save_to(id, path, force, true)
     }
 
+    pub fn write_to(
+        &mut self,
+        id: BufferId,
+        path: impl AsRef<Path>,
+        force: bool,
+    ) -> Result<SaveOutcome, BufferError> {
+        let path = canonical_name(path.as_ref())?;
+        let has_path = self.get(id)?.path().is_some();
+        let rename = !has_path;
+        if rename {
+            if self
+                .names
+                .get(&path)
+                .is_some_and(|existing| *existing != id)
+            {
+                return Err(BufferError::DuplicateBufferName(path));
+            }
+        }
+        self.save_to(id, path, force, rename)
+    }
+
     fn save_to(
         &mut self,
         id: BufferId,

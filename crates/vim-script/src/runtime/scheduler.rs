@@ -672,15 +672,11 @@ mod tests {
             commands: commands.clone(),
         }));
         runtime.capabilities.grant(Capability::FileSystemWrite);
-        runtime.register_command(CommandDefinition {
-            name: "write".into(),
-            minimum_abbreviation: 1,
-            accepts_bang: true,
-            accepts_range: false,
-            accepts_count: false,
-            accepts_register: false,
-            required_capabilities: vec![Capability::FileSystemWrite],
-        });
+        runtime.register_command(
+            CommandDefinition::new("write", 1)
+                .with_bang(true)
+                .with_capabilities(vec![Capability::FileSystemWrite]),
+        );
         let mut scheduler = Scheduler::new(10);
         scheduler.set_host(runtime);
         let task = scheduler

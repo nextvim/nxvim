@@ -102,42 +102,24 @@ fn main() {
     host.register_function("cursor", Arity::Exact(2), vec![Capability::Window]);
 
     // Register host commands of MockEditor
-    host.register_command(CommandDefinition {
-        name: "set".into(),
-        minimum_abbreviation: 2,
-        accepts_bang: false,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::Settings],
-    });
-    host.register_command(CommandDefinition {
-        name: "highlight".into(),
-        minimum_abbreviation: 2,
-        accepts_bang: false,
-        accepts_range: false,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::UserInterface],
-    });
-    host.register_command(CommandDefinition {
-        name: "DeleteLines".into(),
-        minimum_abbreviation: 3,
-        accepts_bang: false,
-        accepts_range: true,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::BufferWrite],
-    });
-    host.register_command(CommandDefinition {
-        name: "LogRange".into(),
-        minimum_abbreviation: 3,
-        accepts_bang: false,
-        accepts_range: true,
-        accepts_count: false,
-        accepts_register: false,
-        required_capabilities: vec![Capability::BufferRead],
-    });
+    host.register_command(
+        CommandDefinition::new("set", 2)
+            .with_capabilities(vec![Capability::Settings]),
+    );
+    host.register_command(
+        CommandDefinition::new("highlight", 2)
+            .with_capabilities(vec![Capability::UserInterface]),
+    );
+    host.register_command(
+        CommandDefinition::new("DeleteLines", 3)
+            .with_range(true)
+            .with_capabilities(vec![Capability::BufferWrite]),
+    );
+    host.register_command(
+        CommandDefinition::new("LogRange", 3)
+            .with_range(true)
+            .with_capabilities(vec![Capability::BufferRead]),
+    );
 
     // 4. Compile the Vimscript
     println!("Compiling Vimscript...");

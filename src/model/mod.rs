@@ -48,6 +48,9 @@ impl EditorModel {
                 .get(commandline_buffer)
                 .expect("command-line buffer must exist"),
         );
+        if let Some(state) = windows.state_mut(commandline_window) {
+            state.set_show_gutter(false);
+        }
 
         Self {
             buffers,
@@ -63,6 +66,10 @@ impl EditorModel {
 
     pub fn create(&mut self, initial_text: impl Into<String>) -> BufferId {
         self.buffers.create(initial_text)
+    }
+
+    pub fn open_path(&mut self, path: impl AsRef<std::path::Path>) -> BufferId {
+        self.buffers.open_paths(vec![path])
     }
 
     pub fn save_window(
@@ -138,6 +145,14 @@ impl EditorModel {
 
     pub fn focus_window(&mut self, window_id: WindowId) -> bool {
         self.windows.focus(window_id)
+    }
+
+    pub fn switch_to(&mut self, window_id: WindowId, buffer_id: BufferId) -> bool {
+        if let Ok(buffer) = self.buffers.get(buffer_id) {
+            self.windows.switch_to(window_id, buffer)
+        } else {
+            false
+        }
     }
 
     pub fn switch_next_buffer(&mut self, window_id: WindowId) -> bool {

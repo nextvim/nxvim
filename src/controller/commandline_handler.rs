@@ -29,6 +29,20 @@ impl CommandlineHandler {
         match action {
             Action::SetToCommand => {
                 input.set_mode(Mode::Insert);
+                let _ = model.edit_window(view_ids.commandline, |buffer, _context, window_state| {
+                    let len = buffer.as_text_buffer().len();
+                    let range = vim_buffer::TextRange::new(
+                        vim_buffer::ByteOffset(0),
+                        vim_buffer::ByteOffset(len),
+                    )
+                    .unwrap();
+                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
+                    tx.replace(None, range, "");
+                    let _ = tx.commit(None);
+
+                    window_state.selections.clear(buffer.as_text_buffer());
+                    window_state.selections.add(buffer.as_text_buffer(), 0);
+                });
                 CommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline))
             }
             Action::Clear if active_window == view_ids.commandline => {
@@ -40,7 +54,12 @@ impl CommandlineHandler {
             {
                 input.set_mode(Mode::Normal);
                 if let Some(command) = Self::current_command(model, active_window) {
-                    if let Err(error) = script.execute(&command) {
+                    let cmd_to_execute = if command.starts_with(':') {
+                        command
+                    } else {
+                        format!(":{}", command)
+                    };
+                    if let Err(error) = script.execute(&cmd_to_execute) {
                         model.status = Some(error);
                     }
                 }
