@@ -42,10 +42,7 @@ pub enum TaskResult {
     },
     Highlight {
         task_id: TaskId,
-        window_id: WindowId,
-        buffer_id: BufferId,
-        revision: u64,
-        highlights: Vec<textmate::HighlightSpan>,
+        result: textmate::HighlightTaskResult,
     },
     DisplayMapExpansion {
         task_id: TaskId,
@@ -192,10 +189,7 @@ impl Services {
             }),
             TaskType::Highlight => Some(TaskResult::Highlight {
                 task_id,
-                window_id: owner.window_id?,
-                buffer_id: owner.buffer_id?,
-                revision: owner.revision,
-                highlights: result.downcast::<Vec<textmate::HighlightSpan>>().ok()?,
+                result: result.downcast::<textmate::HighlightTaskResult>().ok()?,
             }),
             TaskType::DisplayMap => Some(TaskResult::DisplayMapExpansion {
                 task_id,
@@ -275,13 +269,27 @@ mod tests {
             window_id: Some(WindowId::new(8)),
             revision: 9,
         };
+        let buffer = text::Buffer::new(
+            clock::ReplicaId::LOCAL,
+            text::BufferId::new(7).unwrap(),
+            "one\ntwo".to_owned(),
+        );
+        let snapshot = buffer.snapshot();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
         services
             .spawn_task(
                 "display_map",
                 Arc::new(AtomicU64::new(0)),
                 owner,
                 TaskType::Highlight,
-                Vec::<textmate::HighlightSpan>::new,
+                move || textmate::HighlightTaskResult {
+                    buffer_id: 7,
+                    changedtick: 9,
+                    start,
+                    end,
+                    highlights: None,
+                },
             )
             .unwrap();
 
@@ -295,11 +303,13 @@ mod tests {
         assert!(matches!(
             &results[0],
             TaskResult::Highlight {
-                buffer_id: result_buffer_id,
-                window_id: result_window_id,
-                revision: 9,
+                result: textmate::HighlightTaskResult {
+                    buffer_id: 7,
+                    changedtick: 9,
+                    ..
+                },
                 ..
-            } if *result_buffer_id == buffer_id && *result_window_id == WindowId::new(8)
+            }
         ));
     }
 }

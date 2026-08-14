@@ -6,7 +6,11 @@ use super::command::CommandOutcome;
 pub struct TaskDispatcher;
 
 impl TaskDispatcher {
-    pub fn dispatch(model: &mut EditorModel, result: TaskResult) -> CommandOutcome {
+    pub fn dispatch(
+        model: &mut EditorModel,
+        highlight_service: &mut textmate::HighlightService,
+        result: TaskResult,
+    ) -> CommandOutcome {
         let accepted = match result {
             TaskResult::Treesitter {
                 buffer_id,
@@ -32,16 +36,20 @@ impl TaskDispatcher {
                 state.index = result;
                 true
             }
-            TaskResult::Highlight {
-                buffer_id,
-                revision,
-                highlights,
-                ..
-            } => {
-                let Some(state) = Self::current_buffer_state(model, buffer_id, revision) else {
+            TaskResult::Highlight { task_id, result } => {
+                let buffer_id = vim_buffer::BufferId::new(result.buffer_id).unwrap();
+                let Ok(buffer) = model.get_buffer(buffer_id) else {
                     return CommandOutcome::default();
                 };
-                state.highlights = highlights;
+                let snapshot = buffer.snapshot().as_inner().clone();
+                let changedtick = result.changedtick;
+                let applied = highlight_service.apply_task_result(task_id, result, &snapshot);
+                let Some(state) = Self::current_buffer_state(model, buffer_id, changedtick) else {
+                    return CommandOutcome::default();
+                };
+                if applied {
+                    state.highlights = highlight_service.all_spans(buffer_id);
+                }
                 model.window_buffers().any(|(_, b_id)| b_id == buffer_id)
             }
             TaskResult::DisplayMapExpansion {
@@ -141,26 +149,43 @@ mod tests {
     }
 
     fn highlight(
-        window_id: WindowId,
         buffer_id: vim_buffer::BufferId,
         revision: u64,
+        start: text::Anchor,
+        end: text::Anchor,
     ) -> TaskResult {
         TaskResult::Highlight {
             task_id: TaskId(1),
-            window_id,
-            buffer_id,
-            revision,
-            highlights: Vec::new(),
+            result: textmate::HighlightTaskResult {
+                buffer_id: buffer_id.get(),
+                changedtick: revision,
+                start,
+                end,
+                highlights: None,
+            },
         }
     }
 
     #[test]
     fn current_revision_is_applied_and_requests_redraw() {
         let (mut model, main, _) = model();
-        let buffer = model.window_buffer(main).unwrap();
-        let revision = model.buffer_state_mut(buffer).unwrap().revision;
+        let buffer_id = model.window_buffer(main).unwrap();
+        let buffer = model.get_buffer(buffer_id).unwrap();
+        let binding = buffer.snapshot();
+        let snapshot = binding.as_inner();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+        let revision = model.buffer_state_mut(buffer_id).unwrap().revision;
 
-        let outcome = TaskDispatcher::dispatch(&mut model, highlight(main, buffer, revision));
+        let mut highlight_service = textmate::HighlightService::new();
+        highlight_service.begin_highlight(buffer_id.get(), revision);
+        highlight_service.set_pending_task(buffer_id.get(), TaskId(1), revision, start, end);
+
+        let outcome = TaskDispatcher::dispatch(
+            &mut model,
+            &mut highlight_service,
+            highlight(buffer_id, revision, start, end),
+        );
 
         assert!(outcome.redraw);
     }
@@ -168,10 +193,22 @@ mod tests {
     #[test]
     fn stale_revision_is_discarded() {
         let (mut model, main, _) = model();
-        let buffer = model.window_buffer(main).unwrap();
-        model.buffer_state_mut(buffer).unwrap().revision = 2;
+        let buffer_id = model.window_buffer(main).unwrap();
+        let buffer = model.get_buffer(buffer_id).unwrap();
+        let binding = buffer.snapshot();
+        let snapshot = binding.as_inner();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
 
-        let outcome = TaskDispatcher::dispatch(&mut model, highlight(main, buffer, 1));
+        let mut highlight_service = textmate::HighlightService::new();
+        highlight_service.begin_highlight(buffer_id.get(), 2);
+        highlight_service.set_pending_task(buffer_id.get(), TaskId(1), 2, start, end);
+
+        let outcome = TaskDispatcher::dispatch(
+            &mut model,
+            &mut highlight_service,
+            highlight(buffer_id, 1, start, end),
+        );
 
         assert!(!outcome.redraw);
     }
@@ -180,10 +217,21 @@ mod tests {
     fn deleted_buffer_result_is_discarded() {
         let (mut model, main, _) = model();
         let removed = model.window_buffer(main).unwrap();
+        let buffer = model.get_buffer(removed).unwrap();
+        let binding = buffer.snapshot();
+        let snapshot = binding.as_inner();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+
         model.create("fallback");
         model.wipe(removed, true).unwrap();
 
-        let outcome = TaskDispatcher::dispatch(&mut model, highlight(main, removed, 0));
+        let mut highlight_service = textmate::HighlightService::new();
+        let outcome = TaskDispatcher::dispatch(
+            &mut model,
+            &mut highlight_service,
+            highlight(removed, 0, start, end),
+        );
 
         assert!(!outcome.redraw);
     }
@@ -210,8 +258,10 @@ mod tests {
         .unwrap();
         window.pending_display_map = Some((window.display_map.generation(), requested));
 
+        let mut highlight_service = textmate::HighlightService::new();
         let outcome = TaskDispatcher::dispatch(
             &mut model,
+            &mut highlight_service,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
@@ -234,8 +284,10 @@ mod tests {
         .unwrap();
         window.display_map.set_wrap_width(Some(10));
 
+        let mut highlight_service = textmate::HighlightService::new();
         let outcome = TaskDispatcher::dispatch(
             &mut model,
+            &mut highlight_service,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
@@ -246,11 +298,22 @@ mod tests {
     fn result_for_window_that_switched_buffers_is_discarded() {
         let (mut model, main, _) = model();
         let original = model.window_buffer(main).unwrap();
+        let buffer = model.get_buffer(original).unwrap();
+        let binding = buffer.snapshot();
+        let snapshot = binding.as_inner();
+        let start = snapshot.anchor_before(0);
+        let end = snapshot.anchor_after(snapshot.len());
+
         model.create("second");
         assert!(model.switch_next_buffer(main));
         assert_ne!(model.window_buffer(main), Some(original));
 
-        let outcome = TaskDispatcher::dispatch(&mut model, highlight(main, original, 0));
+        let mut highlight_service = textmate::HighlightService::new();
+        let outcome = TaskDispatcher::dispatch(
+            &mut model,
+            &mut highlight_service,
+            highlight(original, 0, start, end),
+        );
 
         assert!(!outcome.redraw);
     }
