@@ -30,7 +30,6 @@ impl Runtime {
         let mut out = stdout();
         let rect = self.app.ui.screen_rect();
         self.redraw(rect, &mut out)?;
-        self.schedule_display_map_expansions();
 
         let mut should_redraw = false;
 

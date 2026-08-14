@@ -53,6 +53,9 @@ pub fn build_text(
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line_chars.len();
 
+        let gutter_text = format!(" {:2} ", buffer_row + 1);
+        let cursor_offset = gutter_text.len() as u32;
+
         for column in 0..=line_len {
             let is_eol = column == line_len;
             let character = if is_eol { ' ' } else { line_chars[column] };
@@ -70,7 +73,7 @@ pub fn build_text(
                 saved_cursor = Some(vim_ui::model::TextCursor {
                     position: vim_ui::model::DisplayPosition {
                         row: row - start_row,
-                        column: column as u32 + 4,
+                        column: column as u32 + cursor_offset,
                     },
                     shape: cursor_shape(mode),
                     visible: true,
@@ -97,7 +100,7 @@ pub fn build_text(
             buffer_row: Some(buffer_row),
             kind: vim_ui::model::DisplayRowKind::Buffer,
             gutter: Some(vim_ui::model::GutterCell {
-                text: format!(" {:2} ", buffer_row + 1),
+                text: gutter_text,
                 style: vim_ui::Style::default(),
             }),
             spans,
