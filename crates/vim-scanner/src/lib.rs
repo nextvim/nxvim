@@ -125,73 +125,93 @@ pub struct StructuralScanner {
 impl StructuralScanner {
     /// Scans `text` in a single left-to-right pass, tracking delimiter
     /// nesting with a stack.
+    ///
+    /// This allocates nothing beyond the resulting matches: prefer
+    /// [`StructuralScanner::scan_chunks`] when the buffer's text is already
+    /// available as a sequence of chunks (e.g. straight from a rope), so
+    /// callers don't have to first materialize the whole buffer into one
+    /// owned `String` just to scan it.
     pub fn scan(text: &str) -> Self {
+        Self::scan_chunks(std::iter::once(text))
+    }
+
+    /// Like [`StructuralScanner::scan`], but scans a sequence of chunks that
+    /// concatenate to the full text, without requiring them to be joined
+    /// into a single contiguous string first. Byte offsets in the resulting
+    /// [`Delimiter`]/[`MatchedDelimiter`] values are relative to the start
+    /// of the first chunk, as if the chunks had been concatenated.
+    pub fn scan_chunks<'a>(chunks: impl IntoIterator<Item = &'a str>) -> Self {
         let mut stack: Vec<Delimiter> = Vec::new();
         let mut matches = Vec::new();
         let mut escape_next = false;
+        let mut base = 0usize;
 
-        for (idx, ch) in text.char_indices() {
-            let in_string = stack.last().is_some_and(|open| open.kind.is_quote());
+        for chunk in chunks {
+            for (local_idx, ch) in chunk.char_indices() {
+                let idx = base + local_idx;
+                let in_string = stack.last().is_some_and(|open| open.kind.is_quote());
 
-            if in_string {
-                if escape_next {
-                    escape_next = false;
+                if in_string {
+                    if escape_next {
+                        escape_next = false;
+                        continue;
+                    }
+                    match ch {
+                        '\\' => escape_next = true,
+                        '"' if stack.last().unwrap().kind == DelimiterKind::DoubleQuote => {
+                            Self::close(&mut stack, &mut matches, idx);
+                        }
+                        '\'' if stack.last().unwrap().kind == DelimiterKind::SingleQuote => {
+                            Self::close(&mut stack, &mut matches, idx);
+                        }
+                        _ => {}
+                    }
                     continue;
                 }
+
                 match ch {
-                    '\\' => escape_next = true,
-                    '"' if stack.last().unwrap().kind == DelimiterKind::DoubleQuote => {
+                    '{' => stack.push(Delimiter {
+                        kind: DelimiterKind::Brace,
+                        start: idx,
+                    }),
+                    '(' => stack.push(Delimiter {
+                        kind: DelimiterKind::Paren,
+                        start: idx,
+                    }),
+                    '[' => stack.push(Delimiter {
+                        kind: DelimiterKind::Bracket,
+                        start: idx,
+                    }),
+                    '"' => stack.push(Delimiter {
+                        kind: DelimiterKind::DoubleQuote,
+                        start: idx,
+                    }),
+                    '\'' => stack.push(Delimiter {
+                        kind: DelimiterKind::SingleQuote,
+                        start: idx,
+                    }),
+                    '}' if stack
+                        .last()
+                        .is_some_and(|open| open.kind == DelimiterKind::Brace) =>
+                    {
                         Self::close(&mut stack, &mut matches, idx);
                     }
-                    '\'' if stack.last().unwrap().kind == DelimiterKind::SingleQuote => {
+                    ')' if stack
+                        .last()
+                        .is_some_and(|open| open.kind == DelimiterKind::Paren) =>
+                    {
+                        Self::close(&mut stack, &mut matches, idx);
+                    }
+                    ']' if stack
+                        .last()
+                        .is_some_and(|open| open.kind == DelimiterKind::Bracket) =>
+                    {
                         Self::close(&mut stack, &mut matches, idx);
                     }
                     _ => {}
                 }
-                continue;
             }
-
-            match ch {
-                '{' => stack.push(Delimiter {
-                    kind: DelimiterKind::Brace,
-                    start: idx,
-                }),
-                '(' => stack.push(Delimiter {
-                    kind: DelimiterKind::Paren,
-                    start: idx,
-                }),
-                '[' => stack.push(Delimiter {
-                    kind: DelimiterKind::Bracket,
-                    start: idx,
-                }),
-                '"' => stack.push(Delimiter {
-                    kind: DelimiterKind::DoubleQuote,
-                    start: idx,
-                }),
-                '\'' => stack.push(Delimiter {
-                    kind: DelimiterKind::SingleQuote,
-                    start: idx,
-                }),
-                '}' if stack
-                    .last()
-                    .is_some_and(|open| open.kind == DelimiterKind::Brace) =>
-                {
-                    Self::close(&mut stack, &mut matches, idx);
-                }
-                ')' if stack
-                    .last()
-                    .is_some_and(|open| open.kind == DelimiterKind::Paren) =>
-                {
-                    Self::close(&mut stack, &mut matches, idx);
-                }
-                ']' if stack
-                    .last()
-                    .is_some_and(|open| open.kind == DelimiterKind::Bracket) =>
-                {
-                    Self::close(&mut stack, &mut matches, idx);
-                }
-                _ => {}
-            }
+            base += chunk.len();
         }
 
         Self {
@@ -355,6 +375,31 @@ mod tests {
         let m = scan.matches()[0];
         assert_eq!(m.inner_range(), 1..4);
         assert_eq!(m.outer_range(), 0..5);
+    }
+
+    #[test]
+    fn scan_chunks_matches_scanning_the_concatenated_text() {
+        let text = "{ \"a\\\"b\" ( [1] ) }";
+        let whole = StructuralScanner::scan(text);
+
+        // Split the same text into arbitrary, mid-token chunk boundaries
+        // (including one right in the middle of the escape sequence) to
+        // make sure state carries across chunks correctly.
+        let mut chunked_text_pieces = Vec::new();
+        let mut rest = text;
+        while !rest.is_empty() {
+            let mut boundary = rest.len().min(3);
+            while !rest.is_char_boundary(boundary) {
+                boundary -= 1;
+            }
+            let (piece, remainder) = rest.split_at(boundary);
+            chunked_text_pieces.push(piece);
+            rest = remainder;
+        }
+        let chunked = StructuralScanner::scan_chunks(chunked_text_pieces);
+
+        assert_eq!(whole.matches(), chunked.matches());
+        assert_eq!(whole.unmatched(), chunked.unmatched());
     }
 
     #[test]
