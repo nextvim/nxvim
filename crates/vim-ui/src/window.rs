@@ -63,6 +63,7 @@ pub struct WindowState {
     pub viewport: Viewport,
     pub pending_display_map: Option<(display_map::DisplayMapGeneration, Range<u32>)>,
     pub show_gutter: bool,
+    pub folds: Vec<display_map::Fold>,
 }
 
 impl WindowState {
@@ -86,6 +87,7 @@ impl WindowState {
             viewport: Viewport::default(),
             pending_display_map: None,
             show_gutter: true,
+            folds: Vec::new(),
         }
     }
 
@@ -101,6 +103,9 @@ impl WindowState {
             height,
             has_border,
         };
+        // Cheap to call unconditionally: `DisplayMap::fold` no-ops internally when
+        // neither the fold list nor the buffer version has changed.
+        self.display_map.fold(self.folds.clone(), snapshot.clone());
         let cursor_row = if self.selections.selections.is_empty() {
             0
         } else {
@@ -186,6 +191,7 @@ impl WindowState {
             viewport,
             pending_display_map: None,
             show_gutter,
+            folds: Vec::new(),
         }
     }
 }

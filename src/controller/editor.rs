@@ -1624,12 +1624,25 @@ impl Editor {
                     }
                 }
             }
+            Action::Fold { count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        self.fold(buffer, buffer_display_context, syntax_tree);
+                    }
+                }
+            }
+            Action::Unfold { count } => {
+                if *count > 0 {
+                    self.unfold(buffer, buffer_display_context);
+                }
+            }
             Action::NoOp | Action::Quit => {
                 return None;
             }
             _ => {}
         }
 
+        self.snap_selections_to_folds(buffer, buffer_display_context, action);
         self.sync(mode, buffer, buffer_context, buffer_display_context);
 
         let mut recursive_mode = None;
@@ -1644,6 +1657,173 @@ impl Editor {
             );
         }
         recursive_mode.or(next_mode)
+    }
+
+    /// Folds the syntax block enclosing each selection's cursor, collapsing the
+    /// cursor to the start of that block. Nested/duplicate folds are skipped.
+    fn fold(
+        &self,
+        buffer: &Buffer,
+        buffer_display_context: &mut WindowState,
+        syntax_tree: &vim_treesitter::SyntaxTree,
+    ) {
+        let text_buffer = buffer.as_text_buffer();
+        let mut seen_ranges = std::collections::HashSet::new();
+        let mut updated_selections = Vec::new();
+        for selection in buffer_display_context.selections.selections.iter() {
+            let head_offset = text_buffer.offset_for_anchor(&selection.head());
+            let Some(block) = syntax_tree.enclosing_block_at_byte(head_offset) else {
+                continue;
+            };
+            let mut start_offset = block.byte_range.start;
+            let mut end_offset = block.byte_range.end;
+
+            let first_char = text_buffer
+                .text_for_range(start_offset..start_offset + 1)
+                .next()
+                .and_then(|s| s.chars().next());
+            let last_char = if end_offset > 0 {
+                text_buffer
+                    .text_for_range(end_offset - 1..end_offset)
+                    .next()
+                    .and_then(|s| s.chars().next())
+            } else {
+                None
+            };
+
+            if let (Some(fc), Some(lc)) = (first_char, last_char) {
+                if (fc == '{' && lc == '}') || (fc == '[' && lc == ']') || (fc == '(' && lc == ')')
+                {
+                    start_offset += 1;
+                    end_offset -= 1;
+                }
+            }
+
+            let range = block.byte_range.clone();
+            if seen_ranges.insert(range) {
+                let fold = display_map::Fold {
+                    start: start_offset.to_point(text_buffer),
+                    end: end_offset.to_point(text_buffer),
+                };
+                if !buffer_display_context.folds.contains(&fold) {
+                    buffer_display_context.folds.push(fold);
+                }
+                let target_anchor = text_buffer.anchor_at(block.byte_range.start, Bias::Left);
+                updated_selections.push(Selection {
+                    id: selection.id,
+                    start: target_anchor,
+                    end: target_anchor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                });
+            }
+        }
+        for new_sel in updated_selections {
+            buffer_display_context
+                .selections
+                .update(text_buffer, &new_sel);
+        }
+        if let Some(first) = buffer_display_context.selections.first() {
+            buffer_display_context.selections.point = first.head().to_point(text_buffer);
+        }
+    }
+
+    /// Removes any fold whose range contains, or starts on the same row as, a
+    /// selection's cursor.
+    fn unfold(&self, buffer: &Buffer, buffer_display_context: &mut WindowState) {
+        let text_buffer = buffer.as_text_buffer();
+        let mut to_remove = Vec::new();
+        for selection in buffer_display_context.selections.selections.iter() {
+            let head_point = selection.head().to_point(text_buffer);
+            for (idx, fold) in buffer_display_context.folds.iter().enumerate() {
+                if (head_point >= fold.start && head_point <= fold.end)
+                    || head_point.row == fold.start.row
+                {
+                    to_remove.push(idx);
+                }
+            }
+        }
+        to_remove.sort_unstable();
+        to_remove.dedup();
+        for idx in to_remove.into_iter().rev() {
+            buffer_display_context.folds.remove(idx);
+        }
+    }
+
+    /// After a motion runs, snaps any cursor that landed inside a fold to that
+    /// fold's start (moving backward) or end (moving forward), so folded text
+    /// can never be a cursor resting place.
+    fn snap_selections_to_folds(
+        &self,
+        buffer: &Buffer,
+        buffer_display_context: &mut WindowState,
+        action: &Action,
+    ) {
+        if buffer_display_context.folds.is_empty() {
+            return;
+        }
+        let text_buffer = buffer.as_text_buffer();
+
+        let moving_right = matches!(
+            action,
+            Action::MoveRight { .. }
+                | Action::MoveDown { .. }
+                | Action::MoveToWord { .. }
+                | Action::MoveToWordEnd { .. }
+                | Action::MoveToBigWord { .. }
+                | Action::MoveToEndOfLine { .. }
+                | Action::MoveToEndOfDocument { .. }
+                | Action::MoveToEndOfNextLine { .. }
+        );
+
+        let is_move_right = matches!(action, Action::MoveRight { .. });
+
+        let mut updated_selections = Vec::new();
+        for selection in &buffer_display_context.selections.selections {
+            let head = selection.head().to_point(text_buffer);
+            let mut new_head = head;
+            for fold in &buffer_display_context.folds {
+                if head >= fold.start && head < fold.end {
+                    new_head = if moving_right {
+                        if is_move_right && head == fold.start {
+                            fold.start
+                        } else {
+                            fold.end
+                        }
+                    } else {
+                        fold.start
+                    };
+                    break;
+                }
+            }
+
+            if new_head != head {
+                let anchor_pos = selection.tail().to_point(text_buffer);
+                let new_anchor = if anchor_pos == head {
+                    new_head
+                } else {
+                    anchor_pos
+                };
+
+                updated_selections.push(Selection {
+                    id: selection.id,
+                    start: text_buffer.anchor_at(new_anchor, Bias::Left),
+                    end: text_buffer.anchor_at(new_head, Bias::Left),
+                    reversed: new_head < new_anchor,
+                    goal: selection.goal,
+                });
+            }
+        }
+
+        for new_sel in updated_selections {
+            buffer_display_context
+                .selections
+                .update(text_buffer, &new_sel);
+        }
+
+        if let Some(first) = buffer_display_context.selections.first() {
+            buffer_display_context.selections.point = first.head().to_point(text_buffer);
+        }
     }
 
     fn yank_motion(
