@@ -7,6 +7,76 @@ use vim_buffer::{Buffer, Motions, SelectionSet};
 use vim_input::{Action, Mode};
 use vim_ui::WindowState;
 
+/// Moves each cursor to the start of the syntax node returned by `target` for its position,
+/// repeating `count` times. Stops early once no cursor can move any further.
+fn move_to_syntax_target(
+    selections: &mut SelectionSet,
+    buffer: &text::Buffer,
+    select: bool,
+    count: u32,
+    syntax_tree: &vim_treesitter::SyntaxTree,
+    target: impl Fn(&vim_treesitter::SyntaxTree, usize) -> Option<vim_treesitter::SyntaxNode>,
+) {
+    for _ in 0..count {
+        let cursors = selections.selections.clone();
+        let mut moved = false;
+        for cursor in cursors.iter() {
+            let byte = buffer.offset_for_anchor(&cursor.head());
+            if let Some(node) = target(syntax_tree, byte) {
+                let new_head = buffer.anchor_at(node.byte_range.start, Bias::Left);
+                let next = Selection {
+                    id: cursor.id,
+                    start: new_head,
+                    end: if select { cursor.tail() } else { new_head },
+                    reversed: true,
+                    goal: SelectionGoal::None,
+                };
+                selections.point = new_head.to_point(buffer);
+                selections.update(buffer, &next);
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+}
+
+/// Like [`move_to_syntax_target`], but moves each cursor to the end of the matched syntax node
+/// instead of its start.
+fn move_to_syntax_target_end(
+    selections: &mut SelectionSet,
+    buffer: &text::Buffer,
+    select: bool,
+    count: u32,
+    syntax_tree: &vim_treesitter::SyntaxTree,
+    target: impl Fn(&vim_treesitter::SyntaxTree, usize) -> Option<vim_treesitter::SyntaxNode>,
+) {
+    for _ in 0..count {
+        let cursors = selections.selections.clone();
+        let mut moved = false;
+        for cursor in cursors.iter() {
+            let byte = buffer.offset_for_anchor(&cursor.head());
+            if let Some(node) = target(syntax_tree, byte) {
+                let new_head = buffer.anchor_at(node.byte_range.end.saturating_sub(1), Bias::Right);
+                let next = Selection {
+                    id: cursor.id,
+                    start: new_head,
+                    end: if select { cursor.tail() } else { new_head },
+                    reversed: true,
+                    goal: SelectionGoal::None,
+                };
+                selections.point = new_head.to_point(buffer);
+                selections.update(buffer, &next);
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+}
+
 pub struct Editor;
 
 impl Editor {
@@ -587,6 +657,45 @@ impl Editor {
                             .selections
                             .update(buffer.as_text_buffer(), &next);
                         updated = true;
+                    } else if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        let byte = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+                        if let Some((start_node, end_node)) =
+                            syntax_tree.delimiter_boundaries_at_byte(byte)
+                        {
+                            let matches_ch = match ch {
+                                '{' | '}' => start_node.kind == "{",
+                                '(' | ')' => start_node.kind == "(",
+                                '[' | ']' => start_node.kind == "[",
+                                '"' => start_node.kind == "\"",
+                                '\'' => start_node.kind == "'",
+                                '`' => start_node.kind == "`",
+                                't' | '<' | '>' => {
+                                    start_node.kind == "<"
+                                        || start_node.kind == "start_tag"
+                                        || start_node.kind == "jsx_opening_element"
+                                }
+                                _ => false,
+                            };
+                            if matches_ch {
+                                let start_offset = start_node.byte_range.end;
+                                let end_offset = end_node.byte_range.start.saturating_sub(1);
+                                let start_anchor =
+                                    buffer.as_text_buffer().anchor_at(start_offset, Bias::Left);
+                                let end_anchor =
+                                    buffer.as_text_buffer().anchor_at(end_offset, Bias::Right);
+                                let next = Selection {
+                                    id: cursor.id,
+                                    start: start_anchor,
+                                    end: end_anchor,
+                                    reversed: false,
+                                    goal: SelectionGoal::None,
+                                };
+                                buffer_display_context
+                                    .selections
+                                    .update(buffer.as_text_buffer(), &next);
+                                updated = true;
+                            }
+                        }
                     }
                     if !updated {
                         let next = cursor.move_within_character(
@@ -665,6 +774,45 @@ impl Editor {
                             .selections
                             .update(buffer.as_text_buffer(), &next);
                         updated = true;
+                    } else if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        let byte = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+                        if let Some((start_node, end_node)) =
+                            syntax_tree.delimiter_boundaries_at_byte(byte)
+                        {
+                            let matches_ch = match ch {
+                                '{' | '}' => start_node.kind == "{",
+                                '(' | ')' => start_node.kind == "(",
+                                '[' | ']' => start_node.kind == "[",
+                                '"' => start_node.kind == "\"",
+                                '\'' => start_node.kind == "'",
+                                '`' => start_node.kind == "`",
+                                't' | '<' | '>' => {
+                                    start_node.kind == "<"
+                                        || start_node.kind == "start_tag"
+                                        || start_node.kind == "jsx_opening_element"
+                                }
+                                _ => false,
+                            };
+                            if matches_ch {
+                                let start_offset = start_node.byte_range.start;
+                                let end_offset = end_node.byte_range.end.saturating_sub(1);
+                                let start_anchor =
+                                    buffer.as_text_buffer().anchor_at(start_offset, Bias::Left);
+                                let end_anchor =
+                                    buffer.as_text_buffer().anchor_at(end_offset, Bias::Right);
+                                let next = Selection {
+                                    id: cursor.id,
+                                    start: start_anchor,
+                                    end: end_anchor,
+                                    reversed: false,
+                                    goal: SelectionGoal::None,
+                                };
+                                buffer_display_context
+                                    .selections
+                                    .update(buffer.as_text_buffer(), &next);
+                                updated = true;
+                            }
+                        }
                     }
                     if !updated {
                         let next = cursor.move_around_character(
@@ -676,6 +824,147 @@ impl Editor {
                         buffer_display_context
                             .selections
                             .update(buffer.as_text_buffer(), &next);
+                    }
+                }
+            }
+
+            Action::MoveToNextFunction { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.next_function_after_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToPreviousFunction { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.previous_function_before_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToNextBlock { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.next_block_after_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToPreviousBlock { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.previous_block_before_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToBlockStart { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.block_start_at_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToBlockEnd { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target_end(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.block_end_at_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToNextClass { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.next_class_after_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToPreviousClass { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.previous_class_before_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToNextArgument { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.next_argument_after_byte(byte),
+                        );
+                    }
+                }
+            }
+            Action::MoveToPreviousArgument { select, count } => {
+                if *count > 0 {
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        move_to_syntax_target(
+                            &mut buffer_display_context.selections,
+                            buffer.as_text_buffer(),
+                            *select,
+                            *count,
+                            syntax_tree,
+                            |tree, byte| tree.previous_argument_before_byte(byte),
+                        );
                     }
                 }
             }
