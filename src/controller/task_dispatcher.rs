@@ -9,19 +9,21 @@ impl TaskDispatcher {
     pub fn dispatch(
         model: &mut EditorModel,
         highlight_service: &mut textmate::HighlightService,
+        treesitter_service: &mut vim_treesitter::TreeSitterService,
         result: TaskResult,
     ) -> CommandOutcome {
         let accepted = match result {
             TaskResult::Treesitter {
-                buffer_id,
+                task_id,
                 revision,
-                result,
-                ..
+                completed,
             } => {
+                let buffer_id = completed.buffer_id;
                 let Some(state) = Self::current_buffer_state(model, buffer_id, revision) else {
                     return CommandOutcome::default();
                 };
-                state.treesitter = result;
+                state.treesitter = completed.result.clone();
+                treesitter_service.apply_task_result(task_id, completed);
                 true
             }
             TaskResult::Index {
@@ -158,9 +160,11 @@ mod tests {
         window.pending_display_map = Some((window.display_map.generation(), requested));
 
         let mut highlight_service = textmate::HighlightService::new();
+        let mut treesitter_service = vim_treesitter::TreeSitterService::new();
         let outcome = TaskDispatcher::dispatch(
             &mut model,
             &mut highlight_service,
+            &mut treesitter_service,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
@@ -184,9 +188,11 @@ mod tests {
         window.display_map.set_wrap_width(Some(10));
 
         let mut highlight_service = textmate::HighlightService::new();
+        let mut treesitter_service = vim_treesitter::TreeSitterService::new();
         let outcome = TaskDispatcher::dispatch(
             &mut model,
             &mut highlight_service,
+            &mut treesitter_service,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 

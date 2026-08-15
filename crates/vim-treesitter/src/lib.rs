@@ -13,7 +13,7 @@ pub use tree_sitter::{SyntaxNode, SyntaxTree, TreeSitterParser};
 
 use vim_buffer::{BufferId, BufferSnapshot, ChangedTick};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParseTaskResult {
     pub buffer_id: BufferId,
     pub changedtick: ChangedTick,
@@ -169,18 +169,19 @@ pub fn parse_snapshot(
     snapshot: BufferSnapshot,
     grammar: Grammar,
 ) -> ParseTaskResult {
-    parse_snapshot_cancellable(snapshot, grammar, || false)
+    parse_snapshot_cancellable(snapshot, grammar, None, || false)
 }
 
 pub fn parse_snapshot_cancellable(
     snapshot: BufferSnapshot,
     grammar: Grammar,
+    old_tree: Option<SyntaxTree>,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> ParseTaskResult {
     let buffer_id = snapshot.id();
     let changedtick = snapshot.changedtick();
     let result = TreeSitterParser::new(grammar)
-        .and_then(|mut parser| parser.parse_cancellable(snapshot.as_inner(), None, &mut is_cancelled))
+        .and_then(|mut parser| parser.parse_cancellable(snapshot.as_inner(), old_tree.as_ref(), &mut is_cancelled))
         .map_err(|error| error.to_string());
     ParseTaskResult {
         buffer_id,
@@ -199,8 +200,8 @@ mod tests {
 
     fn parsed(buffer_id: BufferId, changedtick: ChangedTick, source: &str) -> ParseTaskResult {
         let mut buffer = Buffer::new(
-            ReplicaId::LOCAL,
             buffer_id,
+            ReplicaId::LOCAL,
             source,
         );
         while buffer.changedtick() != changedtick {
@@ -243,9 +244,8 @@ mod tests {
         let mut service = TreeSitterService::new();
         let buf7 = BufferId::new(7).unwrap();
         let tick1 = ChangedTick::INITIAL;
-        let tick2 = ChangedTick::new(1).unwrap_or(ChangedTick::INITIAL); // Let's just increment or use custom changedtick if helper is simple
         let tick2 = {
-            let mut b = Buffer::new(ReplicaId::LOCAL, buf7, "");
+            let mut b = Buffer::new(buf7, ReplicaId::LOCAL, "");
             b.increment_changedtick();
             b.changedtick()
         };

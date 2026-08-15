@@ -26,6 +26,10 @@ pub struct ChangedTick(u64);
 impl ChangedTick {
     pub const INITIAL: Self = Self(0);
 
+    pub fn new(val: u64) -> Self {
+        Self(val)
+    }
+
     pub fn get(self) -> u64 {
         self.0
     }
@@ -309,7 +313,7 @@ impl Buffer {
             .map(|transaction| transaction.id)
     }
 
-    pub(crate) fn increment_changedtick(&mut self) {
+    pub fn increment_changedtick(&mut self) {
         self.changedtick.0 = self.changedtick.0.wrapping_add(1);
     }
 

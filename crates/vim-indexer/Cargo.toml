@@ -7,3 +7,6 @@ edition = "2024"
 vim-buffer = { path = "../vim-buffer" }
 background-worker = { path = "../background_worker" }
 serde = { version = "1.0.217", features = ["derive"] }
+
+[dev-dependencies]
+clock = { path = "../zed/crates/clock" }

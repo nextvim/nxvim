@@ -29,9 +29,8 @@ pub struct TaskOwner {
 pub enum TaskResult {
     Treesitter {
         task_id: TaskId,
-        buffer_id: BufferId,
         revision: u64,
-        result: Result<vim_treesitter::SyntaxTree, String>,
+        completed: vim_treesitter::ParseTaskResult,
     },
     Index {
         task_id: TaskId,
@@ -171,10 +170,9 @@ impl Services {
         match metadata.task_type {
             TaskType::Treesitter => Some(TaskResult::Treesitter {
                 task_id,
-                buffer_id: owner.buffer_id?,
                 revision: owner.revision,
-                result: result
-                    .downcast::<Result<vim_treesitter::SyntaxTree, String>>()
+                completed: result
+                    .downcast::<vim_treesitter::ParseTaskResult>()
                     .ok()?,
             }),
             TaskType::Indexer => Some(TaskResult::Index {

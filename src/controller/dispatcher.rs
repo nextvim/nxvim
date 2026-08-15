@@ -46,7 +46,7 @@ impl Dispatcher {
                     }
                 }
             }
-            Command::Task(result) => TaskDispatcher::dispatch(&mut app.model, &mut app.services.highlight, result),
+            Command::Task(result) => TaskDispatcher::dispatch(&mut app.model, &mut app.services.highlight, &mut app.services.treesitter, result),
             Command::Delete { range, count, register } => {
                 let active_window = app.model.focused_window();
                 let provider = EditorRangeStateProvider {

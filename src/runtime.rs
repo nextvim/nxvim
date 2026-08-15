@@ -265,6 +265,7 @@ impl Runtime {
             revision,
         };
 
+        let old_tree = self.app.services.treesitter.syntax_tree(buffer_id).cloned();
         let task_id = self.app.services.spawn_cancellable_task(
             "treesitter",
             sequence,
@@ -272,8 +273,8 @@ impl Runtime {
             crate::app::services::TaskType::Treesitter,
             move |token| {
                 let cancelled = move || token.is_cancelled();
-                let res = treesitter::parse_snapshot_cancellable(snapshot, grammar, cancelled);
-                Some(res.result)
+                let res = treesitter::parse_snapshot_cancellable(snapshot, grammar, old_tree, cancelled);
+                Some(res)
             },
         )?;
 

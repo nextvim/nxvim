@@ -441,7 +441,7 @@ mod tests {
         let buf7 = BufferId::new(7).unwrap();
         let tick1 = ChangedTick::INITIAL;
         let tick2 = {
-            let mut b = vim_buffer::Buffer::new(clock::ReplicaId::LOCAL, buf7, "");
+            let mut b = vim_buffer::Buffer::new(buf7, clock::ReplicaId::LOCAL, "");
             b.increment_changedtick();
             b.changedtick()
         };

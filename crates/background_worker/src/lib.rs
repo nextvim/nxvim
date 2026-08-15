@@ -86,12 +86,12 @@ pub struct BackgroundWorker {
     name: String,
     task_tx: mpsc::Sender<WorkerMessage>,
     result_rx: mpsc::Receiver<BackgroundResult>,
-    next_task_id: AtomicU64,
+    next_task_id: Arc<AtomicU64>,
     worker_thread: Option<JoinHandle<()>>,
 }
 
 impl BackgroundWorker {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, next_task_id: Arc<AtomicU64>) -> Self {
         let name = name.into();
         let (task_tx, task_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
@@ -107,7 +107,7 @@ impl BackgroundWorker {
             name,
             task_tx,
             result_rx,
-            next_task_id: AtomicU64::new(1),
+            next_task_id,
             worker_thread: Some(worker_thread),
         }
     }
@@ -207,23 +207,31 @@ pub trait WorkerResultHandler {
 }
 
 /// A manager that coordinates multiple named background workers and dispatches their results.
-#[derive(Default)]
 pub struct WorkerManager {
     workers: HashMap<String, BackgroundWorker>,
+    next_task_id: Arc<AtomicU64>,
+}
+
+impl Default for WorkerManager {
+    fn default() -> Self {
+        Self {
+            workers: HashMap::new(),
+            next_task_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
 }
 
 impl WorkerManager {
     pub fn new() -> Self {
-        Self {
-            workers: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Registers a new worker if it does not already exist.
     pub fn add_worker(&mut self, name: &str) {
+        let next_id = self.next_task_id.clone();
         self.workers
             .entry(name.to_string())
-            .or_insert_with(|| BackgroundWorker::new(name));
+            .or_insert_with(|| BackgroundWorker::new(name, next_id));
     }
 
     /// Gets a reference to a worker by name.
@@ -305,7 +313,7 @@ mod tests {
 
     #[test]
     fn runs_jobs_and_returns_typed_results() {
-        let worker = BackgroundWorker::new("test-worker");
+        let worker = BackgroundWorker::new("test-worker", Arc::new(AtomicU64::new(1)));
         let sequence = worker.cancellation_sequence();
         let task_id = worker.spawn_task(sequence, || String::from("done"));
         let result = receive(&worker);
@@ -317,7 +325,7 @@ mod tests {
 
     #[test]
     fn cancels_running_cooperative_jobs() {
-        let worker = BackgroundWorker::new("cancellation-worker");
+        let worker = BackgroundWorker::new("cancellation-worker", Arc::new(AtomicU64::new(1)));
         let sequence = worker.cancellation_sequence();
         let (started_tx, started_rx) = mpsc::channel();
         worker.spawn_cancellable_task(sequence.clone(), move |cancel| {
@@ -339,7 +347,7 @@ mod tests {
 
     #[test]
     fn skips_queued_obsolete_jobs() {
-        let worker = BackgroundWorker::new("obsolete-worker");
+        let worker = BackgroundWorker::new("obsolete-worker", Arc::new(AtomicU64::new(1)));
         let blocker = worker.cancellation_sequence();
         worker.spawn_task(blocker, || thread::sleep(Duration::from_millis(30)));
 
