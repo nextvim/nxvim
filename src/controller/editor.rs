@@ -42,6 +42,23 @@ fn move_to_syntax_target(
     }
 }
 
+/// Removes any fold overlapping the half-open byte range `start..end` (with a
+/// one-byte tolerance on either edge), so that a pending buffer edit over that
+/// range can never leave a fold pointing at text that no longer exists (which
+/// would otherwise panic once the fold is rendered against the edited buffer).
+fn remove_overlapping_folds(
+    folds: &mut Vec<display_map::Fold>,
+    buffer: &text::Buffer,
+    start: usize,
+    end: usize,
+) {
+    folds.retain(|fold| {
+        let fold_start = fold.start.to_offset(buffer);
+        let fold_end = fold.end.to_offset(buffer);
+        !(end > fold_start.saturating_sub(1) && start < fold_end + 1)
+    });
+}
+
 /// Like [`move_to_syntax_target`], but moves each cursor to the end of the matched syntax node
 /// instead of its start.
 fn move_to_syntax_target_end(
@@ -1105,7 +1122,12 @@ impl Editor {
                 );
             }
             Action::InsertText(text) => {
-                self.delete_text(buffer, &mut buffer_display_context.selections, 0);
+                self.delete_text(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    0,
+                );
                 self.insert_text(buffer, &mut buffer_display_context.selections, text);
             }
             Action::DeleteChar { count } | Action::Delete { count } => {
@@ -1150,11 +1172,21 @@ impl Editor {
                 };
                 services.clipboard.set_text(&text);
 
-                if self.delete_text(buffer, &mut buffer_display_context.selections, 0) {
+                if self.delete_text(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    0,
+                ) {
                     // Deleted selection
                 } else {
                     for _ in 0..*count {
-                        self.delete_text(buffer, &mut buffer_display_context.selections, 1);
+                        self.delete_text(
+                            buffer,
+                            &mut buffer_display_context.selections,
+                            &mut buffer_display_context.folds,
+                            1,
+                        );
                     }
                 }
             }
@@ -1202,7 +1234,12 @@ impl Editor {
                 };
                 services.clipboard.set_text(&text);
 
-                if self.delete_text(buffer, &mut buffer_display_context.selections, 0) {
+                if self.delete_text(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    0,
+                ) {
                     // Deleted selection
                 } else {
                     for _ in 0..*count {
@@ -1211,7 +1248,12 @@ impl Editor {
                             1,
                             buffer.as_text_buffer(),
                         );
-                        self.delete_text(buffer, &mut buffer_display_context.selections, 1);
+                        self.delete_text(
+                            buffer,
+                            &mut buffer_display_context.selections,
+                            &mut buffer_display_context.folds,
+                            1,
+                        );
                     }
                 }
             }
@@ -1345,7 +1387,12 @@ impl Editor {
                 buffer_display_context.selections.point = point;
                 buffer_display_context.selections.anchor = anchor;
 
-                self.delete_current_line(buffer, &mut buffer_display_context.selections, *count);
+                self.delete_current_line(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    *count,
+                );
             }
             Action::JoinLines { count } => {
                 let count = *count;
@@ -1508,6 +1555,7 @@ impl Editor {
                         self.delete_text_object(
                             buffer,
                             &mut buffer_display_context.selections,
+                            &mut buffer_display_context.folds,
                             inclusive,
                         );
                     }
@@ -1521,7 +1569,12 @@ impl Editor {
                             buffer_display_context,
                             services,
                         );
-                        self.delete_text(buffer, &mut buffer_display_context.selections, 0);
+                        self.delete_text(
+                            buffer,
+                            &mut buffer_display_context.selections,
+                            &mut buffer_display_context.folds,
+                            0,
+                        );
                     }
                 }
             }
@@ -1532,7 +1585,12 @@ impl Editor {
                 if !text.is_empty() {
                     services.clipboard.set_text(text);
                 }
-                self.delete_text(buffer, &mut buffer_display_context.selections, 0);
+                self.delete_text(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    0,
+                );
             }
             Action::InsertNewLine { count } => {
                 let text = buffer_display_context
@@ -1541,7 +1599,12 @@ impl Editor {
                 if !text.is_empty() {
                     services.clipboard.set_text(text);
                 }
-                self.delete_text(buffer, &mut buffer_display_context.selections, 0);
+                self.delete_text(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    0,
+                );
                 for _ in 0..*count {
                     self.insert_text(
                         buffer,
@@ -1988,6 +2051,7 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         count: usize,
     ) -> bool {
         let mut edits = Vec::new();
@@ -2031,6 +2095,14 @@ impl Editor {
         }
 
         if !edits.is_empty() {
+            for range in &edits {
+                remove_overlapping_folds(
+                    folds,
+                    buffer.as_text_buffer(),
+                    range.start.0,
+                    range.end.0,
+                );
+            }
             let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
             for range in edits {
                 tx.delete(None, range);
@@ -2046,6 +2118,7 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         inclusive: bool,
     ) -> bool {
         let mut edits = Vec::new();
@@ -2083,6 +2156,14 @@ impl Editor {
         }
 
         if !edits.is_empty() {
+            for range in &edits {
+                remove_overlapping_folds(
+                    folds,
+                    buffer.as_text_buffer(),
+                    range.start.0,
+                    range.end.0,
+                );
+            }
             let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
             for range in edits {
                 tx.delete(None, range);
@@ -2098,12 +2179,13 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         count: u32,
     ) {
         if count > 1 && selections.has_selection(buffer.as_text_buffer()) {
             selections.move_down(true, count.saturating_sub(1), buffer.as_text_buffer());
         }
-        if self.delete_text(buffer, selections, 0) {
+        if self.delete_text(buffer, selections, folds, 0) {
             return;
         }
         let mut edits = Vec::new();
@@ -2129,6 +2211,14 @@ impl Editor {
         }
 
         if !edits.is_empty() {
+            for range in &edits {
+                remove_overlapping_folds(
+                    folds,
+                    buffer.as_text_buffer(),
+                    range.start.0,
+                    range.end.0,
+                );
+            }
             let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
             for range in edits {
                 tx.delete(None, range);
@@ -2146,5 +2236,77 @@ impl Editor {
 
     fn new_line(&self, _buffer: &Buffer) -> String {
         "\n".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::services::Services;
+    use crate::model::BufferState;
+    use clock::ReplicaId;
+    use vim_buffer::BufferId;
+    use vim_ui::Viewport;
+
+    #[test]
+    fn deleting_text_under_a_fold_removes_the_fold_instead_of_leaving_it_dangling() {
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "abcdef");
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // A fold covering "abc", overlapping the single character `Delete`
+        // is about to remove at the cursor (offset 0, the default selection).
+        window_state.folds.push(display_map::Fold {
+            start: Point::new(0, 0),
+            end: Point::new(0, 3),
+        });
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::Delete { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        assert!(window_state.folds.is_empty());
+        assert_eq!(buffer.as_text_buffer().text(), "bcdef");
+    }
+
+    #[test]
+    fn deleting_a_folds_entire_line_does_not_panic_on_the_next_update() {
+        // Without `remove_overlapping_folds`, this fold would keep pointing at
+        // row 1 after `dd` removes every row, and `WindowState::update`'s call
+        // into `DisplayMap::fold` would panic trying to resolve a now
+        // out-of-bounds `Point` against the shrunk buffer.
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "one\ntwo");
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        window_state.folds.push(display_map::Fold {
+            start: Point::new(1, 0),
+            end: Point::new(1, 3),
+        });
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::DeleteLine { count: 2 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        assert!(window_state.folds.is_empty());
+        assert_eq!(buffer.as_text_buffer().text(), "");
     }
 }
