@@ -1536,6 +1536,7 @@ dependencies = [
  "vim-input",
  "vim-macros",
  "vim-regex",
+ "vim-scanner",
  "vim-script",
  "vim-treesitter",
  "vim-ui",
@@ -3033,6 +3034,10 @@ dependencies = [
  "unicode-width",
  "wait-timeout",
 ]
+
+[[package]]
+name = "vim-scanner"
+version = "0.1.0"
 
 [[package]]
 name = "vim-script"

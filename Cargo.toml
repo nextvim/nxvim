@@ -14,6 +14,7 @@ members = [
     "crates/vim-macros",
     "crates/textmate",
     "crates/vim-treesitter",
+    "crates/vim-scanner",
 ]
 exclude = ["crates/zed"]
 
@@ -71,3 +72,4 @@ vim-indexer = { path = "crates/vim-indexer" }
 vim-macros = { path = "crates/vim-macros" }
 textmate = { path = "crates/textmate" }
 vim-treesitter = { path = "crates/vim-treesitter" }
+vim-scanner = { path = "crates/vim-scanner" }

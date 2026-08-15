@@ -1,6 +1,7 @@
 use crate::model::BufferState;
 use display_map::DisplayPoint;
 use std::cmp::Ordering;
+use std::ops::Range;
 use sum_tree::Bias;
 use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use vim_buffer::{Buffer, Motions, SelectionSet};
@@ -40,6 +41,26 @@ fn move_to_syntax_target(
             break;
         }
     }
+}
+
+/// Looks for a delimiter pair enclosing `byte`, using the dependency-free
+/// [`vim_scanner::StructuralScanner`] instead of a tree-sitter syntax tree.
+/// Used as a fallback for `i{`/`a{`-style motions when no syntax tree is
+/// available for the buffer. Returns the byte offsets of the opening and
+/// closing delimiter characters if `ch` matches the kind of the innermost
+/// enclosing pair (backtick strings and tags aren't supported, since the
+/// scanner has no notion of either).
+fn scanner_delimiter_match(text: &str, byte: usize, ch: char) -> Option<(usize, usize)> {
+    let expected_kind = match ch {
+        '{' | '}' => vim_scanner::DelimiterKind::Brace,
+        '(' | ')' => vim_scanner::DelimiterKind::Paren,
+        '[' | ']' => vim_scanner::DelimiterKind::Bracket,
+        '"' => vim_scanner::DelimiterKind::DoubleQuote,
+        '\'' => vim_scanner::DelimiterKind::SingleQuote,
+        _ => return None,
+    };
+    let m = vim_scanner::StructuralScanner::scan(text).innermost_at(byte)?;
+    (m.kind == expected_kind).then_some((m.start, m.end))
 }
 
 /// Removes any fold overlapping the half-open byte range `start..end` (with a
@@ -713,6 +734,27 @@ impl Editor {
                                 updated = true;
                             }
                         }
+                    } else if let Some((start, end)) = scanner_delimiter_match(
+                        &buffer.as_text_buffer().text(),
+                        buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
+                        *ch,
+                    ) {
+                        let start_offset = start + 1;
+                        let end_offset = end.saturating_sub(1);
+                        let start_anchor =
+                            buffer.as_text_buffer().anchor_at(start_offset, Bias::Left);
+                        let end_anchor = buffer.as_text_buffer().anchor_at(end_offset, Bias::Right);
+                        let next = Selection {
+                            id: cursor.id,
+                            start: start_anchor,
+                            end: end_anchor,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        };
+                        buffer_display_context
+                            .selections
+                            .update(buffer.as_text_buffer(), &next);
+                        updated = true;
                     }
                     if !updated {
                         let next = cursor.move_within_character(
@@ -830,6 +872,25 @@ impl Editor {
                                 updated = true;
                             }
                         }
+                    } else if let Some((start_offset, end_offset)) = scanner_delimiter_match(
+                        &buffer.as_text_buffer().text(),
+                        buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
+                        *ch,
+                    ) {
+                        let start_anchor =
+                            buffer.as_text_buffer().anchor_at(start_offset, Bias::Left);
+                        let end_anchor = buffer.as_text_buffer().anchor_at(end_offset, Bias::Right);
+                        let next = Selection {
+                            id: cursor.id,
+                            start: start_anchor,
+                            end: end_anchor,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        };
+                        buffer_display_context
+                            .selections
+                            .update(buffer.as_text_buffer(), &next);
+                        updated = true;
                     }
                     if !updated {
                         let next = cursor.move_around_character(
@@ -1691,6 +1752,8 @@ impl Editor {
                 if *count > 0 {
                     if let Ok(syntax_tree) = &buffer_context.treesitter {
                         self.fold(buffer, buffer_display_context, syntax_tree);
+                    } else {
+                        self.fold_with_scanner(buffer, buffer_display_context);
                     }
                 }
             }
@@ -1731,13 +1794,8 @@ impl Editor {
         syntax_tree: &vim_treesitter::SyntaxTree,
     ) {
         let text_buffer = buffer.as_text_buffer();
-        let mut seen_ranges = std::collections::HashSet::new();
-        let mut updated_selections = Vec::new();
-        for selection in buffer_display_context.selections.selections.iter() {
-            let head_offset = text_buffer.offset_for_anchor(&selection.head());
-            let Some(block) = syntax_tree.enclosing_block_at_byte(head_offset) else {
-                continue;
-            };
+        self.fold_enclosing(buffer, buffer_display_context, |head_offset| {
+            let block = syntax_tree.enclosing_block_at_byte(head_offset)?;
             let mut start_offset = block.byte_range.start;
             let mut end_offset = block.byte_range.end;
 
@@ -1762,16 +1820,54 @@ impl Editor {
                 }
             }
 
-            let range = block.byte_range.clone();
-            if seen_ranges.insert(range) {
+            Some((block.byte_range.clone(), start_offset..end_offset))
+        });
+    }
+
+    /// Like [`Editor::fold`], but used when no tree-sitter grammar is
+    /// available for the buffer: finds the enclosing block with the
+    /// dependency-free [`vim_scanner::StructuralScanner`] instead, at the
+    /// cost of only understanding braces/parens/brackets (no language-aware
+    /// notion of "block", and no support for tags or backtick strings).
+    fn fold_with_scanner(&self, buffer: &Buffer, buffer_display_context: &mut WindowState) {
+        let text = buffer.as_text_buffer().text();
+        let scan = vim_scanner::StructuralScanner::scan(&text);
+        self.fold_enclosing(buffer, buffer_display_context, |head_offset| {
+            let block = scan.enclosing_block_at(head_offset)?;
+            Some((block.outer_range(), block.inner_range()))
+        });
+    }
+
+    /// Shared implementation behind [`Editor::fold`] and
+    /// [`Editor::fold_with_scanner`]: for each selection's cursor, asks
+    /// `find_block` for the `(outer, inner)` byte ranges of the block
+    /// enclosing it (used respectively to dedupe nested/duplicate folds and
+    /// as the folded range itself), folds that inner range, and collapses
+    /// the cursor to the block's start.
+    fn fold_enclosing(
+        &self,
+        buffer: &Buffer,
+        buffer_display_context: &mut WindowState,
+        find_block: impl Fn(usize) -> Option<(Range<usize>, Range<usize>)>,
+    ) {
+        let text_buffer = buffer.as_text_buffer();
+        let mut seen_ranges = std::collections::HashSet::new();
+        let mut updated_selections = Vec::new();
+        for selection in buffer_display_context.selections.selections.iter() {
+            let head_offset = text_buffer.offset_for_anchor(&selection.head());
+            let Some((outer, inner)) = find_block(head_offset) else {
+                continue;
+            };
+
+            if seen_ranges.insert(outer.clone()) {
                 let fold = display_map::Fold {
-                    start: start_offset.to_point(text_buffer),
-                    end: end_offset.to_point(text_buffer),
+                    start: inner.start.to_point(text_buffer),
+                    end: inner.end.to_point(text_buffer),
                 };
                 if !buffer_display_context.folds.contains(&fold) {
                     buffer_display_context.folds.push(fold);
                 }
-                let target_anchor = text_buffer.anchor_at(block.byte_range.start, Bias::Left);
+                let target_anchor = text_buffer.anchor_at(outer.start, Bias::Left);
                 updated_selections.push(Selection {
                     id: selection.id,
                     start: target_anchor,
@@ -2308,5 +2404,63 @@ mod tests {
 
         assert!(window_state.folds.is_empty());
         assert_eq!(buffer.as_text_buffer().text(), "");
+    }
+
+    #[test]
+    fn move_within_character_falls_back_to_the_structural_scanner_without_a_syntax_tree() {
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "a { hello } b");
+        let mut buffer_context = BufferState::unloaded();
+        assert!(buffer_context.treesitter.is_err());
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Place the cursor inside the braces, on 'h' of "hello".
+        window_state.selections.clear(buffer.as_text_buffer());
+        window_state.selections.add(buffer.as_text_buffer(), 4);
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveWithinCharacter { count: 1, ch: '{' },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        assert_eq!(
+            window_state.selections.text(buffer.as_text_buffer()),
+            " hello "
+        );
+    }
+
+    #[test]
+    fn fold_falls_back_to_the_structural_scanner_without_a_syntax_tree() {
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "a { hello } b");
+        let mut buffer_context = BufferState::unloaded();
+        assert!(buffer_context.treesitter.is_err());
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        window_state.selections.clear(buffer.as_text_buffer());
+        window_state.selections.add(buffer.as_text_buffer(), 4);
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::Fold { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        assert_eq!(window_state.folds.len(), 1);
+        assert_eq!(window_state.folds[0].start, Point::new(0, 3));
+        assert_eq!(window_state.folds[0].end, Point::new(0, 10));
     }
 }
