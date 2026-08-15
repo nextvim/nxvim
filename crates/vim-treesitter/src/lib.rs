@@ -180,8 +180,17 @@ pub fn parse_snapshot_cancellable(
 ) -> ParseTaskResult {
     let buffer_id = snapshot.id();
     let changedtick = snapshot.changedtick();
+    let is_first_parse = old_tree.is_none();
     let result = TreeSitterParser::new(grammar)
-        .and_then(|mut parser| parser.parse_cancellable(snapshot.as_inner(), old_tree.as_ref(), &mut is_cancelled))
+        .and_then(|mut parser| {
+            parser.parse_cancellable(snapshot.as_inner(), old_tree.as_ref(), &mut || {
+                if is_first_parse {
+                    false
+                } else {
+                    is_cancelled()
+                }
+            })
+        })
         .map_err(|error| error.to_string());
     ParseTaskResult {
         buffer_id,

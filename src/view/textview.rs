@@ -37,6 +37,8 @@ pub fn build_text(
     active: bool,
     mode: vim_input::Mode,
     highlight_service: &textmate::HighlightService,
+    _search_pattern: Option<&str>,
+    _search_regex: Option<&onig::Regex>,
 ) -> vim_ui::TextViewModel {
     let mut rows = Vec::new();
     let mut saved_cursor = None;
@@ -77,6 +79,8 @@ pub fn build_text(
         }
         prev_row = buffer_row + 1;
         let cursor_offset = gutter_text.len() as u32;
+
+        let mut gutter_style = vim_ui::Style::default();
 
         for column in 0..=line_len {
             let is_eol = column == line_len;

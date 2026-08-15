@@ -2,6 +2,7 @@ mod app;
 mod controller;
 mod model;
 mod runtime;
+pub mod script;
 mod terminal;
 mod view;
 

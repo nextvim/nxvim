@@ -2,7 +2,6 @@
 //!
 //! This module wires model, controller-facing services, UI synchronization,
 //! and scripting. Semantic state remains in `model` and behavior in `controller`.
-pub mod script;
 pub mod services;
 pub mod ui;
 
@@ -10,7 +9,7 @@ pub struct App {
     pub model: crate::model::EditorModel,
     pub controller: crate::controller::input::InputController,
     pub services: services::Services,
-    pub script: script::ScriptRuntime,
+    pub script: crate::script::ScriptRuntime,
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
 }
@@ -25,7 +24,7 @@ impl App {
             model,
             controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
             services: services::Services::new(),
-            script: script::ScriptRuntime::new(),
+            script: crate::script::ScriptRuntime::new(),
             ui,
             view_ids,
         }

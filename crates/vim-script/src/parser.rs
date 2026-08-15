@@ -167,6 +167,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 StmtKind::ExCommand(self.ex_command()?)
             }
+            TokenKind::Operator(Operator::Divide) | TokenKind::Question
+                if self.source.is_some() =>
+            {
+                StmtKind::ExCommand(self.ex_command()?)
+            }
             TokenKind::Identifier(_)
                 if self.source.is_some() && self.looks_like_source_ex_command() =>
             {

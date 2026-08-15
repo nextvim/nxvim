@@ -2,8 +2,9 @@ use text::{Point, ToOffset, ToPoint};
 use vim_input::{Action, Mode};
 use vim_ui::WindowId;
 
-use crate::app::{script::ScriptRuntime, ui::ViewIds};
+use crate::app::ui::ViewIds;
 use crate::controller::input::InputController;
+use crate::script::ScriptRuntime;
 use crate::model::EditorModel;
 
 use super::command::{CommandOutcome, ViewEffect};
@@ -14,7 +15,11 @@ impl CommandlineHandler {
     pub fn handles(action: &Action) -> bool {
         matches!(
             action,
-            Action::SetToCommand | Action::Clear | Action::InsertNewLine { .. }
+            Action::SetToCommand
+                | Action::SetToCommandSearchForward
+                | Action::SetToCommandSearchBackward
+                | Action::Clear
+                | Action::InsertNewLine { .. }
         )
     }
 
@@ -27,7 +32,16 @@ impl CommandlineHandler {
         action: &Action,
     ) -> CommandOutcome {
         match action {
-            Action::SetToCommand => {
+            Action::SetToCommand
+            | Action::SetToCommandSearchForward
+            | Action::SetToCommandSearchBackward => {
+                let mode_char = match action {
+                    Action::SetToCommand => ':',
+                    Action::SetToCommandSearchForward => '/',
+                    Action::SetToCommandSearchBackward => '?',
+                    _ => unreachable!(),
+                };
+                model.commandline_mode = mode_char;
                 input.set_mode(Mode::Insert);
                 let _ = model.edit_window(view_ids.commandline, |buffer, _context, window_state| {
                     let len = buffer.as_text_buffer().len();
@@ -43,7 +57,9 @@ impl CommandlineHandler {
                     window_state.selections.clear(buffer.as_text_buffer());
                     window_state.selections.add(buffer.as_text_buffer(), 0);
                 });
-                CommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline))
+                let mut outcome = CommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline));
+                outcome.view_effects.push(ViewEffect::SetCommandLineMode(mode_char));
+                outcome
             }
             Action::Clear if active_window == view_ids.commandline => {
                 CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(model, view_ids)))
@@ -54,10 +70,18 @@ impl CommandlineHandler {
             {
                 input.set_mode(Mode::Normal);
                 if let Some(command) = Self::current_command(model, active_window) {
-                    let cmd_to_execute = if command.starts_with(':') {
+                    if command.starts_with('/') || command.starts_with('?') {
+                        let pattern = command[1..].to_string();
+                        model.search_regex = onig::Regex::new(&pattern).ok();
+                        model.search_pattern = Some(pattern);
+                    } else if model.commandline_mode == '/' || model.commandline_mode == '?' {
+                        model.search_regex = onig::Regex::new(&command).ok();
+                        model.search_pattern = Some(command.clone());
+                    }
+                    let cmd_to_execute = if command.starts_with(':') || command.starts_with('/') || command.starts_with('?') {
                         command
                     } else {
-                        format!(":{}", command)
+                        format!("{}{}", model.commandline_mode, command)
                     };
                     if let Err(error) = script.execute(&cmd_to_execute) {
                         model.status = Some(error);

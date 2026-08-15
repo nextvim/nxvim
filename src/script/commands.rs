@@ -19,7 +19,8 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "wqall" => wqall(request),
         "read" => read(request),
         "file" => file(request),
-        "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "yank" | "put" | "copy" | "move" | "join" | "print" | "change" => placeholders(request),
+        "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "yank" | "put" | "copy" | "move" | "join" | "print" | "change"
+        | "/" | "?" | "substitute" | "s" | "&" | "~" | "smagic" | "snomagic" | "global" | "g" | "vglobal" | "v" | "nohlsearch" | "nohl" | "vimgrep" | "vimgrepadd" => placeholders(request),
         "delete" => delete(request),
         name => Err(RuntimeError::coded(
             "E492",

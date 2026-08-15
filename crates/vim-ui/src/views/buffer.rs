@@ -30,7 +30,6 @@ impl View for BufferView {
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
         let margin = if self.show_line_numbers { 4 } else { 0 };
-
         let mut normal_fg = Color::Reset;
         let mut normal_bg = Color::Reset;
         let mut line_nr_fg = Color::DarkGrey;

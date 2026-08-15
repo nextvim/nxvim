@@ -135,7 +135,10 @@ mod tests {
         assert_eq!(app.controller.mode(), vim_input::Mode::Insert);
         assert_eq!(
             outcome.view_effects,
-            vec![ViewEffect::Focus(app.view_ids.commandline)]
+            vec![
+                ViewEffect::Focus(app.view_ids.commandline),
+                ViewEffect::SetCommandLineMode(':')
+            ]
         );
     }
 

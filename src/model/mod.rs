@@ -22,6 +22,9 @@ pub struct EditorModel {
     windows: Windows,
     pub(crate) status: Option<String>,
     commandline_buffer: BufferId,
+    pub commandline_mode: char,
+    pub search_pattern: Option<String>,
+    pub search_regex: Option<onig::Regex>,
 }
 
 impl EditorModel {
@@ -57,6 +60,9 @@ impl EditorModel {
             windows,
             status: None,
             commandline_buffer,
+            commandline_mode: ':',
+            search_pattern: None,
+            search_regex: None,
         }
     }
 

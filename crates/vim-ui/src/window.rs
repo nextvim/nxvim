@@ -48,6 +48,7 @@ pub trait View {
     fn accepts_focus(&self) -> bool {
         true
     }
+    fn set_mode(&mut self, _mode: char) {}
 }
 
 pub trait Controller {
@@ -123,6 +124,10 @@ impl Window {
 
     pub(crate) fn view(&self) -> Option<&dyn View> {
         self.view.as_deref()
+    }
+
+    pub fn view_mut(&mut self) -> Option<&mut (dyn View + 'static)> {
+        self.view.as_deref_mut()
     }
 
     pub(crate) fn controller_mut(&mut self) -> Option<&mut dyn Controller> {

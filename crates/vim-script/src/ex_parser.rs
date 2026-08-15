@@ -38,28 +38,37 @@ impl<'a> ExLineParser<'a> {
             self.horizontal_space();
         }
         let start = self.cursor;
-        let modifiers = self.modifiers();
-        let range = self.range()?;
-        self.horizontal_space();
+        let is_search_cmd = self.peek() == Some('/') || self.peek() == Some('?');
         let command_start = self.cursor;
-        let name = self.word();
-        if name.is_empty() {
-            return Err(self
-                .error(
-                    "X001",
-                    "expected Ex command name",
-                    self.cursor,
-                    self.cursor.saturating_add(1),
-                )
-                .into());
-        }
-        let command_end = self.cursor;
-        let bang = if self.peek() == Some('!') {
-            self.bump();
-            true
+
+        let (modifiers, range, name, bang, command_end) = if is_search_cmd {
+            let delimiter = self.bump().unwrap();
+            (Vec::new(), None, delimiter.to_string(), false, self.cursor)
         } else {
-            false
+            let modifiers = self.modifiers();
+            let range = self.range()?;
+            self.horizontal_space();
+            let name = self.word();
+            if name.is_empty() {
+                return Err(self
+                    .error(
+                        "X001",
+                        "expected Ex command name",
+                        self.cursor,
+                        self.cursor.saturating_add(1),
+                    )
+                    .into());
+            }
+            let command_end = self.cursor;
+            let bang = if self.peek() == Some('!') {
+                self.bump();
+                true
+            } else {
+                false
+            };
+            (modifiers, range, name, bang, command_end)
         };
+
         self.horizontal_space();
         let arguments_start = self.cursor;
         let separator = find_command_separator(self.source, arguments_start);
@@ -444,5 +453,20 @@ mod tests {
             .unwrap();
         assert_eq!(parsed.raw_arguments, "foo\\|bar");
         assert!(parsed.next_command.is_none());
+    }
+
+    #[test]
+    fn parses_search_commands() {
+        let parsed_forward = ExLineParser::new(SourceId(0), "/hello world", 0)
+            .parse()
+            .unwrap();
+        assert_eq!(parsed_forward.command.name, "/");
+        assert_eq!(parsed_forward.command.arguments, "hello world");
+
+        let parsed_backward = ExLineParser::new(SourceId(0), "?foo bar", 0)
+            .parse()
+            .unwrap();
+        assert_eq!(parsed_backward.command.name, "?");
+        assert_eq!(parsed_backward.command.arguments, "foo bar");
     }
 }

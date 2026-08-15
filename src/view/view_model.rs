@@ -130,6 +130,8 @@ impl EditorViewModel {
                     window_id == active_window,
                     mode,
                     highlights,
+                    model.search_pattern.as_deref(),
+                    model.search_regex.as_ref(),
                 ),
             );
         }

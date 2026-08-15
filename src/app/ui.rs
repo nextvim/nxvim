@@ -4,9 +4,9 @@ pub use vim_ui::{Rect, Ui};
 /// tabline, statusline, and side panels are presentation-only chrome.
 #[derive(Debug, Clone, Copy)]
 pub struct ViewIds {
-    pub tabline: vim_ui::WindowId,
     pub main: vim_ui::WindowId,
     pub commandline: vim_ui::WindowId,
+    pub tabline: vim_ui::WindowId,
     pub statusline: vim_ui::WindowId,
     pub left_panel: vim_ui::WindowId,
     pub right_panel: vim_ui::WindowId,
@@ -55,6 +55,14 @@ impl ViewSynchronizer {
             crate::controller::ViewEffect::Hide(window_id) => ui.hide_window(window_id).is_ok(),
             crate::controller::ViewEffect::Resize { width, height } => {
                 ui.resize(Rect::new(0, 0, width, height));
+                true
+            }
+            crate::controller::ViewEffect::SetCommandLineMode(mode) => {
+                if let Some(w) = ui.window_mut(view_ids.commandline) {
+                    if let Some(view) = w.view_mut() {
+                        view.set_mode(mode);
+                    }
+                }
                 true
             }
         }
@@ -178,8 +186,8 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
     ui.hide_window(right_id)?;
     ui.focus(main_id)?; // Focus the main editor window by default
     Ok(ViewIds {
-        tabline: tabline_id,
         main: main_id,
+        tabline: tabline_id,
         commandline: cmd_id,
         statusline: status_id,
         left_panel: left_panel_id,

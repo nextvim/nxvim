@@ -67,6 +67,7 @@ pub enum ViewEffect {
     Close(WindowId),
     Hide(WindowId),
     Resize { width: u16, height: u16 },
+    SetCommandLineMode(char),
 }
 
 #[derive(Debug, Default)]
