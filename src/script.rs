@@ -273,4 +273,16 @@ mod tests {
             panic!("Expected Command::RangeOp, got {:?}", cmd);
         }
     }
+
+    #[test]
+    fn test_nohl_commands_are_dispatched() {
+        for source in ["nohl", "nohlsearch", ":nohl", ":nohlsearch"] {
+            let mut runtime = ScriptRuntime::new();
+            runtime.execute(source).unwrap();
+            assert!(matches!(
+                runtime.try_next_command(),
+                Some(Command::ClearSearchHighlight)
+            ));
+        }
+    }
 }

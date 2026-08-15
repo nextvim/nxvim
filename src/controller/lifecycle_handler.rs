@@ -89,6 +89,12 @@ impl LifecycleHandler {
         Self::write_and_quit(ui, model, active_window, None, force)
     }
 
+    pub fn clear_search_highlight(model: &mut EditorModel) -> CommandOutcome {
+        model.search_pattern = None;
+        model.search_regex = None;
+        CommandOutcome::redraw()
+    }
+
     fn outcome_or_status(
         model: &mut EditorModel,
         result: Result<CommandOutcome, vim_script::runtime::RuntimeError>,

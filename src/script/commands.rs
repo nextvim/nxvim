@@ -19,9 +19,10 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "wqall" => wqall(request),
         "read" => read(request),
         "file" => file(request),
+        "nohlsearch" | "nohl" => Ok(Command::ClearSearchHighlight),
         "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "copy" | "move" | "join"
         | "print" | "change" | "/" | "?" | "substitute" | "s" | "&" | "~" | "smagic"
-        | "snomagic" | "global" | "g" | "vglobal" | "v" | "nohlsearch" | "nohl" | "vimgrep"
+        | "snomagic" | "global" | "g" | "vglobal" | "v" | "vimgrep"
         | "vimgrepadd" => placeholders(request),
         "delete" => delete(request),
         "yank" => yank(request),

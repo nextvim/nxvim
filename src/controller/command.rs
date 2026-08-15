@@ -38,6 +38,7 @@ pub enum Command {
         register: Option<char>,
     },
     Task(crate::app::services::TaskResult),
+    ClearSearchHighlight,
 }
 
 impl std::fmt::Debug for Command {
@@ -85,6 +86,7 @@ impl std::fmt::Debug for Command {
                 .field("register", register)
                 .finish(),
             Command::Task(_) => write!(f, "Task(...)"),
+            Command::ClearSearchHighlight => write!(f, "ClearSearchHighlight"),
         }
     }
 }

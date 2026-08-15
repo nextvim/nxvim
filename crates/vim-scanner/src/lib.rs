@@ -29,8 +29,11 @@
 //!
 //! [`SyntaxTree`]: https://docs.rs/vim-treesitter (not a dependency of this crate)
 
+use text::ToOffset;
+
 /// A byte offset into the scanned text.
 pub type Position = usize;
+
 
 /// The kind of a structural delimiter this scanner understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -272,7 +275,152 @@ impl StructuralScanner {
     pub fn delimiter_boundaries_at(&self, byte: Position) -> Option<(Position, Position)> {
         self.innermost_at(byte).map(|m| (m.start, m.end))
     }
+
+    /// Scans a range of rows in `buffer` row-by-row, looking for the innermost
+    /// matched delimiter enclosing `byte`. If `block_only` is true, only
+    /// brace/paren/bracket blocks are considered (ignoring quoted strings).
+    ///
+    /// This method is highly optimized: it scans one row at a time, and returns
+    /// the first matched delimiter enclosing `byte` as soon as it is found,
+    /// avoiding scanning any subsequent rows in the range.
+    pub fn scan_rows_for_enclosing(
+        buffer: &text::Buffer,
+        start_row: u32,
+        end_row: u32,
+        byte: Position,
+        block_only: bool,
+    ) -> Option<MatchedDelimiter> {
+        let start_point = text::Point::new(start_row, 0);
+        let start_offset = start_point.to_offset(buffer);
+
+        let mut stack: Vec<Delimiter> = Vec::new();
+        let mut escape_next = false;
+        let mut base = start_offset;
+
+        let row_count = buffer.row_count();
+        let end_row = end_row.min(row_count);
+
+        for row in start_row..end_row {
+            let row_start = text::Point::new(row, 0);
+            let row_end = if row + 1 < row_count {
+                text::Point::new(row + 1, 0)
+            } else {
+                buffer.max_point()
+            };
+
+            for chunk in buffer.text_for_range(row_start..row_end) {
+                for (local_idx, ch) in chunk.char_indices() {
+                    let idx = base + local_idx;
+                    let in_string = stack.last().is_some_and(|open| open.kind.is_quote());
+
+                    if in_string {
+                        if escape_next {
+                            escape_next = false;
+                            continue;
+                        }
+                        match ch {
+                            '\\' => escape_next = true,
+                            '"' if stack.last().unwrap().kind == DelimiterKind::DoubleQuote => {
+                                let open = stack.pop().unwrap();
+                                let m = MatchedDelimiter {
+                                    kind: open.kind,
+                                    start: open.start,
+                                    end: idx,
+                                };
+                                if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                    return Some(m);
+                                }
+                            }
+                            '\'' if stack.last().unwrap().kind == DelimiterKind::SingleQuote => {
+                                let open = stack.pop().unwrap();
+                                let m = MatchedDelimiter {
+                                    kind: open.kind,
+                                    start: open.start,
+                                    end: idx,
+                                };
+                                if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                    return Some(m);
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    match ch {
+                        '{' => stack.push(Delimiter {
+                            kind: DelimiterKind::Brace,
+                            start: idx,
+                        }),
+                        '(' => stack.push(Delimiter {
+                            kind: DelimiterKind::Paren,
+                            start: idx,
+                        }),
+                        '[' => stack.push(Delimiter {
+                            kind: DelimiterKind::Bracket,
+                            start: idx,
+                        }),
+                        '"' => stack.push(Delimiter {
+                            kind: DelimiterKind::DoubleQuote,
+                            start: idx,
+                        }),
+                        '\'' => stack.push(Delimiter {
+                            kind: DelimiterKind::SingleQuote,
+                            start: idx,
+                        }),
+                        '}' if stack
+                            .last()
+                            .is_some_and(|open| open.kind == DelimiterKind::Brace) =>
+                        {
+                            let open = stack.pop().unwrap();
+                            let m = MatchedDelimiter {
+                                kind: open.kind,
+                                start: open.start,
+                                end: idx,
+                            };
+                            if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                return Some(m);
+                            }
+                        }
+                        ')' if stack
+                            .last()
+                            .is_some_and(|open| open.kind == DelimiterKind::Paren) =>
+                        {
+                            let open = stack.pop().unwrap();
+                            let m = MatchedDelimiter {
+                                kind: open.kind,
+                                start: open.start,
+                                end: idx,
+                            };
+                            if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                return Some(m);
+                            }
+                        }
+                        ']' if stack
+                            .last()
+                            .is_some_and(|open| open.kind == DelimiterKind::Bracket) =>
+                        {
+                            let open = stack.pop().unwrap();
+                            let m = MatchedDelimiter {
+                                kind: open.kind,
+                                start: open.start,
+                                end: idx,
+                            };
+                            if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                return Some(m);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                base += chunk.len();
+            }
+        }
+
+        None
+    }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -411,5 +559,32 @@ mod tests {
         let m = scan.matches()[0];
         assert_eq!(m.kind, DelimiterKind::Brace);
         assert_eq!((m.start, m.end), (0, 4));
+    }
+
+    #[test]
+    fn test_scan_rows_for_enclosing() {
+        let buffer = text::Buffer::new(
+            clock::ReplicaId::new(0),
+            text::BufferId::new(1).unwrap(),
+            "{\n  (  )\n}",
+        );
+        // Positions: 
+        // 0:'{'
+        // 1:'\n'
+        // 2:' ' 3:' ' 4:'(' 5:' ' 6:' ' 7:')'
+        // 8:'\n'
+        // 9:'}'
+        
+        let m = StructuralScanner::scan_rows_for_enclosing(&buffer, 0, 3, 5, false).unwrap();
+        assert_eq!(m.kind, DelimiterKind::Paren);
+        assert_eq!((m.start, m.end), (4, 7));
+
+        let m_block = StructuralScanner::scan_rows_for_enclosing(&buffer, 0, 3, 5, true).unwrap();
+        assert_eq!(m_block.kind, DelimiterKind::Paren);
+        assert_eq!((m_block.start, m_block.end), (4, 7));
+
+        let m_brace = StructuralScanner::scan_rows_for_enclosing(&buffer, 0, 3, 2, true).unwrap();
+        assert_eq!(m_brace.kind, DelimiterKind::Brace);
+        assert_eq!((m_brace.start, m_brace.end), (0, 9));
     }
 }

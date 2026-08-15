@@ -391,4 +391,86 @@ mod tests {
                 .is_some_and(|status| status.starts_with("Save failed"))
         );
     }
+
+    #[test]
+    fn test_search_pattern_updates_on_commandline_change() {
+        let mut app = app();
+
+        // 1. Initially they are None
+        assert_eq!(app.model.search_pattern, None);
+        assert!(app.model.search_regex.is_none());
+
+        // 2. Start search forward
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommandSearchForward,
+                register: None,
+            },
+        );
+        let commandline = app.view_ids.commandline;
+        let _ = app.ui.focus(commandline);
+
+        // 3. Type character 'a'
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("a".to_string()),
+                register: None,
+            },
+        );
+        assert_eq!(app.model.search_pattern.as_deref(), Some("a"));
+        assert!(app.model.search_regex.is_some());
+
+        // 4. Type character 'b'
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("b".to_string()),
+                register: None,
+            },
+        );
+        assert_eq!(app.model.search_pattern.as_deref(), Some("ab"));
+
+        // 5. Backspace ('ab' -> 'a')
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::DeleteCharBefore { count: 1 },
+                register: None,
+            },
+        );
+        assert_eq!(app.model.search_pattern.as_deref(), Some("a"));
+
+        // 6. Backspace again ('a' -> empty)
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::DeleteCharBefore { count: 1 },
+                register: None,
+            },
+        );
+        assert_eq!(app.model.search_pattern, None);
+        assert!(app.model.search_regex.is_none());
+    }
+
+    #[test]
+    fn test_nohl_clears_search_highlight() {
+        let mut app = app();
+
+        // 1. Set some active search state
+        app.model.search_pattern = Some("test_pattern".to_string());
+        app.model.search_regex = onig::Regex::new("test_pattern").ok();
+
+        assert_eq!(app.model.search_pattern.as_deref(), Some("test_pattern"));
+        assert!(app.model.search_regex.is_some());
+
+        // 2. Dispatch the ClearSearchHighlight command (e.g. from :nohl)
+        let outcome = Dispatcher::dispatch(&mut app, Command::ClearSearchHighlight);
+
+        // 3. Verify it is cleared
+        assert_eq!(app.model.search_pattern, None);
+        assert!(app.model.search_regex.is_none());
+        assert!(outcome.redraw);
+    }
 }
