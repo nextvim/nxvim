@@ -1,5 +1,7 @@
 use crate::app::services::TaskResult;
+use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
+use vim_ui::Ui;
 
 use super::command::CommandOutcome;
 
@@ -7,8 +9,8 @@ pub struct TaskDispatcher;
 
 impl TaskDispatcher {
     pub fn dispatch(
+        ui: &mut Ui,
         model: &mut EditorModel,
-        highlight_service: &mut textmate::HighlightService,
         treesitter_service: &mut vim_treesitter::TreeSitterService,
         result: TaskResult,
     ) -> CommandOutcome {
@@ -46,10 +48,13 @@ impl TaskDispatcher {
                 expansion,
                 ..
             } => {
-                if !Self::window_is_current(model, window_id, buffer_id, revision) {
+                if !Self::window_is_current(ui, model, window_id, buffer_id, revision) {
                     return CommandOutcome::default();
                 }
-                let Some(window) = model.window_state_mut(window_id) else {
+                let Some(window) = ui
+                    .window_mut(window_id)
+                    .and_then(vim_ui::Window::window_state_mut)
+                else {
                     return CommandOutcome::default();
                 };
                 let generation = expansion.generation.clone();
@@ -92,12 +97,13 @@ impl TaskDispatcher {
     }
 
     fn window_is_current(
+        ui: &Ui,
         model: &EditorModel,
         window_id: vim_ui::WindowId,
         buffer_id: vim_buffer::BufferId,
         revision: u64,
     ) -> bool {
-        model.window_buffer(window_id) == Some(buffer_id)
+        WindowOps::window_buffer(ui, window_id) == Some(buffer_id)
             && model
                 .buffer_state(buffer_id)
                 .is_some_and(|state| state.revision == revision)
@@ -108,16 +114,26 @@ impl TaskDispatcher {
 mod tests {
     use super::*;
     use background_worker::TaskId;
-    use vim_ui::WindowId;
+    use vim_ui::{Rect, WindowId};
 
-    fn model() -> (EditorModel, WindowId, WindowId) {
-        let main = WindowId::new(10);
-        let commandline = WindowId::new(11);
-        (
-            EditorModel::new(Vec::new(), main, commandline),
+    fn model() -> (Ui, EditorModel, WindowId, WindowId) {
+        let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
+        let main = ui.focused_window_id();
+        let commandline = ui.create_window("COMMAND LINE".to_string());
+        let model = EditorModel::new(Vec::new());
+        WindowOps::register(
+            &mut ui,
             main,
+            model.get_buffer(model.initial_buffer()).unwrap(),
+            vim_ui::Viewport::default(),
+        );
+        WindowOps::register(
+            &mut ui,
             commandline,
-        )
+            model.get_buffer(model.commandline_buffer()).unwrap(),
+            vim_ui::Viewport::default(),
+        );
+        (ui, model, main, commandline)
     }
 
     fn display_map_expansion(
@@ -135,19 +151,17 @@ mod tests {
         }
     }
 
-
-
     #[test]
     fn offscreen_display_map_expansion_merges_without_redraw() {
-        let (mut model, main, _) = model();
+        let (mut ui, mut model, main, _) = model();
         let text = (0..1_000)
             .map(|row| format!("row {row}\n"))
             .collect::<String>();
         let buffer_id = model.create(text);
-        assert!(model.switch_next_buffer(main));
-        assert_eq!(model.window_buffer(main), Some(buffer_id));
+        assert!(WindowOps::switch_next_buffer(&mut ui, &model, main));
+        assert_eq!(WindowOps::window_buffer(&ui, main), Some(buffer_id));
         let revision = model.buffer_state_mut(buffer_id).unwrap().revision;
-        let window = model.window_state_mut(main).unwrap();
+        let window = ui.window_mut(main).unwrap().window_state_mut().unwrap();
         let requested = 200..300;
         let expansion = display_map::build_expansion(
             window
@@ -159,27 +173,26 @@ mod tests {
         .unwrap();
         window.pending_display_map = Some((window.display_map.generation(), requested));
 
-        let mut highlight_service = textmate::HighlightService::new();
         let mut treesitter_service = vim_treesitter::TreeSitterService::new();
         let outcome = TaskDispatcher::dispatch(
+            &mut ui,
             &mut model,
-            &mut highlight_service,
             &mut treesitter_service,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
         assert!(!outcome.redraw);
-        let window = model.window_state(main).unwrap();
+        let window = ui.window(main).unwrap().window_state().unwrap();
         assert!(window.display_map.covers_exactly(200..300));
         assert!(window.pending_display_map.is_none());
     }
 
     #[test]
     fn stale_display_map_generation_is_discarded() {
-        let (mut model, main, _) = model();
-        let buffer_id = model.window_buffer(main).unwrap();
+        let (mut ui, mut model, main, _) = model();
+        let buffer_id = WindowOps::window_buffer(&ui, main).unwrap();
         let revision = model.buffer_state_mut(buffer_id).unwrap().revision;
-        let window = model.window_state_mut(main).unwrap();
+        let window = ui.window_mut(main).unwrap().window_state_mut().unwrap();
         let expansion = display_map::build_expansion(
             window.display_map.expansion_input(0..1).unwrap(),
             &background_worker::CancellationToken::default(),
@@ -187,17 +200,14 @@ mod tests {
         .unwrap();
         window.display_map.set_wrap_width(Some(10));
 
-        let mut highlight_service = textmate::HighlightService::new();
         let mut treesitter_service = vim_treesitter::TreeSitterService::new();
         let outcome = TaskDispatcher::dispatch(
+            &mut ui,
             &mut model,
-            &mut highlight_service,
             &mut treesitter_service,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
         assert!(!outcome.redraw);
     }
-
-
 }

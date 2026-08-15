@@ -1,5 +1,7 @@
 pub use vim_ui::{Rect, Ui};
 
+use super::windows::WindowOps;
+
 /// Concrete UI identities. `main` and `commandline` are semantic model windows;
 /// tabline, statusline, and side panels are presentation-only chrome.
 #[derive(Debug, Clone, Copy)]
@@ -23,22 +25,18 @@ impl ViewSynchronizer {
     ) -> bool {
         match effect {
             crate::controller::ViewEffect::Focus(window_id) => {
-                if model.window_state(window_id).is_none() || ui.focus(window_id).is_err() {
-                    return false;
-                }
-                model.focus_window(window_id)
+                ui.window(window_id)
+                    .is_some_and(vim_ui::Window::has_content)
+                    && ui.focus(window_id).is_ok()
             }
             crate::controller::ViewEffect::FocusDirection(direction) => {
                 let Some(window_id) = ui
                     .find_neighbor(direction)
-                    .filter(|&id| model.window_state(id).is_some())
+                    .filter(|&id| ui.window(id).is_some_and(vim_ui::Window::has_content))
                 else {
                     return false;
                 };
-                if ui.focus(window_id).is_err() {
-                    return false;
-                }
-                model.focus_window(window_id)
+                ui.focus(window_id).is_ok()
             }
             crate::controller::ViewEffect::Split { source, axis } => {
                 if source == view_ids.commandline {
@@ -47,10 +45,9 @@ impl ViewSynchronizer {
                 Self::split(ui, model, source, axis)
             }
             crate::controller::ViewEffect::Close(window_id) => {
-                if model.window_state(window_id).is_none() || ui.close_window(window_id).is_err() {
-                    return false;
-                }
-                model.remove_window(window_id)
+                ui.window(window_id)
+                    .is_some_and(vim_ui::Window::has_content)
+                    && ui.close_window(window_id).is_ok()
             }
             crate::controller::ViewEffect::Hide(window_id) => ui.hide_window(window_id).is_ok(),
             crate::controller::ViewEffect::Resize { width, height } => {
@@ -69,11 +66,12 @@ impl ViewSynchronizer {
     }
 
     pub fn synchronize_viewports(
-        model: &mut crate::model::EditorModel,
+        ui: &mut Ui,
+        model: &crate::model::EditorModel,
         layout: &crate::view::LayoutSnapshot,
     ) {
-        let updates: Vec<_> = model
-            .window_buffers()
+        let updates: Vec<_> = WindowOps::window_buffers(ui)
+            .into_iter()
             .filter_map(|(window_id, buffer_id)| {
                 let window_layout = layout.get(window_id)?;
                 let inner_rect = if window_layout.draws_border {
@@ -98,7 +96,10 @@ impl ViewSynchronizer {
             .collect();
 
         for (window_id, snapshot, width, height, has_border) in updates {
-            if let Some(window) = model.window_state_mut(window_id) {
+            if let Some(window) = ui
+                .window_mut(window_id)
+                .and_then(vim_ui::Window::window_state_mut)
+            {
                 window.update(snapshot, width, height, has_border);
             }
         }
@@ -110,27 +111,25 @@ impl ViewSynchronizer {
         source: vim_ui::WindowId,
         axis: vim_ui::SplitAxis,
     ) -> bool {
-        if model.window_buffer(source).is_none() || ui.focus(source).is_err() {
+        if WindowOps::window_buffer(ui, source).is_none() || ui.focus(source).is_err() {
             return false;
         }
         let Ok(new_window_id) = ui.split_focused(axis) else {
             return false;
         };
-        if !model.split_window(source, new_window_id) {
+        if !WindowOps::split(ui, model, source, new_window_id) {
             let _ = ui.close_window(new_window_id);
             let _ = ui.focus(source);
             return false;
         }
         let Some(window) = ui.window_mut(new_window_id) else {
-            model.remove_window(new_window_id);
             let _ = ui.close_window(new_window_id);
             let _ = ui.focus(source);
-            model.focus_window(source);
             return false;
         };
         window.set_title("MAIN WINDOW".to_string());
         window.set_draw_border(false);
-        window.set_view(Box::new(crate::view::TextView::new(new_window_id)));
+        window.set_view(Box::new(crate::view::TextView::new()));
         true
     }
 }
@@ -156,7 +155,7 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
     if let Some(w) = ui.window_mut(main_id) {
         w.set_title("MAIN WINDOW".to_string());
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::view::TextView::new(main_id)));
+        w.set_view(Box::new(crate::view::TextView::new()));
     }
     if let Some(w) = ui.window_mut(right_id) {
         w.set_title("RIGHT PANEL".to_string());
@@ -167,7 +166,7 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
     }
     if let Some(w) = ui.window_mut(cmd_id) {
         w.set_draw_border(false);
-        w.set_view(Box::new(crate::view::CommandLineView::new(cmd_id)));
+        w.set_view(Box::new(crate::view::CommandLineView::new()));
     }
 
     // Define layout using SlotLayout
@@ -203,26 +202,39 @@ mod tests {
     fn fixture() -> (Ui, crate::model::EditorModel, ViewIds) {
         let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
         let ids = setup_initial_layout(&mut ui).unwrap();
-        let model = crate::model::EditorModel::new(Vec::new(), ids.main, ids.commandline);
+        let model = crate::model::EditorModel::new(Vec::new());
+        WindowOps::register_placeholder(
+            &mut ui,
+            ids.main,
+            model.get_buffer(model.initial_buffer()).unwrap(),
+        );
+        WindowOps::register_placeholder(
+            &mut ui,
+            ids.commandline,
+            model.get_buffer(model.commandline_buffer()).unwrap(),
+        );
         (ui, model, ids)
     }
 
     #[test]
     fn initial_layout_registers_only_semantic_windows_in_model() {
-        let (ui, model, ids) = fixture();
+        let (ui, _model, ids) = fixture();
 
-        assert!(model.window_state(ids.main).is_some());
-        assert!(model.window_state(ids.commandline).is_some());
+        assert!(ui.window(ids.main).is_some_and(vim_ui::Window::has_content));
+        assert!(
+            ui.window(ids.commandline)
+                .is_some_and(vim_ui::Window::has_content)
+        );
         for chrome in [ids.tabline, ids.statusline, ids.left_panel, ids.right_panel] {
             assert!(ui.window(chrome).is_some());
-            assert!(model.window_state(chrome).is_none());
+            assert!(!ui.window(chrome).unwrap().has_content());
         }
     }
 
     #[test]
     fn failed_focus_does_not_change_model_focus() {
         let (mut ui, mut model, ids) = fixture();
-        let original = model.focused_window();
+        let original = ui.focused_window_id();
 
         assert!(!ViewSynchronizer::apply(
             &mut ui,
@@ -230,7 +242,7 @@ mod tests {
             ids,
             ViewEffect::Focus(ids.left_panel),
         ));
-        assert_eq!(model.focused_window(), original);
+        assert_eq!(ui.focused_window_id(), original);
         assert_eq!(ui.focused_window_id(), ids.main);
     }
 
@@ -238,7 +250,7 @@ mod tests {
     fn split_failure_leaves_ui_and_model_stores_unchanged() {
         let (mut ui, mut model, ids) = fixture();
         let ui_count = ui.window_count();
-        let model_count = model.window_buffers().count();
+        let model_count = WindowOps::window_buffers(&ui).len();
 
         assert!(!ViewSynchronizer::apply(
             &mut ui,
@@ -250,9 +262,8 @@ mod tests {
             },
         ));
         assert_eq!(ui.window_count(), ui_count);
-        assert_eq!(model.window_buffers().count(), model_count);
+        assert_eq!(WindowOps::window_buffers(&ui).len(), model_count);
         assert_eq!(ui.focused_window_id(), ids.main);
-        assert_eq!(model.focused_window(), ids.main);
     }
 
     #[test]
@@ -270,9 +281,8 @@ mod tests {
         ));
         let split = ui.focused_window_id();
         assert_ne!(split, ids.main);
-        assert!(ui.window(split).is_some());
-        assert!(model.window_state(split).is_some());
-        assert_eq!(model.focused_window(), split);
+        assert!(ui.window(split).is_some_and(vim_ui::Window::has_content));
+        assert_eq!(ui.focused_window_id(), split);
     }
 }
 

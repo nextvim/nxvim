@@ -1,10 +1,11 @@
-use crate::model::{BufferState, WindowState};
+use crate::model::BufferState;
 use display_map::DisplayPoint;
 use std::cmp::Ordering;
 use sum_tree::Bias;
 use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use vim_buffer::{Buffer, Motions, SelectionSet};
 use vim_input::{Action, Mode};
+use vim_ui::WindowState;
 
 pub struct Editor;
 
@@ -988,6 +989,41 @@ impl Editor {
                     .chunks_in_range(start_offset..end_offset)
                     .collect();
                 services.clipboard.set_lines(text);
+            }
+            Action::PutLines { line, before } => {
+                if services.clipboard.is_empty() {
+                    return None;
+                }
+
+                let max_row = buffer.as_text_buffer().row_count().saturating_sub(1);
+                let target_row = std::cmp::min(line.saturating_sub(1), max_row);
+
+                if *before && target_row == 0 {
+                    // Putting before the first line has no "previous row" to
+                    // anchor `paste` on, so insert directly at the start.
+                    let mut insert_text = services.clipboard.text();
+                    if !insert_text.ends_with('\n') {
+                        insert_text.push('\n');
+                    }
+                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
+                    tx.insert(None, vim_buffer::ByteOffset(0), insert_text);
+                    let _ = tx.commit(Some(buffer_display_context.selections.clone()));
+                } else {
+                    // `paste` always inserts a linewise register after the
+                    // cursor's current row, so anchor the cursor on the row
+                    // before the insertion point and reuse it rather than
+                    // duplicating its end-of-buffer handling.
+                    let anchor_row = if *before { target_row - 1 } else { target_row };
+                    let anchor_offset =
+                        Point::new(anchor_row, 0).to_offset(buffer.as_text_buffer());
+                    buffer_display_context
+                        .selections
+                        .clear(buffer.as_text_buffer());
+                    buffer_display_context
+                        .selections
+                        .add(buffer.as_text_buffer(), anchor_offset);
+                    self.paste(buffer, &mut buffer_display_context.selections, 1, services);
+                }
             }
             Action::DeleteLine { count } | Action::ChangeLine { count } => {
                 let selections = buffer_display_context.selections.selections.clone();

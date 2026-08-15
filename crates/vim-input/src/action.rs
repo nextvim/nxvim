@@ -411,6 +411,10 @@ pub enum Action {
         start_line: u32,
         end_line: u32,
     },
+    PutLines {
+        line: u32,
+        before: bool,
+    },
     Command(String),
 }
 
@@ -590,6 +594,9 @@ impl std::fmt::Display for Action {
                 end_line,
             } => {
                 write!(f, "YankLines({}, {})", start_line, end_line)
+            }
+            Action::PutLines { line, before } => {
+                write!(f, "PutLines({}, before={})", line, before)
             }
             Action::Command(s) => write!(f, "Command({})", s),
         }
@@ -951,6 +958,7 @@ impl Action {
                 start_line,
                 end_line,
             },
+            Action::PutLines { line, before } => Action::PutLines { line, before },
 
             Action::Clear => Action::Clear,
             Action::NoOp => Action::NoOp,

@@ -43,7 +43,7 @@ The `nxvim` binary is split into explicit layers:
 
 - **`model`** owns buffers, semantic windows, selections, display maps, and task-derived state.
 - **`controller`** dispatches commands, executes editor behavior, accepts typed task results, and emits `ViewEffect`s.
-- **`view`** builds an immutable `EditorViewModel` and renders it through `vim-ui`.
+- **`view`** holds the concrete widgets (`TextView`, `StatusLineView`, `TabLineView`, `CommandLineView`); each refreshes its own small model directly from `model` state and renders it through `vim-ui`.
 - **`app`** is the small composition root for input, scripting, services, editor operations, and concrete UI synchronization.
 - **`runtime`** owns terminal lifecycle, polls events/tasks, dispatches, projects, and renders.
 

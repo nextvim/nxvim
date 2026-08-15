@@ -1,74 +1,187 @@
-use vim_ui::{Rect, Renderer, UIContext, View};
+use std::any::Any;
+use std::borrow::Cow;
 
-pub struct StatusLineView;
+use vim_formatter::{CompiledFormat, ExprId, FormatDialect, FormatResolver, RenderItem, parse};
+use vim_ui::{Color, Rect, Renderer, Style, View};
+
+use crate::view::globals::RenderGlobals;
+
+/// Statusline text, built with `vim_formatter` so width handling (alignment,
+/// truncation) is the same real Vim-statusline machinery the format language
+/// gives every escape code, instead of ad hoc string padding.
+const LINE1: &str = " %{mode} [%f%m]%{status} %=%l:%c | utf-8 ";
+const LINE2: &str = " %{scope}%=";
+
+/// Data resolved fresh each frame; the two compiled formats are static.
+#[derive(Default)]
+struct StatusLineData {
+    mode_name: String,
+    buffer_name: String,
+    modified: bool,
+    cursor: Option<(u32, u32)>,
+    status_message: Option<String>,
+    scope_path: Vec<String>,
+    style: Style,
+}
+
+impl FormatResolver for StatusLineData {
+    fn file_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.buffer_name)
+    }
+
+    fn line(&self) -> usize {
+        self.cursor.map(|(row, _)| row as usize).unwrap_or(0)
+    }
+
+    fn column(&self) -> usize {
+        self.cursor.map(|(_, column)| column as usize).unwrap_or(0)
+    }
+
+    fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    fn eval_expression(&self, _id: ExprId, source: &str) -> Cow<'_, str> {
+        match source {
+            "mode" => Cow::Borrowed(self.mode_name.as_str()),
+            "status" => match &self.status_message {
+                Some(message) => Cow::Owned(format!(" \u{2014} {message}")),
+                None => Cow::Borrowed(""),
+            },
+            "scope" => Cow::Owned(if self.scope_path.is_empty() {
+                "Scope: [None]".to_string()
+            } else {
+                format!("Scope: {}", self.scope_path.join(" > "))
+            }),
+            _ => Cow::Borrowed(""),
+        }
+    }
+}
+
+pub struct StatusLineView {
+    line1: CompiledFormat,
+    line2: CompiledFormat,
+    data: StatusLineData,
+}
 
 impl StatusLineView {
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        let line1 = compile(LINE1);
+        let line2 = compile(LINE2);
+        Self {
+            line1,
+            line2,
+            data: StatusLineData::default(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn refresh(
+        &mut self,
+        globals: &RenderGlobals,
+        buffer_name: String,
+        modified: bool,
+        cursor: Option<(u32, u32)>,
+        scope_path: Vec<String>,
+    ) {
+        let mut style = Style::default().bg(Color::Grey).fg(Color::Black);
+        if let Some(cs) = globals.colorscheme {
+            if let Some(cs_style) = cs.get_style("StatusLine") {
+                style = *cs_style;
+            }
+        }
+        self.data = StatusLineData {
+            mode_name: format!("{:?}", globals.mode).to_uppercase(),
+            buffer_name,
+            modified,
+            cursor,
+            status_message: globals.status_message.map(str::to_owned),
+            scope_path,
+            style,
+        };
+    }
+}
+
+impl Default for StatusLineView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vim_ui::BufferedRenderer;
+
+    fn row_text(renderer: &BufferedRenderer, y: u16, width: u16) -> String {
+        (0..width)
+            .map(|x| {
+                renderer
+                    .current
+                    .get_cell(x, y)
+                    .map(|cell| cell.symbol)
+                    .unwrap_or(' ')
+            })
+            .collect()
+    }
+
+    #[test]
+    fn refresh_composes_mode_filename_and_cursor_position() {
+        let mut view = StatusLineView::new();
+        let globals = RenderGlobals {
+            mode: vim_input::Mode::Insert,
+            status_message: Some("hello"),
+            search_pattern: None,
+            search_regex: None,
+            colorscheme: None,
+        };
+        view.refresh(
+            &globals,
+            "main.rs".to_string(),
+            true,
+            Some((3, 8)),
+            vec!["function_item".to_string(), "block".to_string()],
+        );
+
+        let mut renderer = BufferedRenderer::new(80, 2);
+        view.draw(Rect::new(0, 0, 80, 2), &mut renderer).unwrap();
+
+        let line1 = row_text(&renderer, 0, 80);
+        assert!(line1.contains("INSERT"));
+        assert!(line1.contains("main.rs"));
+        assert!(line1.contains("[+]"));
+        assert!(line1.contains("hello"));
+        assert!(line1.contains("3:8"));
+
+        let line2 = row_text(&renderer, 1, 80);
+        assert!(line2.contains("function_item > block"));
+    }
+
+    #[test]
+    fn accepts_focus_is_false() {
+        assert!(!StatusLineView::new().accepts_focus());
     }
 }
 
 impl View for StatusLineView {
-    fn draw(
-        &self,
-        area: Rect,
-        context: &dyn UIContext,
-        renderer: &mut dyn Renderer,
-    ) -> std::io::Result<()> {
-        // Line 1: Status message and cursor info
-        renderer.move_to(area.x, area.y)?;
-
-        let buffer_name = context
-            .get_active_buffer_id()
-            .and_then(|id| context.get_buffer_name(id))
-            .unwrap_or_else(|| "[No Name]".to_string());
-        let left = if let Some(status) = context.get_status_message() {
-            format!(
-                " {} [{}] — {}",
-                context.get_mode_name(),
-                buffer_name,
-                status
-            )
-        } else {
-            format!(" {} [{}]", context.get_mode_name(), buffer_name)
-        };
-        let cursor = context
-            .get_cursor_position()
-            .map(|(row, column)| format!("{row}:{column}"))
-            .unwrap_or_else(|| "-:-".to_string());
-        let right = format!("{cursor} | utf-8 ");
-
-        let total_width = area.width as usize;
-        let left_width = left.chars().count();
-        let right_width = right.chars().count();
-
-        if left_width + right_width >= total_width {
-            let combined = format!("{left}{right}");
-            let truncated: String = combined.chars().take(total_width).collect();
-            renderer.print(&truncated)?;
-        } else {
-            renderer.print(&left)?;
-            renderer.print(&" ".repeat(total_width - left_width - right_width))?;
-            renderer.print(&right)?;
-        }
-
-        // Line 2: Treesitter scope under the current cursor
+    fn draw(&self, area: Rect, renderer: &mut dyn Renderer) -> std::io::Result<()> {
+        draw_line(
+            &self.line1,
+            &self.data,
+            area.x,
+            area.y,
+            area.width,
+            renderer,
+        )?;
         if area.height > 1 {
-            renderer.move_to(area.x, area.y + 1)?;
-            let mut scope_text = String::new();
-
-            let scope_path = context.get_scope_path();
-            if !scope_path.is_empty() {
-                scope_text = format!(" Scope: {}", scope_path.join(" > "));
-            } else {
-                scope_text = " Scope: [None]".to_string();
-            }
-
-            let truncated_scope: String = scope_text.chars().take(total_width).collect();
-            renderer.print(&truncated_scope)?;
-            if truncated_scope.chars().count() < total_width {
-                renderer.print(&" ".repeat(total_width - truncated_scope.chars().count()))?;
-            }
+            draw_line(
+                &self.line2,
+                &self.data,
+                area.x,
+                area.y + 1,
+                area.width,
+                renderer,
+            )?;
         }
         Ok(())
     }
@@ -76,4 +189,35 @@ impl View for StatusLineView {
     fn accepts_focus(&self) -> bool {
         false
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+fn compile(source: &str) -> CompiledFormat {
+    let ast =
+        parse(source, FormatDialect::StatusLine).expect("built-in statusline format is valid");
+    CompiledFormat::compile(&ast).expect("built-in statusline format compiles")
+}
+
+fn draw_line(
+    format: &CompiledFormat,
+    data: &StatusLineData,
+    x: u16,
+    y: u16,
+    width: u16,
+    renderer: &mut dyn Renderer,
+) -> std::io::Result<()> {
+    renderer.set_style(data.style)?;
+    renderer.move_to(x, y)?;
+    let items = format
+        .render(data, width as usize)
+        .map_err(std::io::Error::other)?;
+    for item in items {
+        if let RenderItem::Text { text, .. } = item {
+            renderer.print(&text)?;
+        }
+    }
+    renderer.reset_colors()
 }

@@ -161,11 +161,17 @@ mod tests {
         for spec in COMMAND_SPECS {
             if spec.is_extension {
                 assert!(
-                    spec.name == "save" || spec.name == "nexttab" || spec.name == "previoustab" || spec.name == "bprev"
+                    spec.name == "save"
+                        || spec.name == "nexttab"
+                        || spec.name == "previoustab"
+                        || spec.name == "bprev"
                 );
             } else {
                 assert!(
-                    spec.name != "save" && spec.name != "nexttab" && spec.name != "previoustab" && spec.name != "bprev"
+                    spec.name != "save"
+                        && spec.name != "nexttab"
+                        && spec.name != "previoustab"
+                        && spec.name != "bprev"
                 );
             }
 
@@ -202,9 +208,7 @@ mod tests {
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::Quit {
-                    force: false,
-                })
+                Some(Command::Quit { force: false })
             ));
         }
     }
@@ -253,12 +257,20 @@ mod tests {
         let mut runtime = ScriptRuntime::new();
         runtime.execute(":1,2d a").unwrap();
         let cmd = runtime.try_next_command().unwrap();
-        if let Command::Delete { range, count, register } = cmd {
+        if let Command::RangeOp {
+            operation,
+            range,
+            count,
+            register,
+            ..
+        } = cmd
+        {
+            assert_eq!(operation, crate::controller::RangeOperation::Delete);
             assert!(range.is_some());
             assert_eq!(count, None);
             assert_eq!(register, Some('a'));
         } else {
-            panic!("Expected Command::Delete, got {:?}", cmd);
+            panic!("Expected Command::RangeOp, got {:?}", cmd);
         }
     }
 }

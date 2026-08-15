@@ -69,9 +69,21 @@ impl Buffers {
     }
 
     pub fn state_mut(&mut self, id: BufferId) -> &mut BufferState {
-        self.states.entry(id).or_insert_with(|| {
-            BufferState::unloaded()
-        })
+        self.states
+            .entry(id)
+            .or_insert_with(|| BufferState::unloaded())
+    }
+
+    /// Borrows a buffer and its analysis state together. Exists because the
+    /// two live in separate fields on this struct; callers outside this
+    /// module can't split the borrow themselves.
+    pub fn get_mut_with_state(
+        &mut self,
+        id: BufferId,
+    ) -> Result<(&mut vim_buffer::Buffer, &mut BufferState), vim_buffer::BufferError> {
+        let buffer = self.inner.get_mut(id)?;
+        let state = self.states.entry(id).or_insert_with(BufferState::unloaded);
+        Ok((buffer, state))
     }
 
     pub fn create(&mut self, initial_text: impl Into<String>) -> BufferId {
@@ -114,7 +126,10 @@ impl Buffers {
         self.inner.get(id)
     }
 
-    pub fn get_mut(&mut self, id: BufferId) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
+    pub fn get_mut(
+        &mut self,
+        id: BufferId,
+    ) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
         self.inner.get_mut(id)
     }
 

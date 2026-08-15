@@ -4,6 +4,9 @@
 //! and scripting. Semantic state remains in `model` and behavior in `controller`.
 pub mod services;
 pub mod ui;
+pub mod windows;
+
+use windows::WindowOps;
 
 pub struct App {
     pub model: crate::model::EditorModel,
@@ -18,7 +21,22 @@ impl App {
     pub fn new(screen_rect: ui::Rect, paths: Vec<std::path::PathBuf>) -> Self {
         let mut ui = ui::Ui::new(screen_rect);
         let view_ids = ui::setup_initial_layout(&mut ui).unwrap();
-        let model = crate::model::EditorModel::new(paths, view_ids.main, view_ids.commandline);
+        let model = crate::model::EditorModel::new(paths);
+
+        let initial_buffer = model
+            .get_buffer(model.initial_buffer())
+            .expect("initial editor buffer must exist");
+        WindowOps::register_placeholder(&mut ui, view_ids.main, initial_buffer);
+        let commandline_buffer = model
+            .get_buffer(model.commandline_buffer())
+            .expect("command-line buffer must exist");
+        WindowOps::register_placeholder(&mut ui, view_ids.commandline, commandline_buffer);
+        if let Some(window_state) = ui
+            .window_mut(view_ids.commandline)
+            .and_then(vim_ui::Window::window_state_mut)
+        {
+            window_state.set_show_gutter(false);
+        }
 
         Self {
             model,

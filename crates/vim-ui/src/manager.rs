@@ -1,5 +1,5 @@
+use crate::colorscheme::ColorScheme;
 use crate::error::{UiError, UiResult};
-use crate::event::{EventResult, UiCommand, UiEvent};
 use crate::focus::FocusManager;
 use crate::id::WindowId;
 use crate::layout::{ComputedLayout, LayoutEngine, LayoutNode};
@@ -7,7 +7,7 @@ use crate::overlay::OverlayManager;
 use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::types::{FloatingConfig, NavigationDirection, SplitAxis};
-use crate::window::{UIContext, Window};
+use crate::window::Window;
 use crate::window_store::WindowStore;
 use std::collections::HashSet;
 
@@ -18,6 +18,7 @@ pub struct Ui {
     overlay_manager: OverlayManager,
     screen_rect: Rect,
     cached_layout: ComputedLayout,
+    colorscheme: Option<ColorScheme>,
 }
 
 impl Ui {
@@ -36,7 +37,16 @@ impl Ui {
             overlay_manager,
             screen_rect,
             cached_layout,
+            colorscheme: None,
         }
+    }
+
+    pub fn colorscheme(&self) -> Option<&ColorScheme> {
+        self.colorscheme.as_ref()
+    }
+
+    pub fn set_colorscheme(&mut self, colorscheme: Option<ColorScheme>) {
+        self.colorscheme = colorscheme;
     }
 
     pub fn window(&self, id: WindowId) -> Option<&Window> {
@@ -241,11 +251,12 @@ impl Ui {
     }
 
     pub fn find_neighbor(&self, direction: NavigationDirection) -> Option<WindowId> {
-        self.focus_manager.navigate(direction, &self.cached_layout, |id| {
-            self.window_store
-                .get(id)
-                .map_or(true, |w| w.accepts_focus())
-        })
+        self.focus_manager
+            .navigate(direction, &self.cached_layout, |id| {
+                self.window_store
+                    .get(id)
+                    .map_or(true, |w| w.accepts_focus())
+            })
     }
 
     pub fn computed_overlays(
@@ -291,38 +302,34 @@ impl Ui {
         Ok(adjusted)
     }
 
-    pub fn draw(
-        &mut self,
-        context: &dyn UIContext,
-        renderer: &mut dyn Renderer,
-    ) -> std::io::Result<()> {
+    pub fn draw(&mut self, renderer: &mut dyn Renderer) -> std::io::Result<()> {
         self.update_layout();
         for &(id, rect) in &self.cached_layout.windows {
-            self.draw_window(id, rect, context, renderer)?;
+            self.draw_window(id, rect, renderer)?;
         }
 
         let floating_windows = self.overlay_manager.sorted_floating_windows();
         let focused_id = self.focus_manager.focused_id();
-        let cursor_pos = self.window_store.get(focused_id).and_then(|window| {
-            if let Some(view) = window.view() {
-                let rect = self
-                    .cached_layout
-                    .get_rect(focused_id)
-                    .unwrap_or(self.screen_rect);
-                let view_rect = if window.draws_border() {
-                    rect.inner(1)
-                } else {
-                    rect
-                };
-                view.cursor_screen_pos(view_rect, context)
+        let focused_view = self.window_store.get(focused_id).and_then(Window::view);
+        let cursor_pos = focused_view.and_then(|view| {
+            let window = self
+                .window_store
+                .get(focused_id)
+                .expect("focused window exists");
+            let rect = self
+                .cached_layout
+                .get_rect(focused_id)
+                .unwrap_or(self.screen_rect);
+            let view_rect = if window.draws_border() {
+                rect.inner(1)
             } else {
-                None
-            }
+                rect
+            };
+            view.cursor_screen_pos(view_rect)
         });
-        let cursor_shape = context.get_text_model(focused_id)
-            .and_then(|model| model.cursor)
-            .map(|cursor| cursor.shape)
-            .unwrap_or(crate::model::CursorShape::Block);
+        let cursor_shape = focused_view
+            .map(|view| view.cursor_shape())
+            .unwrap_or_default();
 
         for (id, config) in floating_windows {
             if self.window_store.get(id).is_some_and(|w| w.is_visible()) {
@@ -332,7 +339,7 @@ impl Ui {
                     &self.cached_layout,
                     cursor_pos,
                 );
-                self.draw_window(id, rect, context, renderer)?;
+                self.draw_window(id, rect, renderer)?;
             }
         }
 
@@ -342,101 +349,6 @@ impl Ui {
             renderer.hide_cursor()?;
         }
         Ok(())
-    }
-
-    pub fn dispatch_event(&mut self, event: &UiEvent, context: &mut dyn UIContext) -> EventResult {
-        // 1. Modal overlay
-        if let Some(modal_id) = self.overlay_manager.modal_window_id() {
-            if let Some(window) = self.window_store.get_mut(modal_id) {
-                if window.is_visible() {
-                    if let Some(controller) = window.controller_mut() {
-                        let res = controller.handle_event(event, context);
-                        if res != EventResult::Ignored {
-                            return self.handle_event_result(res);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Non-modal focused overlay
-        let focused_id = self.focus_manager.focused_id();
-        if self.overlay_manager.is_floating(focused_id)
-            && self.overlay_manager.modal_window_id() != Some(focused_id)
-        {
-            if let Some(window) = self.window_store.get_mut(focused_id) {
-                if window.is_visible() {
-                    if let Some(controller) = window.controller_mut() {
-                        let res = controller.handle_event(event, context);
-                        if res != EventResult::Ignored {
-                            return self.handle_event_result(res);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Focused tiled window controller
-        if self.layout_engine.contains_leaf(focused_id) {
-            if let Some(window) = self.window_store.get_mut(focused_id) {
-                if window.is_visible() {
-                    if let Some(controller) = window.controller_mut() {
-                        let res = controller.handle_event(event, context);
-                        if res != EventResult::Ignored {
-                            return self.handle_event_result(res);
-                        }
-                    }
-                }
-            }
-        }
-
-        EventResult::Ignored
-    }
-
-    fn handle_event_result(&mut self, result: EventResult) -> EventResult {
-        if let EventResult::Command(ref cmd) = result {
-            match cmd {
-                UiCommand::FocusWindow(id) => {
-                    let _ = self.focus(*id);
-                    EventResult::Redraw
-                }
-                UiCommand::FocusDirection(direction) => {
-                    if let Some(id) = self.find_neighbor(*direction) {
-                        let _ = self.focus(id);
-                        EventResult::Redraw
-                    } else {
-                        EventResult::Consumed
-                    }
-                }
-                UiCommand::SplitWindow(axis) => {
-                    let _ = self.split_focused(*axis);
-                    EventResult::Redraw
-                }
-                UiCommand::CloseWindow(id) => {
-                    let _ = self.close_window(*id);
-                    EventResult::Redraw
-                }
-                UiCommand::OpenOverlay(id, config) => {
-                    if let Some(window) = self.window_store.get_mut(*id) {
-                        self.overlay_manager.register(*id, *config);
-                        window.set_visible(true);
-                        EventResult::Redraw
-                    } else {
-                        EventResult::Consumed
-                    }
-                }
-                UiCommand::CloseOverlay(id) => {
-                    self.overlay_manager.unregister(*id);
-                    if let Some(window) = self.window_store.get_mut(*id) {
-                        window.set_visible(false);
-                    }
-                    EventResult::Redraw
-                }
-                UiCommand::SwitchTabPage(_) => EventResult::Consumed,
-            }
-        } else {
-            result
-        }
     }
 
     fn validate_layout(&self, layout: &LayoutNode) -> UiResult<Vec<WindowId>> {
@@ -465,13 +377,20 @@ impl Ui {
             .windows
             .iter()
             .map(|(id, _)| *id)
-            .filter(|&id| self.window_store.get(id).map_or(true, |w| w.accepts_focus()))
+            .filter(|&id| {
+                self.window_store
+                    .get(id)
+                    .map_or(true, |w| w.accepts_focus())
+            })
             .collect();
         let mut overlays: Vec<_> = self
             .window_store
             .iter()
             .filter_map(|(&id, window)| {
-                (window.is_visible() && window.accepts_focus() && self.overlay_manager.is_floating(id)).then_some(id)
+                (window.is_visible()
+                    && window.accepts_focus()
+                    && self.overlay_manager.is_floating(id))
+                .then_some(id)
             })
             .collect();
         overlays.sort_unstable();
@@ -489,7 +408,6 @@ impl Ui {
         &self,
         id: WindowId,
         rect: Rect,
-        context: &dyn UIContext,
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
         let window = &self.window_store.get(id).unwrap();
@@ -502,7 +420,7 @@ impl Ui {
             };
             let mut border_bg = crate::types::Color::Reset;
 
-            if let Some(cs) = context.get_colorscheme() {
+            if let Some(cs) = self.colorscheme.as_ref() {
                 let border_group = if is_focused { "WinSeparator" } else { "LineNr" };
                 if let Some(style) = cs.get_style(border_group) {
                     if let Some(fg) = style.fg {
@@ -530,7 +448,7 @@ impl Ui {
                     };
                     let mut title_bg = border_bg;
 
-                    if let Some(cs) = context.get_colorscheme() {
+                    if let Some(cs) = self.colorscheme.as_ref() {
                         let title_group = if is_focused { "Title" } else { "LineNr" };
                         if let Some(style) = cs.get_style(title_group) {
                             if let Some(fg) = style.fg {
@@ -557,7 +475,7 @@ impl Ui {
             } else {
                 rect
             };
-            view.draw(view_rect, context, renderer)?;
+            view.draw(view_rect, renderer)?;
         }
         Ok(())
     }
@@ -566,11 +484,8 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::id::BufferId;
-    use crate::model::BufferViewModel;
     use crate::types::Anchor;
     use crate::types::RelativeTo;
-    use crate::window::Controller;
 
     fn split_layout(left: WindowId, right: WindowId) -> LayoutNode {
         LayoutNode::Split {
@@ -659,82 +574,5 @@ mod tests {
         let second = ui.split_focused(SplitAxis::Rows).unwrap();
         ui.focus(first).unwrap();
         assert_eq!(ui.find_neighbor(NavigationDirection::Down), Some(second));
-    }
-
-    struct MockController {
-        handled: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        result: EventResult,
-    }
-
-    impl Controller for MockController {
-        fn handle_event(&mut self, _event: &UiEvent, _context: &mut dyn UIContext) -> EventResult {
-            self.handled
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            self.result.clone()
-        }
-    }
-
-    struct SimpleContext;
-    impl UIContext for SimpleContext {
-        fn get_buffer_model(&self, _id: BufferId) -> Option<BufferViewModel<'_>> {
-            None
-        }
-        fn get_active_buffer_id(&self) -> Option<BufferId> {
-            None
-        }
-    }
-
-    #[test]
-    fn test_event_routing_and_modal_precedence() {
-        let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
-        let tiled_id = ui.focused_window_id();
-        let tiled_handled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        ui.window_mut(tiled_id)
-            .unwrap()
-            .set_controller(Box::new(MockController {
-                handled: tiled_handled.clone(),
-                result: EventResult::Consumed,
-            }));
-
-        let mut context = SimpleContext;
-        let event = UiEvent::Tick;
-
-        // Tiled window handles it
-        let res = ui.dispatch_event(&event, &mut context);
-        assert_eq!(res, EventResult::Consumed);
-        assert!(tiled_handled.load(std::sync::atomic::Ordering::SeqCst));
-
-        // Reset
-        tiled_handled.store(false, std::sync::atomic::Ordering::SeqCst);
-
-        // Add modal overlay
-        let modal_id = ui.create_floating_window(
-            "popup",
-            FloatingConfig {
-                relative_to: RelativeTo::Editor,
-                anchor: Anchor::TopLeft,
-                row: 0,
-                col: 0,
-                width: 10,
-                height: 10,
-                zindex: 10,
-                border: true,
-            },
-        );
-        ui.overlay_manager_mut().set_modal(Some(modal_id));
-
-        let modal_handled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        ui.window_mut(modal_id)
-            .unwrap()
-            .set_controller(Box::new(MockController {
-                handled: modal_handled.clone(),
-                result: EventResult::Command(UiCommand::CloseOverlay(modal_id)),
-            }));
-
-        // Now dispatching tick should hit modal first and close overlay command should trigger
-        let res = ui.dispatch_event(&event, &mut context);
-        assert_eq!(res, EventResult::Redraw); // UiCommand::CloseOverlay is handled and maps to Redraw
-        assert!(modal_handled.load(std::sync::atomic::Ordering::SeqCst));
-        assert!(!tiled_handled.load(std::sync::atomic::Ordering::SeqCst)); // bypassed!
     }
 }

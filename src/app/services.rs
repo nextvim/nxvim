@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-pub use textmate as highlight;
 pub use vim_clipboard as clipboard;
 pub use vim_indexer as indexer;
 pub use vim_macros as macros;
@@ -55,7 +54,6 @@ pub(super) struct TaskMetadata {
 pub struct Services {
     background_workers: background_worker::WorkerManager,
     pub clipboard: clipboard::Clipboard,
-    pub highlight: highlight::HighlightService,
     pub indexer: indexer::Indexer,
     pub macros: macros::MacroRecorder,
     pub treesitter: treesitter::TreeSitterService,
@@ -73,7 +71,6 @@ impl Services {
         Self {
             background_workers,
             clipboard: clipboard::Clipboard::new(),
-            highlight: highlight::HighlightService::new(),
             indexer: indexer::Indexer::new(),
             macros: macros::MacroRecorder::new(),
             treesitter: treesitter::TreeSitterService::new(),
@@ -171,9 +168,7 @@ impl Services {
             TaskType::Treesitter => Some(TaskResult::Treesitter {
                 task_id,
                 revision: owner.revision,
-                completed: result
-                    .downcast::<vim_treesitter::ParseTaskResult>()
-                    .ok()?,
+                completed: result.downcast::<vim_treesitter::ParseTaskResult>().ok()?,
             }),
             TaskType::Indexer => Some(TaskResult::Index {
                 task_id,
@@ -276,7 +271,13 @@ mod tests {
                 Arc::new(AtomicU64::new(0)),
                 owner,
                 TaskType::DisplayMap,
-                move || display_map::build_expansion(input, &background_worker::CancellationToken::default()).unwrap(),
+                move || {
+                    display_map::build_expansion(
+                        input,
+                        &background_worker::CancellationToken::default(),
+                    )
+                    .unwrap()
+                },
             )
             .unwrap();
 

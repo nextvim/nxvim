@@ -2,6 +2,15 @@
 //!
 //! Controllers may mutate `model` through explicit operations and request UI
 //! changes through `ViewEffect`; they do not render or manipulate terminal state.
+//!
+//! `dispatcher.rs` is a pure router: every `Command` variant is one call into
+//! a focused handler. `editor_handler`, `buffer_handler`, `window_handler`,
+//! and `commandline_handler` act on a resolved `vim_input::Action`;
+//! `lifecycle_handler` additionally handles the quit/save/edit `Command`
+//! variants that have no `Action` equivalent; `range` resolves range-taking
+//! Ex commands (`Command::RangeOp`) against live editor state before running
+//! them through the same `editor_handler`/`buffer_handler` path. See
+//! `CONTROLLER.md` for the design rationale.
 
 mod buffer_handler;
 mod command;
@@ -10,14 +19,15 @@ mod dispatcher;
 mod editor;
 mod editor_handler;
 pub(crate) mod input;
-mod save_handler;
+mod lifecycle_handler;
+mod range;
 mod shared_operations;
 mod task_dispatcher;
 mod window_handler;
 
 pub use command::{Command, CommandOutcome, ViewEffect};
 pub use dispatcher::Dispatcher;
-pub use shared_operations::SharedOperations;
+pub use range::RangeOperation;
 
 #[cfg(test)]
 mod tests {
@@ -27,6 +37,13 @@ mod tests {
 
     fn app() -> crate::app::App {
         crate::app::App::new(Rect::new(0, 0, 80, 24), Vec::new())
+    }
+
+    fn window_buffer(
+        app: &crate::app::App,
+        window_id: vim_ui::WindowId,
+    ) -> Option<vim_buffer::BufferId> {
+        crate::app::windows::WindowOps::window_buffer(&app.ui, window_id)
     }
 
     #[test]
@@ -54,7 +71,7 @@ mod tests {
     fn dispatcher_switches_buffers_and_emits_window_effects() {
         let mut app = app();
         let main = app.view_ids.main;
-        let original = app.model.window_buffer(main).unwrap();
+        let original = window_buffer(&app, main).unwrap();
         app.model.create("second");
 
         Dispatcher::dispatch(
@@ -64,7 +81,7 @@ mod tests {
                 register: None,
             },
         );
-        assert_ne!(app.model.window_buffer(main), Some(original));
+        assert_ne!(window_buffer(&app, main), Some(original));
 
         let split = Dispatcher::dispatch(
             &mut app,
@@ -147,7 +164,6 @@ mod tests {
         let mut app = app();
         let main = app.view_ids.main;
         let commandline = app.view_ids.commandline;
-        app.model.focus_window(commandline);
         let _ = app.ui.focus(commandline);
 
         let outcome = Dispatcher::dispatch(
@@ -158,5 +174,221 @@ mod tests {
             },
         );
         assert_eq!(outcome.view_effects, vec![ViewEffect::Focus(main)]);
+    }
+
+    #[test]
+    fn range_op_delete_removes_the_resolved_line_range() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+        assert_eq!(window_buffer(&app, main), Some(buffer_id));
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Delete,
+                bang: false,
+                range: Some(vim_script::ast::CommandRange {
+                    start: vim_script::ast::Address::Line(1),
+                    end: Some(vim_script::ast::Address::Line(2)),
+                    separator: None,
+                }),
+                count: None,
+                register: None,
+            },
+        );
+
+        assert!(outcome.redraw);
+        let buffer = app.model.get_buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let text: String = text_buffer
+            .as_rope()
+            .chunks_in_range(0..text_buffer.len())
+            .collect();
+        assert_eq!(text, "three");
+    }
+
+    #[test]
+    fn range_op_delete_without_a_range_removes_the_current_line() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Delete,
+                bang: false,
+                range: None,
+                count: None,
+                register: None,
+            },
+        );
+
+        assert!(outcome.redraw);
+        let buffer = app.model.get_buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let text: String = text_buffer
+            .as_rope()
+            .chunks_in_range(0..text_buffer.len())
+            .collect();
+        assert_eq!(text, "two\nthree");
+    }
+
+    #[test]
+    fn range_op_yank_copies_lines_without_modifying_the_buffer() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Yank,
+                bang: false,
+                range: Some(vim_script::ast::CommandRange {
+                    start: vim_script::ast::Address::Line(1),
+                    end: Some(vim_script::ast::Address::Line(2)),
+                    separator: None,
+                }),
+                count: None,
+                register: None,
+            },
+        );
+
+        assert!(outcome.redraw);
+        let buffer = app.model.get_buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let text: String = text_buffer
+            .as_rope()
+            .chunks_in_range(0..text_buffer.len())
+            .collect();
+        assert_eq!(text, "one\ntwo\nthree", "yank must not modify the buffer");
+        assert_eq!(app.services.clipboard.text(), "one\ntwo\n");
+    }
+
+    #[test]
+    fn range_op_put_inserts_the_yanked_text_after_the_addressed_line() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+
+        Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Yank,
+                bang: false,
+                range: Some(vim_script::ast::CommandRange {
+                    start: vim_script::ast::Address::Line(1),
+                    end: Some(vim_script::ast::Address::Line(2)),
+                    separator: None,
+                }),
+                count: None,
+                register: None,
+            },
+        );
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Put,
+                bang: false,
+                range: Some(vim_script::ast::CommandRange {
+                    start: vim_script::ast::Address::Line(1),
+                    end: None,
+                    separator: None,
+                }),
+                count: None,
+                register: None,
+            },
+        );
+
+        assert!(outcome.redraw);
+        let buffer = app.model.get_buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let text: String = text_buffer
+            .as_rope()
+            .chunks_in_range(0..text_buffer.len())
+            .collect();
+        assert_eq!(text, "one\none\ntwo\ntwo\nthree");
+    }
+
+    #[test]
+    fn write_quit_saves_the_buffer_and_quits_when_it_is_the_last_window() {
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-command-wq-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut app = crate::app::App::new(Rect::new(0, 0, 80, 24), vec![path.clone()]);
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::WriteQuit {
+                path: None,
+                force: false,
+            },
+        );
+
+        assert!(outcome.quit);
+        assert!(path.is_file());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_quit_all_saves_the_buffer_and_quits_when_it_is_the_last_window() {
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-command-wqall-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut app = crate::app::App::new(Rect::new(0, 0, 80, 24), vec![path.clone()]);
+
+        let outcome = Dispatcher::dispatch(&mut app, Command::WriteQuitAll { force: false });
+
+        assert!(outcome.quit);
+        assert!(path.is_file());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn write_quit_does_not_quit_when_the_write_fails() {
+        let mut app = app();
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::WriteQuit {
+                path: None,
+                force: false,
+            },
+        );
+
+        assert!(!outcome.quit);
+        assert!(
+            app.model
+                .status
+                .as_deref()
+                .is_some_and(|status| status.starts_with("Save failed"))
+        );
     }
 }

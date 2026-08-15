@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use vim_script::host::CommandRequest;
 use vim_script::runtime::{RuntimeError, RuntimeErrorKind};
 
-use crate::controller::Command;
+use crate::controller::{Command, RangeOperation};
 
 /// Execute the Ex command request and translate it to a controller Command.
 pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -19,9 +19,13 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "wqall" => wqall(request),
         "read" => read(request),
         "file" => file(request),
-        "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "yank" | "put" | "copy" | "move" | "join" | "print" | "change"
-        | "/" | "?" | "substitute" | "s" | "&" | "~" | "smagic" | "snomagic" | "global" | "g" | "vglobal" | "v" | "nohlsearch" | "nohl" | "vimgrep" | "vimgrepadd" => placeholders(request),
+        "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "copy" | "move" | "join"
+        | "print" | "change" | "/" | "?" | "substitute" | "s" | "&" | "~" | "smagic"
+        | "snomagic" | "global" | "g" | "vglobal" | "v" | "nohlsearch" | "nohl" | "vimgrep"
+        | "vimgrepadd" => placeholders(request),
         "delete" => delete(request),
+        "yank" => yank(request),
+        "put" => put(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -99,20 +103,18 @@ fn cquit(request: CommandRequest) -> Result<Command, RuntimeError> {
     })
 }
 
-fn wq(_request: CommandRequest) -> Result<Command, RuntimeError> {
-    Err(RuntimeError::coded(
-        "E_NOTIMPL",
-        RuntimeErrorKind::HostError,
-        "wq command is a placeholder/stub for now",
-    ))
+fn wq(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let argument = request.command.arguments.trim();
+    Ok(Command::WriteQuit {
+        path: (!argument.is_empty()).then(|| PathBuf::from(argument)),
+        force: request.command.bang,
+    })
 }
 
-fn wqall(_request: CommandRequest) -> Result<Command, RuntimeError> {
-    Err(RuntimeError::coded(
-        "E_NOTIMPL",
-        RuntimeErrorKind::HostError,
-        "wqall command is a placeholder/stub for now",
-    ))
+fn wqall(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::WriteQuitAll {
+        force: request.command.bang,
+    })
 }
 
 fn read(_request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -135,12 +137,37 @@ fn placeholders(request: CommandRequest) -> Result<Command, RuntimeError> {
     Err(RuntimeError::coded(
         "E_NOTIMPL",
         RuntimeErrorKind::HostError,
-        format!("{} command is a placeholder/stub for now", request.command.name),
+        format!(
+            "{} command is a placeholder/stub for now",
+            request.command.name
+        ),
     ))
 }
 
 fn delete(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::Delete {
+    Ok(Command::RangeOp {
+        operation: RangeOperation::Delete,
+        bang: request.command.bang,
+        range: request.command.range,
+        count: request.command.count,
+        register: request.command.register,
+    })
+}
+
+fn yank(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::RangeOp {
+        operation: RangeOperation::Yank,
+        bang: request.command.bang,
+        range: request.command.range,
+        count: request.command.count,
+        register: request.command.register,
+    })
+}
+
+fn put(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::RangeOp {
+        operation: RangeOperation::Put,
+        bang: request.command.bang,
         range: request.command.range,
         count: request.command.count,
         register: request.command.register,

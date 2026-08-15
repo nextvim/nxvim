@@ -268,6 +268,25 @@ Exit criteria: no result path can expose a partially replaced or temporarily emp
 
 Validation: eight `textmate` tests pass, all 41 `nxvim` tests pass, and `cargo check --workspace` passes with existing unrelated warnings.
 
+#### Amendment — ownership relocated from `HighlightService` into `BufferState`
+
+`crates/vim-ui/REDESIGN.md` Phase 0 later removed `HighlightService` as a stateful struct
+entirely (its `HashMap<u64, BufferHighlightState>` was one of three parallel
+buffer-keyed maps causing state to leak on buffer removal; see that document's
+"Buffer-scoped state consolidation" section). `BufferState` is now the sole owner of
+`BufferHighlightState`, and `textmate::highlight_run`/`BufferHighlightState::highlight_row`
+are plain functions/methods operating on state the caller already holds.
+
+This is a relocation of the single owner, not a reintroduction of the Phase 1 bug this
+phase fixed: there is still exactly one `BufferHighlightState` per buffer, and
+`TextView::build_text` still borrows it directly (`Option<&BufferHighlightState>`) with
+no full-cache clone. "Two windows share cached rows and do not submit duplicate work"
+(required test, see below) still holds, since both windows resolve the same buffer id
+to the same `BufferState.highlights`, exactly as they previously resolved it to the same
+`HighlightService.buffers[buffer_id]`. Read "the service" in the rest of this document
+(Phases 4 onward) as "the buffer's own `BufferState.highlights`" wherever it refers to
+highlight-cache ownership.
+
 ### Phase 4 — Constant-time edit invalidation and no-flicker projection
 
 - Track revision, request generation, earliest dirty row, and authoritative boundary without scanning the suffix.

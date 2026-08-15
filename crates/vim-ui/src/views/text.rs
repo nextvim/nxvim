@@ -1,36 +1,34 @@
-use crate::id::WindowId;
 use crate::model::{ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
 use crate::renderer::Renderer;
-use crate::window::{UIContext, View};
+use crate::window::View;
 
-/// Renders a host-provided, already-laid-out text snapshot for one window.
+/// Renders an already-built `TextViewModel`. Mechanical: knows nothing about
+/// buffers, windows, or how the model was produced. The host rebuilds
+/// `self.model` (via `set_model`) each frame from whatever owns the real
+/// buffer/display-map state.
+#[derive(Default)]
 pub struct TextView {
-    window_id: WindowId,
+    model: Option<TextViewModel>,
 }
 
 impl TextView {
-    pub const fn new(window_id: WindowId) -> Self {
-        Self { window_id }
+    pub const fn new() -> Self {
+        Self { model: None }
     }
 
-    pub const fn window_id(&self) -> WindowId {
-        self.window_id
+    pub fn set_model(&mut self, model: TextViewModel) {
+        self.model = Some(model);
     }
 
-    fn model<'a>(&self, context: &'a dyn UIContext) -> Option<&'a TextViewModel> {
-        context.get_text_model(self.window_id)
+    pub fn model(&self) -> Option<&TextViewModel> {
+        self.model.as_ref()
     }
 }
 
 impl View for TextView {
-    fn draw(
-        &self,
-        area: Rect,
-        context: &dyn UIContext,
-        renderer: &mut dyn Renderer,
-    ) -> std::io::Result<()> {
-        let Some(model) = self.model(context) else {
+    fn draw(&self, area: Rect, renderer: &mut dyn Renderer) -> std::io::Result<()> {
+        let Some(model) = &self.model else {
             return Ok(());
         };
 
@@ -72,8 +70,8 @@ impl View for TextView {
         Ok(())
     }
 
-    fn cursor_screen_pos(&self, area: Rect, context: &dyn UIContext) -> Option<(u16, u16)> {
-        let model = self.model(context)?;
+    fn cursor_screen_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        let model = self.model.as_ref()?;
         let cursor = model.cursor.filter(|cursor| cursor.visible)?;
         if cursor.position.row >= area.height as u32 || cursor.position.column >= area.width as u32
         {
@@ -83,6 +81,18 @@ impl View for TextView {
             area.x + cursor.position.column as u16,
             area.y + cursor.position.row as u16,
         ))
+    }
+
+    fn cursor_shape(&self) -> crate::model::CursorShape {
+        self.model
+            .as_ref()
+            .and_then(|model| model.cursor)
+            .map(|cursor| cursor.shape)
+            .unwrap_or_default()
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 

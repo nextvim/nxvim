@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{Arc, atomic::AtomicU64},
-};
+use std::collections::BTreeMap;
 
 const CHECKPOINT_INTERVAL: u32 = 64;
 const MAX_CHECKPOINT_DISTANCE: u32 = CHECKPOINT_INTERVAL * 4;
@@ -9,16 +6,14 @@ const FALLBACK_PARSE_DISTANCE: u32 = 32;
 const IDLE_EXPAND_START: u32 = 1000;
 const IDLE_EXPAND_END: u32 = 500;
 
-use background_worker::TaskId;
 use rope::Point;
-use std::{cmp::Ordering, path::Path, sync::OnceLock};
+use std::{path::Path, sync::OnceLock};
 use syntect::{
     easy::ScopeRangeIterator,
     highlighting::{Highlighter, Theme, ThemeSet},
     parsing::{ParseState, ScopeStack, SyntaxSet},
 };
 use text::{BufferSnapshot, ToOffset, ToPoint};
-use vim_buffer::BufferId;
 
 /// A half-open UTF-8 byte-column range within one buffer row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +174,9 @@ pub fn parse_scopes_cancellable(
     Some((rows, checkpoints))
 }
 
+/// Per-buffer highlighting cache and incremental-parse bookkeeping. Owned by
+/// the buffer's own state (see `BufferState` in the `nxvim` binary crate) so it
+/// lives and dies with the buffer instead of in a separately-keyed service map.
 pub struct BufferHighlightState {
     pub checkpoints: BTreeMap<u32, ParseStateCheckpoint>,
     pub rows: BTreeMap<u32, Vec<HighlightSpan>>,
@@ -186,6 +184,18 @@ pub struct BufferHighlightState {
 }
 
 impl BufferHighlightState {
+    pub fn new() -> Self {
+        Self {
+            checkpoints: BTreeMap::new(),
+            rows: BTreeMap::new(),
+            published_snapshot: None,
+        }
+    }
+
+    pub fn highlight_row(&self, row: u32) -> Option<&[HighlightSpan]> {
+        self.rows.get(&row).map(|spans| spans.as_slice())
+    }
+
     fn nearest_checkpoint(&self, target_row: u32) -> Option<ParseStateCheckpoint> {
         let mut row = target_row - (target_row % CHECKPOINT_INTERVAL);
         loop {
@@ -204,102 +214,73 @@ impl BufferHighlightState {
     }
 }
 
-pub struct HighlightService {
-    pub buffers: HashMap<u64, BufferHighlightState>,
-}
-
-impl HighlightService {
-    pub fn new() -> Self {
-        Self {
-            buffers: HashMap::new(),
-        }
-    }
-
-    pub fn highlight_run(
-        &mut self,
-        buffer_id: u64,
-        snapshot: &BufferSnapshot,
-        file_path: Option<&str>,
-        mut row_start: u32,
-        mut row_end: u32,
-        expanded: bool,
-    ) {
-        if expanded {
-            row_start = row_start.saturating_sub(IDLE_EXPAND_START);
-            row_end = row_end.saturating_add(IDLE_EXPAND_END);
-        }
-
-        let state = self
-            .buffers
-            .entry(buffer_id)
-            .or_insert_with(|| BufferHighlightState {
-                checkpoints: BTreeMap::new(),
-                rows: BTreeMap::new(),
-                published_snapshot: None,
-            });
-
-        let mut lowest_affected_row: Option<u32> = None;
-        if let Some(previous) = state.published_snapshot.as_ref() {
-            if previous.version != snapshot.version {
-                for edit in snapshot.edits_since::<Point>(&previous.version) {
-                    let edit_row = edit.new.start.row;
-                    lowest_affected_row =
-                        Some(lowest_affected_row.map_or(edit_row, |r| r.min(edit_row)));
-                }
-            }
-        }
-
-        if let Some(lowest) = lowest_affected_row {
-            state.rows.split_off(&lowest);
-            state.checkpoints.split_off(&lowest);
-        }
-
-        if (row_start..=row_end).all(|row| state.rows.contains_key(&row)) {
-            state.published_snapshot = Some(snapshot.clone());
-            return;
-        }
-
-        let checkpoint = state.nearest_checkpoint(row_start);
-        let existing_checkpoints: Vec<ParseStateCheckpoint> =
-            state.checkpoints.values().cloned().collect();
-
-        if let Some((rows, checkpoints)) = parse_scopes_cancellable(
-            snapshot,
-            file_path,
-            row_start,
-            row_end,
-            checkpoint,
-            &existing_checkpoints,
-            || false,
-        ) {
-            state
-                .rows
-                .retain(|row, _| *row < row_start || *row > row_end);
-
-            state
-                .rows
-                .extend(rows.into_iter().map(|row| (row.row, row.spans)));
-            state.published_snapshot = Some(snapshot.clone());
-            state
-                .checkpoints
-                .extend(checkpoints.into_iter().map(|cp| (cp.row, cp)));
-        }
-    }
-
-    pub fn highlight_row(&self, buffer_id: u64, row: u32) -> Option<&[HighlightSpan]> {
-        self.buffers
-            .get(&buffer_id)
-            .and_then(|state| state.rows.get(&row).map(|spans| spans.as_slice()))
-    }
-
-    pub fn remove_buffer(&mut self, buffer_id: BufferId) {
-        self.buffers.remove(&buffer_id.get());
-    }
-}
-
-impl Default for HighlightService {
+impl Default for BufferHighlightState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Incrementally (re)parses `state` so it covers `row_start..=row_end`, reusing
+/// checkpoints and cached rows where possible. Call with the highlight state
+/// that belongs to the buffer being highlighted (e.g. `BufferState.highlights`).
+pub fn highlight_run(
+    state: &mut BufferHighlightState,
+    snapshot: &BufferSnapshot,
+    file_path: Option<&str>,
+    mut row_start: u32,
+    mut row_end: u32,
+    expanded: bool,
+) {
+    if expanded {
+        row_start = row_start.saturating_sub(IDLE_EXPAND_START);
+        row_end = row_end.saturating_add(IDLE_EXPAND_END);
+    }
+
+    let mut lowest_affected_row: Option<u32> = None;
+    if let Some(previous) = state.published_snapshot.as_ref() {
+        if previous.version != snapshot.version {
+            for edit in snapshot.edits_since::<Point>(&previous.version) {
+                let edit_row = edit.new.start.row;
+                lowest_affected_row =
+                    Some(lowest_affected_row.map_or(edit_row, |r| r.min(edit_row)));
+            }
+        }
+    }
+
+    if let Some(lowest) = lowest_affected_row {
+        state.rows.split_off(&lowest);
+        state.checkpoints.split_off(&lowest);
+    }
+
+    if (row_start..=row_end).all(|row| state.rows.contains_key(&row)) {
+        state.published_snapshot = Some(snapshot.clone());
+        return;
+    }
+
+    let checkpoint = state.nearest_checkpoint(row_start);
+    let existing_checkpoints: Vec<ParseStateCheckpoint> =
+        state.checkpoints.values().cloned().collect();
+
+    if let Some((rows, checkpoints)) = parse_scopes_cancellable(
+        snapshot,
+        file_path,
+        row_start,
+        row_end,
+        checkpoint,
+        &existing_checkpoints,
+        || false,
+    ) {
+        state
+            .rows
+            .retain(|row, _| *row < row_start || *row > row_end);
+
+        state
+            .rows
+            .extend(rows.into_iter().map(|row| (row.row, row.spans)));
+        state.published_snapshot = Some(snapshot.clone());
+        state
+            .checkpoints
+            .extend(checkpoints.into_iter().map(|cp| (cp.row, cp)));
     }
 }
 
@@ -307,46 +288,39 @@ impl Default for HighlightService {
 mod tests {
     use super::*;
     use clock::ReplicaId;
-    use vim_buffer::Buffer;
+    use vim_buffer::{Buffer, BufferId};
 
     #[test]
     fn test_highlight_run_non_expanded() {
-        let mut service = HighlightService::new();
+        let mut state = BufferHighlightState::new();
         let text = "fn main() {\n    println!(\"hello\");\n}\n".repeat(20);
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
 
-        service.highlight_run(buffer.id().get(), &snapshot, Some("main.rs"), 2, 5, false);
+        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, false);
 
         for r in 2..=5 {
-            assert!(service.highlight_row(buffer.id().get(), r).is_some());
+            assert!(state.highlight_row(r).is_some());
         }
 
-        assert!(service.highlight_row(buffer.id().get(), 0).is_none());
-        assert!(service.highlight_row(buffer.id().get(), 10).is_none());
+        assert!(state.highlight_row(0).is_none());
+        assert!(state.highlight_row(10).is_none());
     }
 
     #[test]
     fn test_highlight_run_expanded() {
-        let mut service = HighlightService::new();
+        let mut state = BufferHighlightState::new();
         let text = "let x = 42;\n".repeat(2000);
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
 
-        service.highlight_run(
-            buffer.id().get(),
-            &snapshot,
-            Some("main.rs"),
-            1100,
-            1200,
-            true,
-        );
+        highlight_run(&mut state, &snapshot, Some("main.rs"), 1100, 1200, true);
 
-        assert!(service.highlight_row(buffer.id().get(), 100).is_some());
-        assert!(service.highlight_row(buffer.id().get(), 1100).is_some());
-        assert!(service.highlight_row(buffer.id().get(), 1700).is_some());
+        assert!(state.highlight_row(100).is_some());
+        assert!(state.highlight_row(1100).is_some());
+        assert!(state.highlight_row(1700).is_some());
 
-        assert!(service.highlight_row(buffer.id().get(), 50).is_none());
-        assert!(service.highlight_row(buffer.id().get(), 1800).is_none());
+        assert!(state.highlight_row(50).is_none());
+        assert!(state.highlight_row(1800).is_none());
     }
 }

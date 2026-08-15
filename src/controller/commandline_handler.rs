@@ -1,11 +1,12 @@
 use text::{Point, ToOffset, ToPoint};
 use vim_input::{Action, Mode};
-use vim_ui::WindowId;
+use vim_ui::{Ui, WindowId};
 
 use crate::app::ui::ViewIds;
+use crate::app::windows::WindowOps;
 use crate::controller::input::InputController;
-use crate::script::ScriptRuntime;
 use crate::model::EditorModel;
+use crate::script::ScriptRuntime;
 
 use super::command::{CommandOutcome, ViewEffect};
 
@@ -24,6 +25,7 @@ impl CommandlineHandler {
     }
 
     pub fn execute(
+        ui: &mut Ui,
         model: &mut EditorModel,
         input: &mut InputController,
         script: &mut ScriptRuntime,
@@ -43,33 +45,42 @@ impl CommandlineHandler {
                 };
                 model.commandline_mode = mode_char;
                 input.set_mode(Mode::Insert);
-                let _ = model.edit_window(view_ids.commandline, |buffer, _context, window_state| {
-                    let len = buffer.as_text_buffer().len();
-                    let range = vim_buffer::TextRange::new(
-                        vim_buffer::ByteOffset(0),
-                        vim_buffer::ByteOffset(len),
-                    )
-                    .unwrap();
-                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-                    tx.replace(None, range, "");
-                    let _ = tx.commit(None);
+                let _ = WindowOps::edit_window(
+                    ui,
+                    model,
+                    view_ids.commandline,
+                    |buffer, _context, window_state| {
+                        let len = buffer.as_text_buffer().len();
+                        let range = vim_buffer::TextRange::new(
+                            vim_buffer::ByteOffset(0),
+                            vim_buffer::ByteOffset(len),
+                        )
+                        .unwrap();
+                        let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
+                        tx.replace(None, range, "");
+                        let _ = tx.commit(None);
 
-                    window_state.selections.clear(buffer.as_text_buffer());
-                    window_state.selections.add(buffer.as_text_buffer(), 0);
-                });
-                let mut outcome = CommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline));
-                outcome.view_effects.push(ViewEffect::SetCommandLineMode(mode_char));
+                        window_state.selections.clear(buffer.as_text_buffer());
+                        window_state.selections.add(buffer.as_text_buffer(), 0);
+                    },
+                );
+                let mut outcome =
+                    CommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline));
+                outcome
+                    .view_effects
+                    .push(ViewEffect::SetCommandLineMode(mode_char));
                 outcome
             }
             Action::Clear if active_window == view_ids.commandline => {
-                CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(model, view_ids)))
+                CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }
             Action::InsertNewLine { .. }
                 if active_window == view_ids.commandline
-                    && model.window_buffer(active_window) == Some(model.commandline_buffer()) =>
+                    && WindowOps::window_buffer(ui, active_window)
+                        == Some(model.commandline_buffer()) =>
             {
                 input.set_mode(Mode::Normal);
-                if let Some(command) = Self::current_command(model, active_window) {
+                if let Some(command) = Self::current_command(ui, model, active_window) {
                     if command.starts_with('/') || command.starts_with('?') {
                         let pattern = command[1..].to_string();
                         model.search_regex = onig::Regex::new(&pattern).ok();
@@ -78,7 +89,10 @@ impl CommandlineHandler {
                         model.search_regex = onig::Regex::new(&command).ok();
                         model.search_pattern = Some(command.clone());
                     }
-                    let cmd_to_execute = if command.starts_with(':') || command.starts_with('/') || command.starts_with('?') {
+                    let cmd_to_execute = if command.starts_with(':')
+                        || command.starts_with('/')
+                        || command.starts_with('?')
+                    {
                         command
                     } else {
                         format!("{}{}", model.commandline_mode, command)
@@ -87,22 +101,26 @@ impl CommandlineHandler {
                         model.status = Some(error);
                     }
                 }
-                CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(model, view_ids)))
+                CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }
             _ => CommandOutcome::default(),
         }
     }
 
-    fn editor_focus(model: &EditorModel, view_ids: ViewIds) -> WindowId {
-        model
-            .previous_window()
-            .filter(|&id| id != view_ids.commandline && model.window_state(id).is_some())
+    fn editor_focus(ui: &Ui, view_ids: ViewIds) -> WindowId {
+        ui.focus_manager()
+            .previous_id()
+            .filter(|&id| {
+                id != view_ids.commandline && ui.window(id).is_some_and(vim_ui::Window::has_content)
+            })
             .unwrap_or(view_ids.main)
     }
 
-    fn current_command(model: &EditorModel, commandline_id: WindowId) -> Option<String> {
+    fn current_command(ui: &Ui, model: &EditorModel, commandline_id: WindowId) -> Option<String> {
         let buffer_id = model.commandline_buffer();
-        let window = model.window_state(commandline_id)?;
+        let window = ui
+            .window(commandline_id)
+            .and_then(vim_ui::Window::window_state)?;
         let buffer = model.get_buffer(buffer_id).ok()?;
         let current_row = window
             .selections

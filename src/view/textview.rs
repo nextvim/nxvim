@@ -1,32 +1,67 @@
+use std::any::Any;
 use text::{Point, ToPoint};
-use vim_ui::{Rect, Renderer, UIContext, View, WindowId};
+use vim_ui::{Rect, Renderer, View, WindowState};
 
-use crate::model::WindowState;
+use crate::model::BufferState;
+use crate::view::globals::RenderGlobals;
 
+/// Renders one window's buffer content. Owns a small, cheap `vim_ui::TextView`
+/// model rebuilt each frame by `refresh` from the three data tiers (window
+/// state, buffer state, and render globals) — `draw` just renders it.
+#[derive(Default)]
 pub struct TextView {
     inner: vim_ui::TextView,
 }
 
 impl TextView {
-    pub const fn new(window_id: WindowId) -> Self {
+    pub fn new() -> Self {
         Self {
-            inner: vim_ui::TextView::new(window_id),
+            inner: vim_ui::TextView::new(),
         }
+    }
+
+    pub fn model(&self) -> Option<&vim_ui::TextViewModel> {
+        self.inner.model()
+    }
+
+    pub fn refresh(
+        &mut self,
+        buffer: &vim_buffer::Buffer,
+        window_state: &WindowState,
+        buffer_state: &BufferState,
+        inner_rect: Rect,
+        active: bool,
+        globals: &RenderGlobals,
+    ) {
+        let model = build_text(
+            buffer,
+            window_state,
+            inner_rect,
+            active,
+            globals.mode,
+            Some(&buffer_state.highlights),
+            globals.search_pattern,
+            globals.search_regex,
+        );
+        self.inner.set_model(model);
     }
 }
 
 impl View for TextView {
-    fn draw(
-        &self,
-        area: Rect,
-        context: &dyn UIContext,
-        renderer: &mut dyn Renderer,
-    ) -> std::io::Result<()> {
-        self.inner.draw(area, context, renderer)
+    fn draw(&self, area: Rect, renderer: &mut dyn Renderer) -> std::io::Result<()> {
+        self.inner.draw(area, renderer)
     }
 
-    fn cursor_screen_pos(&self, area: Rect, context: &dyn UIContext) -> Option<(u16, u16)> {
-        self.inner.cursor_screen_pos(area, context)
+    fn cursor_screen_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        self.inner.cursor_screen_pos(area)
+    }
+
+    fn cursor_shape(&self) -> vim_ui::CursorShape {
+        self.inner.cursor_shape()
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -36,7 +71,7 @@ pub fn build_text(
     inner_rect: Rect,
     active: bool,
     mode: vim_input::Mode,
-    highlight_service: &textmate::HighlightService,
+    highlights: Option<&textmate::BufferHighlightState>,
     _search_pattern: Option<&str>,
     _search_regex: Option<&onig::Regex>,
 ) -> vim_ui::TextViewModel {
@@ -66,7 +101,7 @@ pub fn build_text(
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line_chars.len();
 
-        let line_highlights = highlight_service.highlight_row(buffer.id().get(), buffer_row);
+        let line_highlights = highlights.and_then(|h| h.highlight_row(buffer_row));
         let mut highlight_index = 0;
 
         let mut gutter_text = if window.show_gutter {

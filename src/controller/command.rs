@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use vim_input::Action;
 use vim_ui::{NavigationDirection, SplitAxis, WindowId};
 
+use super::range::RangeOperation;
+
 pub enum Command {
     Editor {
         action: Action,
@@ -21,7 +23,16 @@ pub enum Command {
         path: Option<PathBuf>,
         force: bool,
     },
-    Delete {
+    WriteQuit {
+        path: Option<PathBuf>,
+        force: bool,
+    },
+    WriteQuitAll {
+        force: bool,
+    },
+    RangeOp {
+        operation: RangeOperation,
+        bang: bool,
         range: Option<vim_script::ast::CommandRange>,
         count: Option<u64>,
         register: Option<char>,
@@ -32,24 +43,43 @@ pub enum Command {
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Editor { action, register } => f.debug_struct("Editor")
+            Command::Editor { action, register } => f
+                .debug_struct("Editor")
                 .field("action", action)
                 .field("register", register)
                 .finish(),
             Command::PendingInput(seq) => f.debug_tuple("PendingInput").field(seq).finish(),
             Command::InvalidInput => write!(f, "InvalidInput"),
-            Command::Save { path, force } => f.debug_struct("Save")
+            Command::Save { path, force } => f
+                .debug_struct("Save")
                 .field("path", path)
                 .field("force", force)
                 .finish(),
-            Command::Quit { force } => f.debug_struct("Quit")
-                .field("force", force)
-                .finish(),
-            Command::Edit { path, force } => f.debug_struct("Edit")
+            Command::Quit { force } => f.debug_struct("Quit").field("force", force).finish(),
+            Command::Edit { path, force } => f
+                .debug_struct("Edit")
                 .field("path", path)
                 .field("force", force)
                 .finish(),
-            Command::Delete { range, count, register } => f.debug_struct("Delete")
+            Command::WriteQuit { path, force } => f
+                .debug_struct("WriteQuit")
+                .field("path", path)
+                .field("force", force)
+                .finish(),
+            Command::WriteQuitAll { force } => f
+                .debug_struct("WriteQuitAll")
+                .field("force", force)
+                .finish(),
+            Command::RangeOp {
+                operation,
+                bang,
+                range,
+                count,
+                register,
+            } => f
+                .debug_struct("RangeOp")
+                .field("operation", operation)
+                .field("bang", bang)
                 .field("range", range)
                 .field("count", count)
                 .field("register", register)

@@ -7,7 +7,7 @@
 - Target: upstream Vim `v9.2.0843` (`975e191dc817d8d00abca7197c4529a417c2f805`), as pinned by `oracle/vim-version.json`.
 - Authoritative command inventory: `oracle/help-v9.2.0843/index.txt`, especially `insert-index`, `normal-index`, `visual-index`, `ex-edit-index`, and `ex-cmd-index`.
 - Focused semantics: the other help files in `oracle/help-v9.2.0843/`.
-- Current nxvim inventory reviewed: `crates/vim-input/src/action.rs`, `crates/vim-input/src/keymap.rs`, `crates/vim-input/src/resolver.rs`, `src/controller/editor.rs`, `src/controller/*_handler.rs`, `src/app/script.rs`, and `crates/vim-script/src/ex_parser.rs`.
+- Current nxvim inventory reviewed: `crates/vim-input/src/action.rs`, `crates/vim-input/src/keymap.rs`, `crates/vim-input/src/resolver.rs`, `src/controller/editor.rs`, `src/controller/*_handler.rs`, `src/script.rs` and `src/script/*.rs`, and `crates/vim-script/src/ex_parser.rs`.
 
 This is a priority plan, not a claim that every obscure Vim integration belongs in nxvim. “Implement” means observable behavior, counts/ranges/registers/bang handling, errors, undo grouping, marks, and tests match the pinned Vim where applicable.
 
@@ -51,13 +51,79 @@ Important gaps or correctness concerns:
 
 ---
 
+## Implementation recipe: adding a new Ex command
+
+This section is the practical counterpart to the priority principles above:
+concrete steps for wiring a new Ex command through the current
+`src/script` → `controller` seam. See `CONTROLLER.md` for the rationale
+behind this shape and its history. Two already-implemented commands are
+worked examples: `:delete`/`:yank` (ranged) and `:wq`/`:wqall` (lifecycle).
+
+1. **Register the command spec.** Add a `CommandSpec` entry to
+   `src/script/registry.rs`: canonical name, minimum abbreviation, aliases,
+   and which of range/count/register/bang/`++opt`/`+cmd` it accepts. This is
+   the single source of truth the parser/resolver validate against; do not
+   hand-roll acceptance checks elsewhere.
+2. **Decide: ranged or lifecycle?**
+   - **Ranged** — the command's meaning depends on resolving a `CommandRange`
+     against live buffer/cursor/mark state (`:yank`, `:put`, and the P1.2/P1.3
+     commands below that are not yet implemented: `:copy`, `:move`, `:join`,
+     `:substitute`, `:global`, ...). Map the request in
+     `src/script/commands.rs` to `Command::RangeOp { operation:
+     RangeOperation::<Name>, bang, range, count, register }`. Add exactly one
+     match arm for `RangeOperation::<Name>` in `src/controller/range.rs`'s
+     `resolve_action`, returning the `vim_input::Action` that performs the
+     operation. No dispatcher change and no new `Command` variant are
+     needed — `Command::RangeOp` is generic over every ranged operation.
+   - **Lifecycle** — quit/save/edit-shaped, no line range (`:wq`, `:wqall`,
+     and the P1.1 commands below that are not yet implemented: `:read`,
+     `:file`, ...). Add a `Command::<Name>` variant in
+     `src/controller/command.rs`, map the request to it in
+     `src/script/commands.rs`, add one function on `LifecycleHandler`
+     (`src/controller/lifecycle_handler.rs`) that composes the existing
+     `SharedOperations` primitives, and add a one-line dispatcher arm that
+     calls it. Do not inline the operation's logic into
+     `src/controller/dispatcher.rs` itself.
+3. **Add a `vim_input::Action` only if nothing already expresses the
+   operation.** Range-only actions with no keyboard binding already exist
+   (`DeleteLines`, `YankLines`, `PutLines` in `crates/vim-input/src/action.rs`)
+   — check there first. If you do need a new variant: add it to the enum, the
+   `Display` impl, and the (exhaustive) `with_count` match in
+   `crates/vim-input/src/action.rs`, then add the corresponding arm in
+   `src/controller/editor.rs`'s `apply_action`. Reuse existing helpers there
+   (`self.paste`, `self.insert_text`, `services.clipboard`) instead of
+   duplicating buffer-transaction logic.
+4. **Test at three levels**, matching the existing tests for
+   `:delete`/`:yank`/`:put`/`:wq`/`:wqall`:
+   - `src/script.rs`: the script engine resolves the command name,
+     abbreviation, bang, range, and register, and emits the expected
+     `Command`.
+   - `src/controller/mod.rs`: `Dispatcher::dispatch` with a hand-built
+     `Command` actually mutates a buffer, quits, etc. as expected — not just
+     that the code compiles. (`write_quit_does_not_quit_when_the_write_fails`
+     exists specifically because a dispatcher-level test caught a real bug
+     that a script-level test alone would not have caught.)
+   - `src/script/registry.rs`'s `test_central_registry_specifications` covers
+     alias/abbreviation resolution automatically once the spec is registered;
+     no per-command test is needed there.
+5. **Update this file.** Move the command from its `planned-Pn` bucket (see
+   "Scope accounting" below) once it is implemented and tested, and correct
+   any compatibility caveats that no longer apply.
+
+Completion bar for "implemented": aliases/abbreviations, range/count/register/
+bang handling, undo and modified-state effects, and error behavior all match
+the pinned Vim (or are a documented, deliberate nxvim extension), per the
+priority principles above.
+
+---
+
 ## P0 — Command substrate and correctness blockers
 
 These are prerequisites for safely expanding the command table.
 
 ### P0.1 Central command specification registry
 
-Replace ad-hoc registrations in `src/app/script.rs` with one declarative registry containing:
+Replace ad-hoc registrations in the script adapter with one declarative registry containing:
 
 - canonical name, minimum unique abbreviation, aliases;
 - accepted range, count, register, `!`, `++opt`, `+cmd`, filename and bar behavior;

@@ -1,12 +1,16 @@
 use crate::app::App;
 use crate::app::services::{indexer, treesitter};
+use crate::app::windows::WindowOps;
 use crate::controller::{Command, CommandOutcome, Dispatcher, ViewEffect};
 use crate::terminal::TerminalSession;
-use crate::view::{EditorViewModel, LayoutSnapshot};
+use crate::view::{
+    CommandLineView, LayoutSnapshot, RenderGlobals, StatusLineView, TabLineView, TextView,
+    WindowLayout, globals::buffer_display_name,
+};
 use crossterm::event;
 use std::io::{Write, stdout};
 use text::ToPoint;
-use vim_ui::BufferedRenderer;
+use vim_ui::{BufferedRenderer, Window};
 
 /// Owns terminal lifecycle, source polling, command dispatch, and rendering.
 pub struct Runtime {
@@ -127,10 +131,8 @@ impl Runtime {
     }
 
     fn schedule_state_updates(&mut self, is_idle: bool) {
-        let window_ids: Vec<_> = self
-            .app
-            .model
-            .window_buffers()
+        let window_ids: Vec<_> = WindowOps::window_buffers(&self.app.ui)
+            .into_iter()
             .map(|(window_id, _)| window_id)
             .collect();
 
@@ -145,11 +147,15 @@ impl Runtime {
     fn schedule_window_display_map(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
         const CHUNK_ROWS: u32 = 4_096;
 
-        let buffer_id = self.app.model.window_buffer(window_id)?;
+        let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
-        let window = self.app.model.window_state(window_id)?;
+        let window = self
+            .app
+            .ui
+            .window(window_id)
+            .and_then(Window::window_state)?;
 
         if window.pending_display_map.is_some() {
             return None;
@@ -182,7 +188,11 @@ impl Runtime {
         );
 
         if task.is_some() {
-            let window_mut = self.app.model.window_state_mut(window_id)?;
+            let window_mut = self
+                .app
+                .ui
+                .window_mut(window_id)
+                .and_then(Window::window_state_mut)?;
             window_mut.pending_display_map = Some((generation, requested_rows));
         }
 
@@ -194,10 +204,15 @@ impl Runtime {
         window_id: vim_ui::WindowId,
         expanded: bool,
     ) -> Option<()> {
-        let buffer_id = self.app.model.window_buffer(window_id)?;
+        let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
-        let window = self.app.model.window_state(window_id)?;
+        let file_path = buffer.path().and_then(|p| p.to_str()).map(str::to_owned);
+        let window = self
+            .app
+            .ui
+            .window(window_id)
+            .and_then(Window::window_state)?;
 
         let display_map_snapshot = window.display_map.snapshot();
         let scroll_y = display_map_snapshot.scroll_y;
@@ -207,12 +222,11 @@ impl Runtime {
             (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
         );
 
-        let file_path = buffer.path().and_then(|p| p.to_str());
-
-        self.app.services.highlight.highlight_run(
-            buffer_id.get(),
+        let highlights = &mut self.app.model.buffer_state_mut(buffer_id)?.highlights;
+        textmate::highlight_run(
+            highlights,
             &snapshot,
-            file_path,
+            file_path.as_deref(),
             start_row,
             end_row,
             expanded,
@@ -222,14 +236,21 @@ impl Runtime {
     }
 
     fn schedule_window_treesitter(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
-        let buffer_id = self.app.model.window_buffer(window_id)?;
+        let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let path = buffer.path()?.to_str()?;
         let grammar = treesitter::Grammar::from_path(path)?;
         let changedtick = buffer.changedtick();
 
-        if !self.app.services.treesitter.is_parsing(buffer_id) && self.app.services.treesitter.syntax_tree(buffer_id).is_none() {
+        if !self.app.services.treesitter.is_parsing(buffer_id)
+            && self
+                .app
+                .services
+                .treesitter
+                .syntax_tree(buffer_id)
+                .is_none()
+        {
             if let Some(state) = self.app.model.buffer_state(buffer_id) {
                 if let Ok(syntax_tree) = &state.treesitter {
                     if syntax_tree.grammar() == grammar {
@@ -273,7 +294,8 @@ impl Runtime {
             crate::app::services::TaskType::Treesitter,
             move |token| {
                 let cancelled = move || token.is_cancelled();
-                let res = treesitter::parse_snapshot_cancellable(snapshot, grammar, old_tree, cancelled);
+                let res =
+                    treesitter::parse_snapshot_cancellable(snapshot, grammar, old_tree, cancelled);
                 Some(res)
             },
         )?;
@@ -286,12 +308,17 @@ impl Runtime {
     }
 
     fn schedule_window_indexer(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
-        let buffer_id = self.app.model.window_buffer(window_id)?;
+        let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let changedtick = buffer.changedtick();
 
-        if self.app.services.indexer.should_index(buffer_id, changedtick) {
+        if self
+            .app
+            .services
+            .indexer
+            .should_index(buffer_id, changedtick)
+        {
             if let Some(state) = self.app.model.buffer_state(buffer_id) {
                 if let Ok(index_result) = &state.index {
                     if index_result.changedtick == changedtick {
@@ -360,33 +387,184 @@ impl Runtime {
         out: &mut impl Write,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let layout = self.layout_snapshot(rect);
-        crate::app::ui::ViewSynchronizer::synchronize_viewports(&mut self.app.model, &layout);
+        crate::app::ui::ViewSynchronizer::synchronize_viewports(
+            &mut self.app.ui,
+            &self.app.model,
+            &layout,
+        );
 
-        let window_ids: Vec<_> = self
-            .app
-            .model
-            .window_buffers()
+        let window_ids: Vec<_> = WindowOps::window_buffers(&self.app.ui)
+            .into_iter()
             .map(|(window_id, _)| window_id)
             .collect();
         for window_id in window_ids {
             self.schedule_window_highlight(window_id, false);
         }
 
-        let view_model = EditorViewModel::build(
-            &self.app.model,
-            &self.app.controller,
-            &self.app.services.highlight,
-            &layout,
-        );
-        self.app.ui.draw(&view_model, &mut self.buffered_renderer)?;
+        self.refresh_views(&layout);
+        self.app.ui.draw(&mut self.buffered_renderer)?;
         self.buffered_renderer.flush(out)?;
         out.flush()?;
         Ok(())
     }
 
+    /// Rebuilds every window's owned rendering model from window state,
+    /// buffer state, and `RenderGlobals`, immediately before the draw pass.
+    fn refresh_views(&mut self, layout: &LayoutSnapshot) {
+        let colorscheme = self.app.ui.colorscheme().cloned();
+        let globals = RenderGlobals {
+            mode: self.app.controller.mode(),
+            status_message: self.app.model.status.as_deref(),
+            search_pattern: self.app.model.search_pattern.as_deref(),
+            search_regex: self.app.model.search_regex.as_ref(),
+            colorscheme: colorscheme.as_ref(),
+        };
+
+        let active_window = self.app.ui.focused_window_id();
+        let commandline_id = self.app.view_ids.commandline;
+
+        for (window_id, buffer_id) in WindowOps::window_buffers(&self.app.ui) {
+            let Ok(buffer) = self.app.model.get_buffer(buffer_id) else {
+                continue;
+            };
+            let Some(buffer_state) = self.app.model.buffer_state(buffer_id) else {
+                continue;
+            };
+            let fallback_viewport = self
+                .app
+                .ui
+                .window(window_id)
+                .and_then(Window::window_state)
+                .map(|state| state.viewport)
+                .unwrap_or_default();
+            let window_layout = layout.get(window_id).unwrap_or(WindowLayout {
+                rect: vim_ui::Rect::new(
+                    0,
+                    0,
+                    fallback_viewport.width as u16,
+                    fallback_viewport.height as u16,
+                ),
+                draws_border: fallback_viewport.has_border,
+            });
+            let inner_rect = if window_layout.draws_border {
+                window_layout.rect.inner(1)
+            } else {
+                window_layout.rect
+            };
+            let active = window_id == active_window;
+
+            let Some(window) = self.app.ui.window_mut(window_id) else {
+                continue;
+            };
+            if window_id == commandline_id {
+                let (window_state, view) = window.refresh_parts::<CommandLineView>();
+                if let (Some(window_state), Some(view)) = (window_state, view) {
+                    view.refresh(
+                        buffer,
+                        window_state,
+                        buffer_state,
+                        inner_rect,
+                        active,
+                        &globals,
+                    );
+                }
+            } else {
+                let (window_state, view) = window.refresh_parts::<TextView>();
+                if let (Some(window_state), Some(view)) = (window_state, view) {
+                    view.refresh(
+                        buffer,
+                        window_state,
+                        buffer_state,
+                        inner_rect,
+                        active,
+                        &globals,
+                    );
+                }
+            }
+        }
+
+        let buffer_ids = self.app.model.list();
+        let tabs: Vec<String> = buffer_ids
+            .iter()
+            .map(|&id| buffer_display_name(&self.app.model, id))
+            .collect();
+        let active_index = WindowOps::window_buffer(&self.app.ui, active_window)
+            .and_then(|id| buffer_ids.iter().position(|&candidate| candidate == id))
+            .unwrap_or(0);
+        if let Some(view) = self
+            .app
+            .ui
+            .window_mut(self.app.view_ids.tabline)
+            .and_then(Window::view_as_mut::<TabLineView>)
+        {
+            view.refresh(&tabs, active_index, &globals);
+        }
+
+        let (buffer_name, modified, cursor, scope_path) = self.status_line_data(active_window);
+        if let Some(view) = self
+            .app
+            .ui
+            .window_mut(self.app.view_ids.statusline)
+            .and_then(Window::view_as_mut::<StatusLineView>)
+        {
+            view.refresh(&globals, buffer_name, modified, cursor, scope_path);
+        }
+    }
+
+    fn status_line_data(
+        &self,
+        active_window: vim_ui::WindowId,
+    ) -> (String, bool, Option<(u32, u32)>, Vec<String>) {
+        let Some(buffer_id) = WindowOps::window_buffer(&self.app.ui, active_window) else {
+            return (String::new(), false, None, Vec::new());
+        };
+        let buffer_name = buffer_display_name(&self.app.model, buffer_id);
+        let Ok(buffer) = self.app.model.get_buffer(buffer_id) else {
+            return (buffer_name, false, None, Vec::new());
+        };
+        let modified = buffer.is_modified();
+        let Some(window_state) = self
+            .app
+            .ui
+            .window(active_window)
+            .and_then(Window::window_state)
+        else {
+            return (buffer_name, modified, None, Vec::new());
+        };
+        let point = if window_state.selections.selections.is_empty() {
+            text::Point::new(0, 0)
+        } else {
+            window_state
+                .selections
+                .primary()
+                .head()
+                .to_point(buffer.snapshot().as_inner())
+        };
+        let cursor = Some((point.row + 1, point.column + 1));
+
+        let mut scope_path = Vec::new();
+        if let Some(state) = self.app.model.buffer_state(buffer_id) {
+            if let Ok(tree) = &state.treesitter {
+                if let Ok(offset) = buffer
+                    .snapshot()
+                    .point_to_offset(vim_buffer::Point::new(point.row, point.column))
+                {
+                    scope_path = tree
+                        .scope_path_at_byte(offset.0)
+                        .into_iter()
+                        .filter(|node| node.named && !node.kind.is_empty())
+                        .map(|node| node.kind)
+                        .collect();
+                }
+            }
+        }
+
+        (buffer_name, modified, cursor, scope_path)
+    }
+
     fn layout_snapshot(&self, fallback: vim_ui::Rect) -> LayoutSnapshot {
         let mut snapshot = LayoutSnapshot::default();
-        for (window_id, _) in self.app.model.window_buffers() {
+        for (window_id, _) in WindowOps::window_buffers(&self.app.ui) {
             let rect = self
                 .app
                 .ui
