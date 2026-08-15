@@ -5,7 +5,9 @@ use std::{
 
 const CHECKPOINT_INTERVAL: u32 = 64;
 const MAX_CHECKPOINT_DISTANCE: u32 = CHECKPOINT_INTERVAL * 4;
-const FALLBACK_PARSE_DISTANCE: u32 = CHECKPOINT_INTERVAL * 2;
+const FALLBACK_PARSE_DISTANCE: u32 = CHECKPOINT_INTERVAL * 1;
+const IDLE_EXPAND_START: u32 = 1000;
+const IDLE_EXPAND_END: u32 = 500;
 
 use background_worker::TaskId;
 use rope::Point;
@@ -52,8 +54,6 @@ impl std::fmt::Debug for ParseStateCheckpoint {
             .finish()
     }
 }
-
-
 
 fn syntax_set() -> &'static SyntaxSet {
     static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
@@ -228,9 +228,15 @@ impl HighlightService {
         buffer_id: u64,
         snapshot: &BufferSnapshot,
         file_path: Option<&str>,
-        row_start: u32,
-        row_end: u32,
+        mut row_start: u32,
+        mut row_end: u32,
+        expanded: bool,
     ) {
+        if expanded {
+            row_start = row_start.saturating_sub(IDLE_EXPAND_START);
+            row_end = row_end.saturating_add(IDLE_EXPAND_END);
+        }
+
         let state = self
             .buffers
             .entry(buffer_id)
@@ -302,5 +308,60 @@ impl HighlightService {
 impl Default for HighlightService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clock::ReplicaId;
+    use vim_buffer::Buffer;
+
+    #[test]
+    fn test_highlight_run_non_expanded() {
+        let mut service = HighlightService::new();
+        let text = "fn main() {\n    println!(\"hello\");\n}\n".repeat(20);
+        let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let snapshot = buffer.snapshot().as_inner().clone();
+
+        service.highlight_run(
+            buffer.id().get(),
+            &snapshot,
+            Some("main.rs"),
+            2,
+            5,
+            false,
+        );
+
+        for r in 2..=5 {
+            assert!(service.highlight_row(buffer.id().get(), r).is_some());
+        }
+
+        assert!(service.highlight_row(buffer.id().get(), 0).is_none());
+        assert!(service.highlight_row(buffer.id().get(), 10).is_none());
+    }
+
+    #[test]
+    fn test_highlight_run_expanded() {
+        let mut service = HighlightService::new();
+        let text = "let x = 42;\n".repeat(2000);
+        let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let snapshot = buffer.snapshot().as_inner().clone();
+
+        service.highlight_run(
+            buffer.id().get(),
+            &snapshot,
+            Some("main.rs"),
+            1100,
+            1200,
+            true,
+        );
+
+        assert!(service.highlight_row(buffer.id().get(), 100).is_some());
+        assert!(service.highlight_row(buffer.id().get(), 1100).is_some());
+        assert!(service.highlight_row(buffer.id().get(), 1700).is_some());
+
+        assert!(service.highlight_row(buffer.id().get(), 50).is_none());
+        assert!(service.highlight_row(buffer.id().get(), 1800).is_none());
     }
 }

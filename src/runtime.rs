@@ -30,9 +30,11 @@ impl Runtime {
         let mut out = stdout();
         let rect = self.app.ui.screen_rect();
         self.redraw(rect, &mut out)?;
-        self.schedule_state_updates();
+        self.schedule_state_updates(true);
 
         let mut should_redraw = false;
+        let mut last_command_time = std::time::Instant::now();
+        let mut is_idle = false;
 
         'main_loop: loop {
             let current_rect = self.app.ui.screen_rect();
@@ -70,7 +72,22 @@ impl Runtime {
             }
 
             if commands.is_empty() {
-                self.schedule_state_updates();
+                self.schedule_state_updates(is_idle);
+            }
+
+            if !commands.is_empty() {
+                last_command_time = std::time::Instant::now();
+                if is_idle {
+                    is_idle = false;
+                    if self.app.model.status.as_deref() == Some("idle") {
+                        self.app.model.status = None;
+                        should_redraw = true;
+                    }
+                }
+            } else if !is_idle && last_command_time.elapsed() >= std::time::Duration::from_secs(2) {
+                is_idle = true;
+                self.app.model.status = Some("idle".to_string());
+                should_redraw = true;
             }
 
             for command in commands {
@@ -108,7 +125,7 @@ impl Runtime {
         );
     }
 
-    fn schedule_state_updates(&mut self) {
+    fn schedule_state_updates(&mut self, is_idle: bool) {
         let window_ids: Vec<_> = self
             .app
             .model
@@ -117,12 +134,12 @@ impl Runtime {
             .collect();
 
         for window_id in window_ids {
-            self.schedule_window_display_map_expansion(window_id);
-            self.schedule_window_highlight(window_id);
+            self.schedule_window_display_map(window_id);
+            self.schedule_window_highlight(window_id, is_idle);
         }
     }
 
-    fn schedule_window_display_map_expansion(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
+    fn schedule_window_display_map(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
         const CHUNK_ROWS: u32 = 4_096;
 
         let buffer_id = self.app.model.window_buffer(window_id)?;
@@ -169,7 +186,7 @@ impl Runtime {
         Some(())
     }
 
-    fn schedule_window_highlight(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
+    fn schedule_window_highlight(&mut self, window_id: vim_ui::WindowId, expanded: bool) -> Option<()> {
         let buffer_id = self.app.model.window_buffer(window_id)?;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
@@ -191,6 +208,7 @@ impl Runtime {
             file_path,
             start_row,
             end_row,
+            expanded,
         );
 
         Some(())
@@ -219,7 +237,7 @@ impl Runtime {
             .map(|(window_id, _)| window_id)
             .collect();
         for window_id in window_ids {
-            self.schedule_window_highlight(window_id);
+            self.schedule_window_highlight(window_id, false);
         }
 
         let view_model = EditorViewModel::build(
