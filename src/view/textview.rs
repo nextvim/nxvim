@@ -323,7 +323,6 @@ mod tests {
         textmate::HighlightSpan {
             start_column,
             end_column,
-            scopes: Vec::new(),
             foreground: [1, 2, 3],
         }
     }

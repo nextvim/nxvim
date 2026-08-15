@@ -35,11 +35,12 @@ impl Runtime {
         let mut out = stdout();
         let rect = self.app.ui.screen_rect();
         self.redraw(rect, &mut out)?;
-        self.schedule_state_updates(true);
+        self.schedule_state_updates(None);
 
         let mut should_redraw = false;
         let mut last_command_time = std::time::Instant::now();
         let mut is_idle = false;
+        let mut idle_since: Option<std::time::Instant> = None;
 
         'main_loop: loop {
             let current_rect = self.app.ui.screen_rect();
@@ -77,13 +78,16 @@ impl Runtime {
             }
 
             if commands.is_empty() {
-                self.schedule_state_updates(is_idle);
+                self.schedule_state_updates(
+                    idle_since.map(|since: std::time::Instant| since.elapsed()),
+                );
             }
 
             if !commands.is_empty() {
                 last_command_time = std::time::Instant::now();
                 if is_idle {
                     is_idle = false;
+                    idle_since = None;
                     if self.app.model.status.as_deref() == Some("idle") {
                         self.app.model.status = None;
                         should_redraw = true;
@@ -91,6 +95,7 @@ impl Runtime {
                 }
             } else if !is_idle && last_command_time.elapsed() >= std::time::Duration::from_secs(2) {
                 is_idle = true;
+                idle_since = Some(std::time::Instant::now());
                 self.app.model.status = Some("idle".to_string());
                 should_redraw = true;
             }
@@ -130,7 +135,36 @@ impl Runtime {
         );
     }
 
-    fn schedule_state_updates(&mut self, is_idle: bool) {
+    /// Speculative idle prefetch grows the highlighted margin around the
+    /// viewport gradually across repeated idle ticks instead of requesting
+    /// the full margin in one shot. `highlight_run` parses any newly
+    /// requested, not-yet-cached rows synchronously, so a large one-shot
+    /// margin (previously up to 1000 rows before + 500 after) could stall
+    /// the main loop for a visible amount of time. Ramping the margin by a
+    /// bounded step every ~50ms tick keeps each synchronous parse small
+    /// while still reaching full prefetch coverage within about half a
+    /// second of going idle.
+    fn schedule_state_updates(&mut self, idle_elapsed: Option<std::time::Duration>) {
+        const IDLE_EXPAND_STEP_BEFORE: u32 = 100;
+        const IDLE_EXPAND_STEP_AFTER: u32 = 50;
+        const IDLE_EXPAND_MAX_BEFORE: u32 = 1000;
+        const IDLE_EXPAND_MAX_AFTER: u32 = 500;
+
+        let (expand_before, expand_after) = match idle_elapsed {
+            Some(elapsed) => {
+                let ticks = elapsed.as_millis() as u32 / 50;
+                (
+                    ticks
+                        .saturating_mul(IDLE_EXPAND_STEP_BEFORE)
+                        .min(IDLE_EXPAND_MAX_BEFORE),
+                    ticks
+                        .saturating_mul(IDLE_EXPAND_STEP_AFTER)
+                        .min(IDLE_EXPAND_MAX_AFTER),
+                )
+            }
+            None => (0, 0),
+        };
+
         let window_ids: Vec<_> = WindowOps::window_buffers(&self.app.ui)
             .into_iter()
             .map(|(window_id, _)| window_id)
@@ -138,7 +172,7 @@ impl Runtime {
 
         for window_id in window_ids {
             self.schedule_window_display_map(window_id);
-            self.schedule_window_highlight(window_id, is_idle);
+            self.schedule_window_highlight(window_id, expand_before, expand_after);
             self.schedule_window_treesitter(window_id);
             self.schedule_window_indexer(window_id);
         }
@@ -202,7 +236,8 @@ impl Runtime {
     fn schedule_window_highlight(
         &mut self,
         window_id: vim_ui::WindowId,
-        expanded: bool,
+        expand_before: u32,
+        expand_after: u32,
     ) -> Option<()> {
         let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
@@ -229,7 +264,8 @@ impl Runtime {
             file_path.as_deref(),
             start_row,
             end_row,
-            expanded,
+            expand_before,
+            expand_after,
         );
 
         Some(())
@@ -398,7 +434,7 @@ impl Runtime {
             .map(|(window_id, _)| window_id)
             .collect();
         for window_id in window_ids {
-            self.schedule_window_highlight(window_id, false);
+            self.schedule_window_highlight(window_id, 0, 0);
         }
 
         self.refresh_views(&layout);

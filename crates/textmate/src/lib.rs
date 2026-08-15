@@ -3,15 +3,14 @@ use std::collections::BTreeMap;
 const CHECKPOINT_INTERVAL: u32 = 64;
 const MAX_CHECKPOINT_DISTANCE: u32 = CHECKPOINT_INTERVAL * 4;
 const FALLBACK_PARSE_DISTANCE: u32 = 32;
-const IDLE_EXPAND_START: u32 = 1000;
-const IDLE_EXPAND_END: u32 = 500;
 
 use rope::Point;
+use std::collections::HashMap;
 use std::{path::Path, sync::OnceLock};
 use syntect::{
     easy::ScopeRangeIterator,
     highlighting::{Highlighter, Theme, ThemeSet},
-    parsing::{ParseState, ScopeStack, SyntaxSet},
+    parsing::{ParseState, Scope, ScopeStack, SyntaxSet},
 };
 use text::{BufferSnapshot, ToOffset, ToPoint};
 
@@ -20,7 +19,6 @@ use text::{BufferSnapshot, ToOffset, ToPoint};
 pub struct HighlightSpan {
     pub start_column: u32,
     pub end_column: u32,
-    pub scopes: Vec<String>,
     pub foreground: [u8; 3],
 }
 
@@ -100,6 +98,17 @@ pub fn parse_scopes_cancellable(
     let mut checkpoints = Vec::new();
     let highlighter = Highlighter::new(highlight_theme());
 
+    // Style resolution (`style_for_stack`) walks the theme's scope selectors
+    // and is far more expensive than a hash lookup. The same scope stack
+    // recurs constantly within and across lines (e.g. every plain-text run,
+    // every identifier of the same kind), so memoize it for the duration of
+    // this parse. Lookups borrow `stack.as_slice()` directly and only
+    // allocate on first sight of a given stack.
+    let mut style_cache: HashMap<Vec<Scope>, [u8; 3]> = HashMap::new();
+
+    // Reused across rows to avoid a fresh allocation for every line's text.
+    let mut text = String::new();
+
     for row in start_row_iter..=end_row_iter {
         if is_cancelled() {
             return None;
@@ -127,10 +136,13 @@ pub fn parse_scopes_cancellable(
             }
         }
 
-        let mut text: String = snapshot
+        text.clear();
+        for chunk in snapshot
             .as_rope()
             .chunks_in_range(line_start_offset..line_end_offset)
-            .collect();
+        {
+            text.push_str(chunk);
+        }
         text.push('\n');
         let parsed = parser.parse_line(&text, &syntax_set).ok()?;
 
@@ -143,21 +155,27 @@ pub fn parse_scopes_cancellable(
                 if range.start == range.end {
                     continue;
                 }
-                let scope_style = highlighter.style_for_stack(stack.as_slice());
                 let start_column = range.start.min(snapshot.line_len(row) as usize) as u32;
                 let end_column = range.end.min(snapshot.line_len(row) as usize) as u32;
                 if start_column == end_column {
                     continue;
                 }
-                spans.push(HighlightSpan {
-                    start_column,
-                    end_column,
-                    scopes: stack.as_slice().iter().map(ToString::to_string).collect(),
-                    foreground: [
+                let foreground = if let Some(cached) = style_cache.get(stack.as_slice()) {
+                    *cached
+                } else {
+                    let scope_style = highlighter.style_for_stack(stack.as_slice());
+                    let foreground = [
                         scope_style.foreground.r,
                         scope_style.foreground.g,
                         scope_style.foreground.b,
-                    ],
+                    ];
+                    style_cache.insert(stack.as_slice().to_vec(), foreground);
+                    foreground
+                };
+                spans.push(HighlightSpan {
+                    start_column,
+                    end_column,
+                    foreground,
                 });
             }
 
@@ -223,18 +241,24 @@ impl Default for BufferHighlightState {
 /// Incrementally (re)parses `state` so it covers `row_start..=row_end`, reusing
 /// checkpoints and cached rows where possible. Call with the highlight state
 /// that belongs to the buffer being highlighted (e.g. `BufferState.highlights`).
+///
+/// `expand_before`/`expand_after` widen the requested range by an explicit
+/// row count (used for idle speculative prefetch). Callers driving idle
+/// prefetch should ramp these up gradually across repeated calls rather than
+/// requesting a large margin all at once: every row outside the previously
+/// cached range is parsed synchronously in this call, so a large one-shot
+/// margin (e.g. 1000+ rows) can visibly stall the caller's thread.
 pub fn highlight_run(
     state: &mut BufferHighlightState,
     snapshot: &BufferSnapshot,
     file_path: Option<&str>,
-    mut row_start: u32,
-    mut row_end: u32,
-    expanded: bool,
+    row_start: u32,
+    row_end: u32,
+    expand_before: u32,
+    expand_after: u32,
 ) {
-    if expanded {
-        row_start = row_start.saturating_sub(IDLE_EXPAND_START);
-        row_end = row_end.saturating_add(IDLE_EXPAND_END);
-    }
+    let row_start = row_start.saturating_sub(expand_before);
+    let row_end = row_end.saturating_add(expand_after);
 
     let mut lowest_affected_row: Option<u32> = None;
     if let Some(previous) = state.published_snapshot.as_ref() {
@@ -297,7 +321,7 @@ mod tests {
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
 
-        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, false);
+        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0);
 
         for r in 2..=5 {
             assert!(state.highlight_row(r).is_some());
@@ -314,7 +338,15 @@ mod tests {
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
 
-        highlight_run(&mut state, &snapshot, Some("main.rs"), 1100, 1200, true);
+        highlight_run(
+            &mut state,
+            &snapshot,
+            Some("main.rs"),
+            1100,
+            1200,
+            1000,
+            500,
+        );
 
         assert!(state.highlight_row(100).is_some());
         assert!(state.highlight_row(1100).is_some());
