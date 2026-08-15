@@ -119,7 +119,9 @@ pub fn build_text(
 
         for column in 0..=line_len {
             let is_eol = column == line_len;
-            let is_tab = !is_eol && line_chars[column] == '\t';
+            // `line_text` already expands tabs into spaces up to the next tab
+            // stop (see `display_map::tab_map`), so no special-casing is
+            // needed here.
             let character = if is_eol { ' ' } else { line_chars[column] };
             let display_point = display_map::DisplayPoint::new(row, (column as u32) + scroll_x);
             let point = display_map_snapshot.display_point_to_point(display_point);
@@ -160,12 +162,7 @@ pub fn build_text(
             }
 
             if let Some(span) = spans.last_mut().filter(|span| span.style == style) {
-                if is_tab {
-                    // TODO
-                    span.text.push(' ');
-                } else {
-                    span.text.push(character);
-                }
+                span.text.push(character);
             } else {
                 spans.push(vim_ui::model::TextSpan::new(character.to_string(), style));
             }

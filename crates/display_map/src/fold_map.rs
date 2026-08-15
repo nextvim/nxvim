@@ -2,6 +2,35 @@ use clock::ReplicaId;
 use std::ops::Range;
 use text::{Buffer, BufferId, BufferSnapshot, Point};
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    /// Number of times `FoldMap::new` has actually rebuilt fold mappings (the
+    /// O(document) path), used to assert that unrelated changes (e.g. moving
+    /// the hot window with an unchanged buffer/fold set) do not trigger it.
+    static BUILD_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_build_count() {
+    BUILD_COUNT.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn build_count() -> u64 {
+    BUILD_COUNT.get()
+}
+
+#[cfg(test)]
+fn record_build() {
+    BUILD_COUNT.set(BUILD_COUNT.get() + 1);
+}
+
+#[cfg(not(test))]
+fn record_build() {}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Fold {
     pub start: Point,
@@ -31,6 +60,7 @@ impl FoldMap {
                 mappings: Vec::new(),
             };
         }
+        record_build();
         folds.sort();
         // Remove nested or overlapping folds (keep outermost)
         let mut clean_folds: Vec<Fold> = Vec::new();
@@ -119,32 +149,23 @@ impl FoldMap {
         if self.mappings.is_empty() {
             return point;
         }
-        match self.mappings.binary_search_by(|mapping| {
-            if point < mapping.original_range.start {
-                std::cmp::Ordering::Greater
-            } else if point >= mapping.original_range.end {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        }) {
-            Ok(idx) => {
-                let mut matched_idx = idx;
-                while matched_idx > 0
-                    && point >= self.mappings[matched_idx - 1].original_range.start
-                    && point < self.mappings[matched_idx - 1].original_range.end
-                {
-                    matched_idx -= 1;
-                }
-                let mapping = &self.mappings[matched_idx];
-                if mapping.is_fold {
-                    mapping.folded_range.start
-                } else {
-                    let offset = point - mapping.original_range.start;
-                    mapping.folded_range.start + offset
-                }
-            }
-            Err(_) => Point::zero(),
+        let point = point.min(self.mappings.last().unwrap().original_range.end);
+        // Ranges are contiguous and sorted ascending, so the first mapping
+        // whose end is past `point` is the one containing it. This also
+        // correctly resolves `point == <last mapping's end>` (e.g. the very
+        // end of the document) to that last mapping instead of failing to
+        // find a match, unlike a plain `binary_search_by` over half-open
+        // ranges would.
+        let idx = self
+            .mappings
+            .partition_point(|mapping| mapping.original_range.end <= point)
+            .min(self.mappings.len() - 1);
+        let mapping = &self.mappings[idx];
+        if mapping.is_fold {
+            mapping.folded_range.start
+        } else {
+            let offset = point - mapping.original_range.start;
+            mapping.folded_range.start + offset
         }
     }
 
@@ -152,32 +173,95 @@ impl FoldMap {
         if self.mappings.is_empty() {
             return point;
         }
-        match self.mappings.binary_search_by(|mapping| {
-            if point < mapping.folded_range.start {
-                std::cmp::Ordering::Greater
-            } else if point >= mapping.folded_range.end {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        }) {
-            Ok(idx) => {
-                let mut matched_idx = idx;
-                while matched_idx > 0
-                    && point >= self.mappings[matched_idx - 1].folded_range.start
-                    && point < self.mappings[matched_idx - 1].folded_range.end
-                {
-                    matched_idx -= 1;
-                }
-                let mapping = &self.mappings[matched_idx];
-                if mapping.is_fold {
-                    mapping.original_range.start
-                } else {
-                    let offset = point - mapping.folded_range.start;
-                    mapping.original_range.start + offset
-                }
-            }
-            Err(_) => Point::zero(),
+        let point = point.min(self.mappings.last().unwrap().folded_range.end);
+        let idx = self
+            .mappings
+            .partition_point(|mapping| mapping.folded_range.end <= point)
+            .min(self.mappings.len() - 1);
+        let mapping = &self.mappings[idx];
+        if mapping.is_fold {
+            mapping.original_range.start
+        } else {
+            let offset = point - mapping.folded_range.start;
+            mapping.original_range.start + offset
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buffer(text: &str) -> Buffer {
+        Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text)
+    }
+
+    #[test]
+    fn to_folded_point_resolves_the_exact_end_of_the_document() {
+        let buf = buffer("first\nsecond\nthird");
+        let snap = buf.snapshot().clone();
+        let map = FoldMap::new(
+            &snap,
+            vec![Fold {
+                start: Point::new(1, 0),
+                end: Point::new(1, 6),
+            }],
+        );
+
+        let max_orig = snap.max_point();
+        let max_folded = map.folded_buffer().max_point();
+        assert_eq!(map.to_folded_point(max_orig), max_folded);
+        assert_eq!(map.from_folded_point(max_folded), max_orig);
+    }
+
+    #[test]
+    fn folds_collapse_their_range_into_a_placeholder() {
+        let buf = buffer("first\nsecond\nthird\nfourth");
+        let snap = buf.snapshot().clone();
+        let map = FoldMap::new(
+            &snap,
+            vec![Fold {
+                start: Point::new(1, 0),
+                end: Point::new(3, 0),
+            }],
+        );
+
+        assert_eq!(
+            map.folded_buffer()
+                .text_for_range(Point::zero()..map.folded_buffer().max_point())
+                .collect::<String>(),
+            "first\n⋯fourth"
+        );
+        assert_eq!(
+            map.to_folded_point(Point::new(2, 3)),
+            map.to_folded_point(Point::new(1, 0))
+        );
+    }
+
+    #[test]
+    fn overlapping_folds_keep_the_outermost() {
+        let buf = buffer("first\nsecond\nthird\nfourth");
+        let snap = buf.snapshot().clone();
+        let map = FoldMap::new(
+            &snap,
+            vec![
+                Fold {
+                    start: Point::new(0, 0),
+                    end: Point::new(3, 0),
+                },
+                Fold {
+                    start: Point::new(1, 0),
+                    end: Point::new(2, 0),
+                },
+            ],
+        );
+
+        // The nested fold should have been dropped, leaving only the outer one.
+        assert_eq!(
+            map.folded_buffer()
+                .text_for_range(Point::zero()..map.folded_buffer().max_point())
+                .collect::<String>(),
+            "⋯fourth"
+        );
     }
 }

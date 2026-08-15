@@ -1,7 +1,7 @@
 use crate::block_map::BlockMap;
 use crate::fold_map::{Fold, FoldMap};
 use crate::inlay_map::InlayMap;
-use crate::tab_map::TabMap;
+use crate::tab_map::{TabMap, TabPoint};
 use crate::wrap_map::{WrapMap, WrapPoint, WrapSnapshot};
 
 use std::ops::Range;
@@ -28,6 +28,7 @@ impl DisplayPoint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayMapConfig {
     pub wrap_width: Option<u32>,
+    pub tab_size: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,10 +115,11 @@ impl DisplayMap {
         let buffer_window = start..end;
         let fold_map = FoldMap::new(&buffer, Vec::new());
         let inlay_map = InlayMap::new(fold_map.folded_buffer().clone());
-        let tab_map = TabMap::new(fold_map.folded_buffer().clone());
+        let tab_map = TabMap::default();
         let wrap_map = WrapMap::new_windowed(
             fold_map.folded_buffer().clone(),
             wrap_width,
+            tab_map.tab_size(),
             buffer_window.clone(),
         );
         let block_map = BlockMap::new(fold_map.folded_buffer().clone());
@@ -151,7 +153,9 @@ impl DisplayMap {
         if self.folds == folds && self.original_buffer.version == buffer.version {
             return;
         }
-        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
+        let old_scroll_row = self
+            .snapshot()
+            .try_buffer_row_for_display_row(self.scroll_y);
         let folds_changed = self.folds != folds;
         if folds_changed {
             self.config_revision = self.config_revision.wrapping_add(1);
@@ -160,18 +164,18 @@ impl DisplayMap {
         self.original_buffer = buffer.clone();
         self.fold_map = FoldMap::new(&buffer, self.folds.clone());
         self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
-        self.tab_map = TabMap::new(self.fold_map.folded_buffer().clone());
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
         if folds_changed {
             self.buffer_window = 0..buffer.row_count();
-            self.wrap_map = WrapMap::new(self.fold_map.folded_buffer().clone(), self.wrap_width);
+            self.wrap_map = WrapMap::new(
+                self.fold_map.folded_buffer().clone(),
+                self.wrap_width,
+                self.tab_map.tab_size(),
+            );
         } else {
             self.wrap_map.sync(self.fold_map.folded_buffer().clone());
         }
-        let new_snap = self.snapshot();
-        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
-            self.scroll_y = display_point.row();
-        }
+        self.reanchor_scroll_y(old_scroll_row);
     }
 
     pub fn snapshot(&self) -> DisplaySnapshot {
@@ -197,25 +201,63 @@ impl DisplayMap {
         if self.wrap_width == width {
             return;
         }
-        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
+        let old_scroll_row = self
+            .snapshot()
+            .try_buffer_row_for_display_row(self.scroll_y);
         self.config_revision = self.config_revision.wrapping_add(1);
         self.wrap_width = width;
         self.wrap_map = WrapMap::new_windowed(
             self.fold_map.folded_buffer().clone(),
             width,
+            self.tab_map.tab_size(),
             self.buffer_window.clone(),
         );
-        let new_snap = self.snapshot();
-        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
-            self.scroll_y = display_point.row();
+        self.reanchor_scroll_y(old_scroll_row);
+    }
+
+    pub fn tab_size(&self) -> u32 {
+        self.tab_map.tab_size()
+    }
+
+    /// Changes the tab width used both for rendering (`tab_map`) and for wrap
+    /// boundary decisions (`wrap_map`), which must agree so that wrapped rows
+    /// never visually overflow `wrap_width`. This rebuilds wrap transforms for
+    /// the whole document (bounded by document size, not cursor position),
+    /// mirroring `set_wrap_width`.
+    pub fn set_tab_size(&mut self, tab_size: u32) {
+        if self.tab_map.tab_size() == tab_size.max(1) {
+            return;
         }
+        let old_scroll_row = self
+            .snapshot()
+            .try_buffer_row_for_display_row(self.scroll_y);
+        self.config_revision = self.config_revision.wrapping_add(1);
+        self.tab_map.set_tab_size(tab_size);
+        self.wrap_map.set_tab_size(tab_size);
+        self.reanchor_scroll_y(old_scroll_row);
     }
 
     pub fn apply_wrap_snapshot(&mut self, snapshot: WrapSnapshot) {
-        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
+        let old_scroll_row = self
+            .snapshot()
+            .try_buffer_row_for_display_row(self.scroll_y);
         self.wrap_map.set_snapshot(snapshot);
+        self.reanchor_scroll_y(old_scroll_row);
+    }
+
+    /// Re-derives `scroll_y` for the current snapshot from a buffer row that was
+    /// resolved before a change was applied. Cold `scroll_y` (or a `scroll_y` that
+    /// no longer resolves after the change) is left untouched rather than panicking
+    /// or silently jumping to row zero: exact mappings are only ever available from
+    /// exact coverage (see `DISPLAY_MAP.md` invariant 2).
+    fn reanchor_scroll_y(&mut self, old_scroll_row: Option<u32>) {
+        let Some(old_scroll_row) = old_scroll_row else {
+            return;
+        };
         let new_snap = self.snapshot();
-        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
+        if let Some(display_point) =
+            new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0))
+        {
             self.scroll_y = display_point.row();
         }
     }
@@ -233,7 +275,9 @@ impl DisplayMap {
         if self.original_buffer.version == buffer.version && self.buffer_window == buffer_window {
             return;
         }
-        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
+        let old_scroll_row = self
+            .snapshot()
+            .try_buffer_row_for_display_row(self.scroll_y);
         let row_count = buffer.row_count();
         let start = buffer_window.start.min(row_count);
         let end = buffer_window.end.max(start).min(row_count);
@@ -247,22 +291,32 @@ impl DisplayMap {
             if buffer_changed {
                 self.fold_map = FoldMap::new(&buffer, Vec::new());
                 self.inlay_map = InlayMap::new(buffer.clone());
-                self.tab_map = TabMap::new(buffer.clone());
                 self.block_map = BlockMap::new(buffer.clone());
             }
             self.wrap_map.sync_windowed(buffer, buffer_window);
-        } else {
+        } else if buffer_changed {
+            // The folded buffer is a synthetic buffer with its own version
+            // lineage (see `FoldMap`), so it must be fully rebuilt whenever the
+            // real buffer changes: `WrapMap` cannot incrementally diff against
+            // an unrelated version history. When only the window moves and
+            // neither the buffer nor the fold set changed, the folded buffer
+            // is untouched and `wrap_map.sync_windowed` below is reused
+            // instead of rebuilding everything from scratch on every call.
             self.fold_map = FoldMap::new(&buffer, self.folds.clone());
             let folded = self.fold_map.folded_buffer().clone();
             self.inlay_map = InlayMap::new(folded.clone());
-            self.tab_map = TabMap::new(folded.clone());
             self.block_map = BlockMap::new(folded.clone());
-            self.wrap_map = WrapMap::new_windowed(folded, self.wrap_width, buffer_window);
+            self.wrap_map = WrapMap::new_windowed(
+                folded,
+                self.wrap_width,
+                self.tab_map.tab_size(),
+                buffer_window,
+            );
+        } else {
+            self.wrap_map
+                .sync_windowed(self.fold_map.folded_buffer().clone(), buffer_window);
         }
-        let new_snap = self.snapshot();
-        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
-            self.scroll_y = display_point.row();
-        }
+        self.reanchor_scroll_y(old_scroll_row);
     }
 
     pub fn scroll_to_cursor(
@@ -315,6 +369,7 @@ impl DisplayMap {
     pub fn config(&self) -> DisplayMapConfig {
         DisplayMapConfig {
             wrap_width: self.wrap_width,
+            tab_size: self.tab_map.tab_size(),
         }
     }
 
@@ -384,13 +439,12 @@ impl DisplayMap {
         if expansion.generation != self.generation() || expansion.config != self.config() {
             return Err(StaleExpansion);
         }
-        let old_scroll_row = self.snapshot().buffer_row_for_display_row(self.scroll_y);
+        let old_scroll_row = self
+            .snapshot()
+            .try_buffer_row_for_display_row(self.scroll_y);
         self.wrap_map
             .apply_expansion(expansion.exact_rows, expansion.transforms);
-        let new_snap = self.snapshot();
-        if let Some(display_point) = new_snap.try_point_to_display_point(Point::new(old_scroll_row, 0)) {
-            self.scroll_y = display_point.row();
-        }
+        self.reanchor_scroll_y(old_scroll_row);
         Ok(())
     }
 }
@@ -412,6 +466,9 @@ impl DisplaySnapshot {
         self.wrap_snapshot.row_count()
     }
 
+    /// Tab-expanded length of `row`. `WrapMap` accounts for tab expansion
+    /// directly when building transforms (see `wrap_map::build_single_row_transforms`),
+    /// so this is exact even for cold rows and does not need to read text.
     pub fn line_len(&self, row: u32) -> u32 {
         self.wrap_snapshot.line_len(row)
     }
@@ -474,6 +531,15 @@ impl DisplaySnapshot {
             .row
     }
 
+    /// Like `buffer_row_for_display_row`, but returns `None` instead of
+    /// panicking when `display_row` falls in a cold (not-yet-mapped) region.
+    /// Used internally to preserve scroll position across changes without
+    /// requiring the previous scroll row to still resolve afterwards.
+    pub fn try_buffer_row_for_display_row(&self, display_row: u32) -> Option<u32> {
+        self.try_display_point_to_point(DisplayPoint::new(display_row, 0))
+            .map(|point| point.row)
+    }
+
     /// Returns the range of buffer points covered by a display row.
     pub fn buffer_range_for_display_row(&self, display_row: u32) -> std::ops::Range<Point> {
         let start = self.display_point_to_point(DisplayPoint::new(display_row, 0));
@@ -482,7 +548,8 @@ impl DisplaySnapshot {
         start..end
     }
 
-    /// Returns the text for a given display row.
+    /// Returns the text for a given display row, with any tabs expanded to
+    /// spaces up to the next tab stop.
     pub fn line_text(&self, display_row: u32) -> String {
         let start_folded = self
             .wrap_snapshot
@@ -490,10 +557,31 @@ impl DisplaySnapshot {
         let end_folded = self
             .wrap_snapshot
             .from_wrap_point(WrapPoint::new(display_row, self.line_len(display_row)));
-        self.fold_map
+        // `start_folded..end_folded` is a raw buffer range (it may still
+        // contain literal tab bytes); expand them into spaces for rendering.
+        // `WrapMap` already accounted for their width when deciding wrap
+        // boundaries, so `end_folded` lines up correctly with `line_len`.
+        let raw = self
+            .fold_map
             .folded_buffer()
             .text_for_range(start_folded..end_folded)
-            .collect::<String>()
+            .collect::<String>();
+        self.tab_map.expand_text(&raw, 0)
+    }
+
+    /// Converts a buffer point into tab-expanded coordinates within its row.
+    pub fn to_tab_point(&self, point: Point) -> TabPoint {
+        let folded_point = self.fold_map.to_folded_point(point);
+        self.tab_map
+            .to_tab_point(self.fold_map.folded_buffer(), folded_point)
+    }
+
+    /// Converts a tab-expanded point back into buffer coordinates.
+    pub fn from_tab_point(&self, point: TabPoint) -> Point {
+        let folded_point = self
+            .tab_map
+            .from_tab_point(self.fold_map.folded_buffer(), point);
+        self.fold_map.from_folded_point(folded_point)
     }
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
@@ -517,6 +605,7 @@ pub fn build_expansion(
     let transforms = WrapMap::build_expansion_transforms(
         &input.buffer,
         input.config.wrap_width,
+        input.config.tab_size,
         exact_rows.clone(),
         cancellation,
     )?;
@@ -534,7 +623,7 @@ mod tests {
     use super::*;
     use clock::ReplicaId;
     use std::time::{Duration, Instant};
-    use text::{Buffer, BufferId};
+    use text::{Buffer, BufferId, ToOffset};
 
     fn large_buffer(row_count: u32) -> Buffer {
         let mut contents = String::with_capacity(row_count as usize * 11);
@@ -840,8 +929,6 @@ mod tests {
 
     #[test]
     fn edits_shift_unaffected_coverage_and_invalidate_touched_rows() {
-        use text::ToOffset;
-
         let mut buffer = large_buffer(100);
         let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 40..60);
         let expansion = build_expansion(
@@ -892,5 +979,93 @@ mod tests {
 
         let orig_point = snapshot.display_point_to_point(display_point);
         assert_eq!(orig_point, Point::new(3, 2));
+    }
+
+    #[test]
+    fn line_text_expands_tabs_to_the_next_stop() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a\tb\tc");
+        let mut map = DisplayMap::new(buffer.snapshot().clone(), None);
+        map.set_tab_size(4);
+
+        let snapshot = map.snapshot();
+        assert_eq!(snapshot.line_text(0), "a   b   c");
+    }
+
+    #[test]
+    fn point_conversions_round_trip_through_tabs() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a\tbc\nd\te");
+        let mut map = DisplayMap::new(buffer.snapshot().clone(), None);
+        map.set_tab_size(4);
+        let snapshot = map.snapshot();
+
+        for row in 0..2 {
+            for column in 0..=3 {
+                let point = Point::new(row, column);
+                let display_point = snapshot.point_to_display_point(point);
+                assert_eq!(
+                    snapshot.display_point_to_point(display_point),
+                    point,
+                    "round trip failed at {point:?}"
+                );
+            }
+        }
+
+        // 'b' in "a\tbc" is the first character after the tab; with a tab size
+        // of 4 the tab expands to 3 columns ("a" occupies column 0), so 'b'
+        // should land at display column 4.
+        let display_point = snapshot.point_to_display_point(Point::new(0, 2));
+        assert_eq!(display_point.column(), 4);
+    }
+
+    #[test]
+    fn max_point_never_panics_on_a_cold_final_row() {
+        // Cold coverage is approximate by design (see `DISPLAY_MAP.md`
+        // invariant 2): it preserves buffer extent for seeking but does not
+        // promise an exact wrapped/tab-expanded output. `max_point` must
+        // still return *something* without panicking for a cold final row;
+        // exactness is only guaranteed once that row is covered exactly.
+        let text = format!("{}\tend", "row\n".repeat(100));
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), None, 0..1);
+        map.set_tab_size(4);
+
+        let max_point = map.snapshot().max_point();
+        assert_eq!(max_point.row(), 100);
+
+        // Once the final row is synced into exact coverage, its tab is
+        // properly expanded.
+        map.sync_hot_window(buffer.snapshot().clone(), 100..101);
+        let max_point = map.snapshot().max_point();
+        assert_eq!(max_point.column(), 7); // "\tend" -> 4 spaces + "end"
+    }
+
+    #[test]
+    fn sync_hot_window_with_folds_only_rebuilds_on_real_buffer_changes() {
+        let buffer = large_buffer(200);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 40..60);
+        map.fold(
+            vec![Fold {
+                start: Point::new(10, 0),
+                end: Point::new(10, 1),
+            }],
+            buffer.snapshot().clone(),
+        );
+
+        crate::fold_map::reset_build_count();
+        // Moving the hot window with an unchanged buffer and unchanged folds
+        // must not rebuild the (expensive, O(document)) fold mapping again.
+        map.sync_hot_window(buffer.snapshot().clone(), 70..90);
+        assert_eq!(crate::fold_map::build_count(), 0);
+        assert!(map.covers_buffer_rows(&(70..90)));
+
+        let mut buffer = buffer;
+        let edit_offset = Point::new(150, 0).to_offset(buffer.snapshot());
+        buffer.edit([(edit_offset..edit_offset, "x")]);
+        map.sync_hot_window(buffer.snapshot().clone(), 70..90);
+        assert_eq!(
+            crate::fold_map::build_count(),
+            1,
+            "a real buffer edit must still rebuild the fold mapping"
+        );
     }
 }

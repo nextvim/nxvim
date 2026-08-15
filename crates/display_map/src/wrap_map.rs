@@ -85,6 +85,7 @@ impl WrapPoint {
 #[derive(Clone)]
 pub struct WrapMap {
     wrap_width: Option<u32>,
+    tab_size: u32,
     snapshot: WrapSnapshot,
 }
 
@@ -92,6 +93,7 @@ pub struct WrapMap {
 pub struct WrapSnapshot {
     pub(crate) buffer: BufferSnapshot,
     pub(crate) wrap_width: Option<u32>,
+    pub(crate) tab_size: u32,
     transforms: SumTree<Transform>,
     exact_rows: Vec<Range<u32>>,
 }
@@ -100,6 +102,11 @@ pub struct WrapSnapshot {
 enum TransformKind {
     Isomorphic,
     Wrap,
+    /// A single hard-tab byte, expanded to `width` display columns up to the
+    /// next tab stop. Unlike `Isomorphic`, input and output extents differ,
+    /// so (like `Wrap`) queries landing anywhere inside this transform
+    /// resolve to its start rather than being linearly interpolated.
+    Tab,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +139,16 @@ impl Transform {
                 output: WrapPoint::new(1, 0),
             },
             kind: TransformKind::Wrap,
+        }
+    }
+
+    fn tab(width: u32) -> Self {
+        Self {
+            summary: TransformSummary {
+                input: Point::new(0, 1),
+                output: WrapPoint::new(0, width),
+            },
+            kind: TransformKind::Tab,
         }
     }
 
@@ -192,19 +209,27 @@ impl SeekTarget<'_, TransformSummary, Dimensions<WrapPoint, Point>> for Point {
 }
 
 impl WrapMap {
-    pub fn new(buffer: BufferSnapshot, wrap_width: Option<u32>) -> Self {
+    pub fn new(buffer: BufferSnapshot, wrap_width: Option<u32>, tab_size: u32) -> Self {
         let row_count = buffer.row_count();
-        Self::new_windowed(buffer, wrap_width, 0..row_count)
+        Self::new_windowed(buffer, wrap_width, tab_size, 0..row_count)
     }
 
-    pub fn new_windowed(buffer: BufferSnapshot, wrap_width: Option<u32>, rows: Range<u32>) -> Self {
+    pub fn new_windowed(
+        buffer: BufferSnapshot,
+        wrap_width: Option<u32>,
+        tab_size: u32,
+        rows: Range<u32>,
+    ) -> Self {
+        let tab_size = tab_size.max(1);
         let rows = normalize_rows(&buffer, rows);
         Self {
             wrap_width,
+            tab_size,
             snapshot: WrapSnapshot {
-                transforms: build_windowed_transforms(&buffer, wrap_width, rows.clone()),
+                transforms: build_windowed_transforms(&buffer, wrap_width, tab_size, rows.clone()),
                 buffer,
                 wrap_width,
+                tab_size,
                 exact_rows: non_empty_range(rows).into_iter().collect(),
             },
         }
@@ -223,17 +248,23 @@ impl WrapMap {
         if edits.is_empty() {
             let row_count = buffer.row_count();
             self.snapshot = WrapSnapshot {
-                transforms: build_transforms(&buffer, self.wrap_width),
+                transforms: build_transforms(&buffer, self.wrap_width, self.tab_size),
                 buffer,
                 wrap_width: self.wrap_width,
+                tab_size: self.tab_size,
                 exact_rows: non_empty_range(0..row_count).into_iter().collect(),
             };
             return;
         }
 
         let row_edits = merge_row_edits(&edits);
-        let transforms =
-            rebuild_edited_rows(&self.snapshot, &buffer, self.wrap_width, row_edits.clone());
+        let transforms = rebuild_edited_rows(
+            &self.snapshot,
+            &buffer,
+            self.wrap_width,
+            self.tab_size,
+            row_edits.clone(),
+        );
         let was_fully_exact = self
             .snapshot
             .covers_exactly(0..self.snapshot.buffer.row_count());
@@ -246,6 +277,7 @@ impl WrapMap {
             transforms,
             buffer,
             wrap_width: self.wrap_width,
+            tab_size: self.tab_size,
             exact_rows,
         };
     }
@@ -260,8 +292,12 @@ impl WrapMap {
         }
         let rows = normalize_rows(&self.snapshot.buffer, rows);
         for missing in missing_ranges(&self.snapshot.exact_rows, rows) {
-            let transforms =
-                build_row_transforms(&self.snapshot.buffer, self.wrap_width, missing.clone());
+            let transforms = build_row_transforms(
+                &self.snapshot.buffer,
+                self.wrap_width,
+                self.tab_size,
+                missing.clone(),
+            );
             self.apply_expansion(missing, transforms);
         }
     }
@@ -296,6 +332,7 @@ impl WrapMap {
     pub(crate) fn build_expansion_transforms(
         buffer: &BufferSnapshot,
         wrap_width: Option<u32>,
+        tab_size: u32,
         rows: Range<u32>,
         cancellation: &background_worker::CancellationToken,
     ) -> Option<SumTree<Transform>> {
@@ -304,7 +341,7 @@ impl WrapMap {
         for row in rows {
             append_coalesced(
                 &mut transforms,
-                build_row_transforms_cancellable(buffer, wrap_width, row, cancellation)?,
+                build_row_transforms_cancellable(buffer, wrap_width, tab_size, row, cancellation)?,
             );
         }
         Some(transforms)
@@ -319,22 +356,43 @@ impl WrapMap {
             self.wrap_width = wrap_width;
             let row_count = self.snapshot.buffer.row_count();
             self.snapshot = WrapSnapshot {
-                transforms: build_transforms(&self.snapshot.buffer, wrap_width),
+                transforms: build_transforms(&self.snapshot.buffer, wrap_width, self.tab_size),
                 buffer: self.snapshot.buffer.clone(),
                 wrap_width,
+                tab_size: self.tab_size,
+                exact_rows: non_empty_range(0..row_count).into_iter().collect(),
+            };
+        }
+    }
+
+    pub fn set_tab_size(&mut self, tab_size: u32) {
+        let tab_size = tab_size.max(1);
+        if self.tab_size != tab_size {
+            self.tab_size = tab_size;
+            let row_count = self.snapshot.buffer.row_count();
+            self.snapshot = WrapSnapshot {
+                transforms: build_transforms(&self.snapshot.buffer, self.wrap_width, tab_size),
+                buffer: self.snapshot.buffer.clone(),
+                wrap_width: self.wrap_width,
+                tab_size,
                 exact_rows: non_empty_range(0..row_count).into_iter().collect(),
             };
         }
     }
 }
 
-fn build_transforms(buffer: &BufferSnapshot, wrap_width: Option<u32>) -> SumTree<Transform> {
-    build_row_transforms(buffer, wrap_width, 0..buffer.row_count())
+fn build_transforms(
+    buffer: &BufferSnapshot,
+    wrap_width: Option<u32>,
+    tab_size: u32,
+) -> SumTree<Transform> {
+    build_row_transforms(buffer, wrap_width, tab_size, 0..buffer.row_count())
 }
 
 fn build_windowed_transforms(
     buffer: &BufferSnapshot,
     wrap_width: Option<u32>,
+    tab_size: u32,
     rows: Range<u32>,
 ) -> SumTree<Transform> {
     let row_count = buffer.row_count();
@@ -344,7 +402,7 @@ fn build_windowed_transforms(
     if start > 0 {
         push_isomorphic(&mut transforms, Point::new(start, 0));
     }
-    let window = build_row_transforms(buffer, wrap_width, start..end);
+    let window = build_row_transforms(buffer, wrap_width, tab_size, start..end);
     for transform in window.iter() {
         transforms.push(transform.clone(), ());
     }
@@ -358,41 +416,105 @@ fn build_windowed_transforms(
     transforms
 }
 
+/// Builds transforms for a single buffer row, splitting on wrap boundaries
+/// measured in tab-expanded display columns (not raw bytes), and emitting a
+/// dedicated `Tab` transform for each hard tab so its expanded width is
+/// reflected in `WrapPoint`/`DisplayPoint` coordinates directly. When
+/// `cancellation` is provided, it's checked before starting the row and
+/// between every character; on cancellation, `false` is returned and
+/// `transforms` may contain a partial, discarded-by-the-caller result.
+fn build_single_row_transforms(
+    transforms: &mut SumTree<Transform>,
+    buffer: &BufferSnapshot,
+    wrap_width: Option<u32>,
+    tab_size: u32,
+    row: u32,
+    max_row: u32,
+    cancellation: Option<&background_worker::CancellationToken>,
+) -> bool {
+    if cancellation.is_some_and(|c| c.is_cancelled()) {
+        return false;
+    }
+
+    let tab_size = tab_size.max(1);
+    let width = wrap_width.filter(|width| *width > 0);
+    let line_len = buffer.line_len(row);
+    let text = buffer
+        .text_for_range(Point::new(row, 0)..Point::new(row, line_len))
+        .collect::<String>();
+    let mut visual_column = 0u32;
+
+    for ch in text.chars() {
+        if cancellation.is_some_and(|c| c.is_cancelled()) {
+            return false;
+        }
+        let ch_len = ch.len_utf8() as u32;
+        if ch == '\t' {
+            let mut tab_width = tab_size - (visual_column % tab_size);
+            if let Some(width) = width
+                && visual_column > 0
+                && visual_column + tab_width > width
+            {
+                record_transform();
+                transforms.push(Transform::wrap(), ());
+                visual_column = 0;
+                tab_width = tab_size;
+            }
+            record_transform();
+            transforms.push(Transform::tab(tab_width), ());
+            visual_column += tab_width;
+        } else {
+            if let Some(width) = width
+                && visual_column > 0
+                && visual_column + ch_len > width
+            {
+                record_transform();
+                transforms.push(Transform::wrap(), ());
+                visual_column = 0;
+            }
+            push_isomorphic(transforms, Point::new(0, ch_len));
+            visual_column += ch_len;
+        }
+    }
+
+    if row < max_row {
+        record_transform();
+        transforms.push(Transform::isomorphic(Point::new(1, 0)), ());
+    }
+    true
+}
+
 fn build_row_transforms_cancellable(
     buffer: &BufferSnapshot,
     wrap_width: Option<u32>,
+    tab_size: u32,
     row: u32,
     cancellation: &background_worker::CancellationToken,
 ) -> Option<SumTree<Transform>> {
     if cancellation.is_cancelled() || row >= buffer.row_count() {
         return None;
     }
+    let max_row = buffer.max_point().row;
     let mut transforms = SumTree::default();
-    let line_len = buffer.line_len(row);
-    let mut column = 0;
-    if let Some(width) = wrap_width.filter(|width| *width > 0) {
-        while line_len.saturating_sub(column) > width {
-            if cancellation.is_cancelled() {
-                return None;
-            }
-            push_isomorphic(&mut transforms, Point::new(0, width));
-            transforms.push(Transform::wrap(), ());
-            column += width;
-        }
-    }
-    push_isomorphic(
+    if build_single_row_transforms(
         &mut transforms,
-        Point::new(0, line_len.saturating_sub(column)),
-    );
-    if row < buffer.max_point().row {
-        transforms.push(Transform::isomorphic(Point::new(1, 0)), ());
+        buffer,
+        wrap_width,
+        tab_size,
+        row,
+        max_row,
+        Some(cancellation),
+    ) {
+        Some(transforms)
+    } else {
+        None
     }
-    Some(transforms)
 }
 
 fn build_row_transforms(
     buffer: &BufferSnapshot,
     wrap_width: Option<u32>,
+    tab_size: u32,
     rows: Range<u32>,
 ) -> SumTree<Transform> {
     let mut transforms = SumTree::default();
@@ -400,24 +522,15 @@ fn build_row_transforms(
 
     for row in rows.start..rows.end.min(buffer.row_count()) {
         record_row();
-        let line_len = buffer.line_len(row);
-        let mut column = 0;
-
-        if let Some(width) = wrap_width.filter(|width| *width > 0) {
-            while line_len.saturating_sub(column) > width {
-                push_isomorphic(&mut transforms, Point::new(0, width));
-                record_transform();
-                transforms.push(Transform::wrap(), ());
-                column += width;
-            }
-        }
-
-        let remaining = line_len - column;
-        push_isomorphic(&mut transforms, Point::new(0, remaining));
-        if row < max_row {
-            record_transform();
-            transforms.push(Transform::isomorphic(Point::new(1, 0)), ());
-        }
+        build_single_row_transforms(
+            &mut transforms,
+            buffer,
+            wrap_width,
+            tab_size,
+            row,
+            max_row,
+            None,
+        );
     }
 
     transforms
@@ -591,6 +704,7 @@ fn rebuild_edited_rows(
     old_snapshot: &WrapSnapshot,
     new_buffer: &BufferSnapshot,
     wrap_width: Option<u32>,
+    tab_size: u32,
     row_edits: Vec<RowEdit>,
 ) -> SumTree<Transform> {
     let split_rows = row_edits
@@ -612,13 +726,18 @@ fn rebuild_edited_rows(
         if current_new_row < edit.new.start {
             append_coalesced(
                 &mut transforms,
-                build_row_transforms(new_buffer, wrap_width, current_new_row..edit.new.start),
+                build_row_transforms(
+                    new_buffer,
+                    wrap_width,
+                    tab_size,
+                    current_new_row..edit.new.start,
+                ),
             );
         }
 
         append_coalesced(
             &mut transforms,
-            build_row_transforms(new_buffer, wrap_width, edit.new.clone()),
+            build_row_transforms(new_buffer, wrap_width, tab_size, edit.new.clone()),
         );
 
         old_cursor.seek_forward(&Point::new(edit.old.end, 0), Bias::Right);
@@ -691,18 +810,16 @@ impl WrapSnapshot {
         }
 
         if display_row == max_point.row {
-            max_point.column
-        } else {
-            let row_start = self.from_wrap_point(WrapPoint::new(display_row, 0));
-            let next_row_start = self.from_wrap_point(WrapPoint::new(display_row + 1, 0));
-            if row_start.row == next_row_start.row {
-                next_row_start.column.saturating_sub(row_start.column)
-            } else {
-                self.buffer
-                    .line_len(row_start.row)
-                    .saturating_sub(row_start.column)
-            }
+            return max_point.column;
         }
+
+        // Measure directly in output (display-column) space rather than
+        // subtracting raw buffer columns: a `Tab` transform's input and
+        // output extents differ, so raw-byte subtraction between row starts
+        // would return the row's raw length instead of its display width.
+        let mut cursor = self.transforms.cursor::<WrapPoint>(());
+        cursor.seek(&WrapPoint::new(display_row + 1, 0), Bias::Left);
+        cursor.start().column
     }
 
     pub fn max_point(&self) -> WrapPoint {
@@ -781,6 +898,10 @@ impl WrapSnapshot {
         self.wrap_width
     }
 
+    pub fn tab_size(&self) -> u32 {
+        self.tab_size
+    }
+
     fn clip_buffer_point(&self, point: Point) -> Point {
         let row = point.row.min(self.buffer.max_point().row);
         Point::new(row, point.column.min(self.buffer.line_len(row)))
@@ -823,9 +944,11 @@ mod tests {
     use rand::{Rng, SeedableRng, rngs::StdRng};
     use text::{Buffer, BufferId};
 
+    const TEST_TAB_SIZE: u32 = 4;
+
     fn snapshot(text: &str, wrap_width: Option<u32>) -> WrapSnapshot {
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text.to_owned());
-        WrapMap::new(buffer.snapshot().clone(), wrap_width).snapshot()
+        WrapMap::new(buffer.snapshot().clone(), wrap_width, TEST_TAB_SIZE).snapshot()
     }
 
     fn assert_equivalent(actual: &WrapSnapshot, expected: &WrapSnapshot) {
@@ -947,21 +1070,21 @@ mod tests {
             BufferId::new(1).unwrap(),
             "abcdefgh\nshort\ntail",
         );
-        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(3));
+        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(3), TEST_TAB_SIZE);
 
         buffer.edit([(2..4, "XYZW")]);
         map.sync(buffer.snapshot().clone());
-        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(3)).snapshot();
+        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(3), TEST_TAB_SIZE).snapshot();
         assert_equivalent(&map.snapshot(), &rebuilt);
 
         buffer.edit([(5..5, "\ninserted\n")]);
         map.sync(buffer.snapshot().clone());
-        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(3)).snapshot();
+        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(3), TEST_TAB_SIZE).snapshot();
         assert_equivalent(&map.snapshot(), &rebuilt);
 
         buffer.edit([(0..3, ""), (12..16, "replacement")]);
         map.sync(buffer.snapshot().clone());
-        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(3)).snapshot();
+        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(3), TEST_TAB_SIZE).snapshot();
         assert_equivalent(&map.snapshot(), &rebuilt);
     }
 
@@ -972,12 +1095,12 @@ mod tests {
             BufferId::new(1).unwrap(),
             "one\ntwo\nthree\nfour",
         );
-        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(2));
+        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(2), TEST_TAB_SIZE);
 
         buffer.edit([(3..8, "-")]);
         map.sync(buffer.snapshot().clone());
 
-        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(2)).snapshot();
+        let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(2), TEST_TAB_SIZE).snapshot();
         assert_equivalent(&map.snapshot(), &rebuilt);
     }
 
@@ -989,8 +1112,8 @@ mod tests {
             BufferId::new(1).unwrap(),
             "alpha\nbeta\ngamma\ndelta",
         );
-        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(4));
-        let replacements = ["", "x", "longer", "\n", "a\nb", "xyz\n\nq"];
+        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(4), TEST_TAB_SIZE);
+        let replacements = ["", "x", "longer", "\n", "a\nb", "xyz\n\nq", "\t", "a\tbc"];
 
         for _ in 0..100 {
             let len = buffer.len();
@@ -1000,8 +1123,80 @@ mod tests {
             buffer.edit([(start..end, replacement)]);
             map.sync(buffer.snapshot().clone());
 
-            let rebuilt = WrapMap::new(buffer.snapshot().clone(), Some(4)).snapshot();
+            let rebuilt =
+                WrapMap::new(buffer.snapshot().clone(), Some(4), TEST_TAB_SIZE).snapshot();
             assert_equivalent(&map.snapshot(), &rebuilt);
         }
+    }
+
+    #[test]
+    fn wraps_account_for_tab_expansion_instead_of_raw_bytes() {
+        // With tab_size 4 and wrap_width 5: "ab" (2 cols) + '\t' (expands to
+        // 2 cols, reaching column 4) + "c" (1 col, reaching column 5) exactly
+        // fill the first display row; "def" continues on the next row. A
+        // raw-byte-counting wrap (the bug this test guards against) would
+        // instead cut after 5 *bytes* ("ab\tcd"), which visually overflows
+        // the configured width once the tab expands.
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "ab\tcdef");
+        let snapshot = WrapMap::new(buffer.snapshot().clone(), Some(5), 4).snapshot();
+
+        assert_eq!(snapshot.row_count(), 2);
+        assert_eq!(snapshot.line_len(0), 5);
+        assert_eq!(snapshot.line_len(1), 3);
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 3)),
+            WrapPoint::new(0, 4),
+            "the tab should expand from raw column 2 to display column 4"
+        );
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 4)),
+            WrapPoint::new(1, 0),
+            "'d' is pushed to the next row once the tab exhausts the width"
+        );
+        assert_eq!(
+            snapshot.from_wrap_point(WrapPoint::new(0, 4)),
+            Point::new(0, 3)
+        );
+    }
+
+    #[test]
+    fn wrap_point_inside_a_tabs_expansion_snaps_to_the_tabs_raw_start() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a\tb");
+        let snapshot = WrapMap::new(buffer.snapshot().clone(), None, 4).snapshot();
+
+        // 'a' occupies raw/display column 0..1; the tab expands to columns
+        // 1..4; 'b' is at raw column 2, display column 4.
+        for display_column in 1..4 {
+            assert_eq!(
+                snapshot.from_wrap_point(WrapPoint::new(0, display_column)),
+                Point::new(0, 1),
+                "display column {display_column} should snap to the tab's start"
+            );
+        }
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 2)),
+            WrapPoint::new(0, 4)
+        );
+    }
+
+    #[test]
+    fn set_tab_size_rebuilds_wrap_boundaries() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a\tbc");
+        // wrap_width 10 comfortably fits "a" (1 col) + an 8-wide tab (col 1..8)
+        // + "bc" (col 8..10) on one row.
+        let mut map = WrapMap::new(buffer.snapshot().clone(), Some(10), 8);
+        assert_eq!(map.snapshot().row_count(), 1);
+        assert_eq!(map.snapshot().line_len(0), 10);
+
+        map.set_tab_size(2);
+        let snapshot = map.snapshot();
+        // 'a' (col 0..1) + tab expanding to col 2 (width 1, since column 1 is
+        // already odd relative to tab_size 2) + "bc" (col 2..4).
+        assert_eq!(snapshot.row_count(), 1);
+        assert_eq!(snapshot.line_len(0), 4);
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 2)),
+            WrapPoint::new(0, 2)
+        );
     }
 }
