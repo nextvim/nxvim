@@ -43,14 +43,28 @@ fn move_to_syntax_target(
     }
 }
 
-/// Looks for a delimiter pair enclosing `byte`, using the dependency-free
-/// [`vim_scanner::StructuralScanner`] instead of a tree-sitter syntax tree.
+/// Builds a [`vim_scanner::StructuralScanner`] straight from the buffer's
+/// rope chunks, without first materializing the whole buffer into one
+/// owned `String` (unlike `buffer.as_text_buffer().text()`).
+fn scan_structure(buffer: &text::Buffer) -> vim_scanner::StructuralScanner {
+    vim_scanner::StructuralScanner::scan_chunks(buffer.as_rope().chunks())
+}
+
+/// Looks for a delimiter pair enclosing `byte` in an already-built `scan`.
 /// Used as a fallback for `i{`/`a{`-style motions when no syntax tree is
 /// available for the buffer. Returns the byte offsets of the opening and
 /// closing delimiter characters if `ch` matches the kind of the innermost
 /// enclosing pair (backtick strings and tags aren't supported, since the
 /// scanner has no notion of either).
-fn scanner_delimiter_match(text: &str, byte: usize, ch: char) -> Option<(usize, usize)> {
+///
+/// Callers driving multiple cursors from the same action should build the
+/// `scan` once (with [`scan_structure`]) and reuse it for every cursor,
+/// rather than rescanning the whole buffer per cursor.
+fn scanner_delimiter_match(
+    scan: &vim_scanner::StructuralScanner,
+    byte: usize,
+    ch: char,
+) -> Option<(usize, usize)> {
     let expected_kind = match ch {
         '{' | '}' => vim_scanner::DelimiterKind::Brace,
         '(' | ')' => vim_scanner::DelimiterKind::Paren,
@@ -59,7 +73,7 @@ fn scanner_delimiter_match(text: &str, byte: usize, ch: char) -> Option<(usize, 
         '\'' => vim_scanner::DelimiterKind::SingleQuote,
         _ => return None,
     };
-    let m = vim_scanner::StructuralScanner::scan(text).innermost_at(byte)?;
+    let m = scan.innermost_at(byte)?;
     (m.kind == expected_kind).then_some((m.start, m.end))
 }
 
@@ -634,6 +648,12 @@ impl Editor {
             Action::MoveWithinCharacter { count, ch } => {
                 let select = mode.is_visual();
                 let cursors = buffer_display_context.selections.selections.clone();
+                // Built once per action (not once per cursor below), and only
+                // when it will actually be consulted: 'w'/'p' never need it,
+                // and a successful syntax tree takes priority over it.
+                let fallback_scan =
+                    (buffer_context.treesitter.is_err() && *ch != 'w' && *ch != 'p')
+                        .then(|| scan_structure(buffer.as_text_buffer()));
                 for cursor in cursors.iter() {
                     let mut updated = false;
                     if *ch == 'w' {
@@ -734,11 +754,13 @@ impl Editor {
                                 updated = true;
                             }
                         }
-                    } else if let Some((start, end)) = scanner_delimiter_match(
-                        &buffer.as_text_buffer().text(),
-                        buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
-                        *ch,
-                    ) {
+                    } else if let Some((start, end)) = fallback_scan.as_ref().and_then(|scan| {
+                        scanner_delimiter_match(
+                            scan,
+                            buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
+                            *ch,
+                        )
+                    }) {
                         let start_offset = start + 1;
                         let end_offset = end.saturating_sub(1);
                         let start_anchor =
@@ -772,6 +794,12 @@ impl Editor {
             Action::MoveAroundCharacter { count, ch } => {
                 let select = mode.is_visual();
                 let cursors = buffer_display_context.selections.selections.clone();
+                // Built once per action (not once per cursor below), and only
+                // when it will actually be consulted: 'w'/'p' never need it,
+                // and a successful syntax tree takes priority over it.
+                let fallback_scan =
+                    (buffer_context.treesitter.is_err() && *ch != 'w' && *ch != 'p')
+                        .then(|| scan_structure(buffer.as_text_buffer()));
                 for cursor in cursors.iter() {
                     let mut updated = false;
                     if *ch == 'w' {
@@ -872,11 +900,15 @@ impl Editor {
                                 updated = true;
                             }
                         }
-                    } else if let Some((start_offset, end_offset)) = scanner_delimiter_match(
-                        &buffer.as_text_buffer().text(),
-                        buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
-                        *ch,
-                    ) {
+                    } else if let Some((start_offset, end_offset)) =
+                        fallback_scan.as_ref().and_then(|scan| {
+                            scanner_delimiter_match(
+                                scan,
+                                buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
+                                *ch,
+                            )
+                        })
+                    {
                         let start_anchor =
                             buffer.as_text_buffer().anchor_at(start_offset, Bias::Left);
                         let end_anchor = buffer.as_text_buffer().anchor_at(end_offset, Bias::Right);
@@ -1830,8 +1862,7 @@ impl Editor {
     /// cost of only understanding braces/parens/brackets (no language-aware
     /// notion of "block", and no support for tags or backtick strings).
     fn fold_with_scanner(&self, buffer: &Buffer, buffer_display_context: &mut WindowState) {
-        let text = buffer.as_text_buffer().text();
-        let scan = vim_scanner::StructuralScanner::scan(&text);
+        let scan = scan_structure(buffer.as_text_buffer());
         self.fold_enclosing(buffer, buffer_display_context, |head_offset| {
             let block = scan.enclosing_block_at(head_offset)?;
             Some((block.outer_range(), block.inner_range()))
@@ -2462,5 +2493,45 @@ mod tests {
         assert_eq!(window_state.folds.len(), 1);
         assert_eq!(window_state.folds[0].start, Point::new(0, 3));
         assert_eq!(window_state.folds[0].end, Point::new(0, 10));
+    }
+
+    #[test]
+    fn move_within_character_scanner_fallback_resolves_each_cursor_independently() {
+        // Two disjoint paren pairs; one cursor inside each. The scanner-backed
+        // fallback scan is built once for the whole action and then reused
+        // for every cursor below, so this guards against a regression where
+        // that sharing accidentally collapses every cursor onto the same
+        // match instead of resolving each independently.
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "(a)(b)");
+        let mut buffer_context = BufferState::unloaded();
+        assert!(buffer_context.treesitter.is_err());
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 1); // 'a'
+        window_state.selections.add(buffer.as_text_buffer(), 4); // 'b'
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveWithinCharacter { count: 1, ch: '(' },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        let text_buffer = buffer.as_text_buffer();
+        let mut selected: Vec<String> = window_state
+            .selections
+            .selections
+            .iter()
+            .map(|s| s.text(text_buffer))
+            .collect();
+        selected.sort();
+        assert_eq!(selected, vec!["a".to_string(), "b".to_string()]);
     }
 }
