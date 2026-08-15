@@ -30,6 +30,9 @@ pub trait UIContext {
     fn get_cursor_position(&self) -> Option<(u32, u32)> {
         None
     }
+    fn get_scope_path(&self) -> &[String] {
+        &[]
+    }
 }
 
 pub trait View {

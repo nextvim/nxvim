@@ -56,6 +56,7 @@ pub fn build_text(
         ))
     };
 
+    let mut prev_row = 0;
     for row in start_row..end_row {
         let line = display_map_snapshot.line_text(row);
         let buffer_row = display_map_snapshot.buffer_row_for_display_row(row);
@@ -66,11 +67,15 @@ pub fn build_text(
         let line_highlights = highlight_service.highlight_row(buffer.id().get(), buffer_row);
         let mut highlight_index = 0;
 
-        let gutter_text = if window.show_gutter {
+        let mut gutter_text = if window.show_gutter {
             format!(" {:2} ", buffer_row + 1)
         } else {
             String::new()
         };
+        if prev_row == buffer_row + 1 {
+            gutter_text = " ".repeat(gutter_text.len());
+        }
+        prev_row = buffer_row + 1;
         let cursor_offset = gutter_text.len() as u32;
 
         for column in 0..=line_len {

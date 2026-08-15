@@ -124,10 +124,7 @@ pub fn parse_scopes_cancellable(
 
         // Check for state convergence if we parsed beyond the target end range
         if row >= end_row {
-            if let Some(existing_cp) = existing_checkpoints
-                .iter()
-                .find(|cp| cp.row == row)
-            {
+            if let Some(existing_cp) = existing_checkpoints.iter().find(|cp| cp.row == row) {
                 // Since ParseState might not implement PartialEq, we compare ScopeStack as convergence metric
                 if existing_cp.scope_stack == stack {
                     break;
@@ -189,10 +186,7 @@ pub struct BufferHighlightState {
 }
 
 impl BufferHighlightState {
-    fn nearest_checkpoint(
-        &self,
-        target_row: u32,
-    ) -> Option<ParseStateCheckpoint> {
+    fn nearest_checkpoint(&self, target_row: u32) -> Option<ParseStateCheckpoint> {
         let mut row = target_row - (target_row % CHECKPOINT_INTERVAL);
         loop {
             if target_row - row > MAX_CHECKPOINT_DISTANCE {
@@ -209,8 +203,6 @@ impl BufferHighlightState {
         None
     }
 }
-
-
 
 pub struct HighlightService {
     pub buffers: HashMap<u64, BufferHighlightState>,
@@ -251,7 +243,8 @@ impl HighlightService {
             if previous.version != snapshot.version {
                 for edit in snapshot.edits_since::<Point>(&previous.version) {
                     let edit_row = edit.new.start.row;
-                    lowest_affected_row = Some(lowest_affected_row.map_or(edit_row, |r| r.min(edit_row)));
+                    lowest_affected_row =
+                        Some(lowest_affected_row.map_or(edit_row, |r| r.min(edit_row)));
                 }
             }
         }
@@ -267,7 +260,8 @@ impl HighlightService {
         }
 
         let checkpoint = state.nearest_checkpoint(row_start);
-        let existing_checkpoints: Vec<ParseStateCheckpoint> = state.checkpoints.values().cloned().collect();
+        let existing_checkpoints: Vec<ParseStateCheckpoint> =
+            state.checkpoints.values().cloned().collect();
 
         if let Some((rows, checkpoints)) = parse_scopes_cancellable(
             snapshot,
@@ -282,15 +276,13 @@ impl HighlightService {
                 .rows
                 .retain(|row, _| *row < row_start || *row > row_end);
 
-            state.rows.extend(
-                rows.into_iter()
-                    .map(|row| (row.row, row.spans))
-            );
+            state
+                .rows
+                .extend(rows.into_iter().map(|row| (row.row, row.spans)));
             state.published_snapshot = Some(snapshot.clone());
-            state.checkpoints.extend(
-                checkpoints.into_iter()
-                    .map(|cp| (cp.row, cp))
-            );
+            state
+                .checkpoints
+                .extend(checkpoints.into_iter().map(|cp| (cp.row, cp)));
         }
     }
 
@@ -324,14 +316,7 @@ mod tests {
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
 
-        service.highlight_run(
-            buffer.id().get(),
-            &snapshot,
-            Some("main.rs"),
-            2,
-            5,
-            false,
-        );
+        service.highlight_run(buffer.id().get(), &snapshot, Some("main.rs"), 2, 5, false);
 
         for r in 2..=5 {
             assert!(service.highlight_row(buffer.id().get(), r).is_some());

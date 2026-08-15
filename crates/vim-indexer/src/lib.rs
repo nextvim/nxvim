@@ -105,16 +105,18 @@ impl Trie {
     }
 }
 
+use vim_buffer::{BufferId, ChangedTick};
+
 #[derive(Debug)]
 pub struct IndexTaskResult {
-    pub buffer_id: u64,
-    pub changedtick: u64,
+    pub buffer_id: BufferId,
+    pub changedtick: ChangedTick,
     pub source_key: String,
     pub keywords: HashMap<u32, HashSet<String>>,
 }
 
 struct IndexRequest {
-    changedtick: u64,
+    changedtick: ChangedTick,
     pending_task_id: Option<TaskId>,
     latest_task_id: Arc<AtomicU64>,
 }
@@ -127,7 +129,7 @@ pub struct Indexer {
     pub buffer_trie: Trie,
     pub treesitter_trie: Trie,
     pub lsp_trie: Trie,
-    requests: HashMap<u64, IndexRequest>,
+    requests: HashMap<BufferId, IndexRequest>,
 }
 
 impl Indexer {
@@ -143,13 +145,13 @@ impl Indexer {
         }
     }
 
-    pub fn should_index(&self, buffer_id: u64, changedtick: u64) -> bool {
+    pub fn should_index(&self, buffer_id: BufferId, changedtick: ChangedTick) -> bool {
         self.requests
             .get(&buffer_id)
             .is_none_or(|request| request.changedtick != changedtick)
     }
 
-    pub fn begin_index(&mut self, buffer_id: u64, changedtick: u64) -> Arc<AtomicU64> {
+    pub fn begin_index(&mut self, buffer_id: BufferId, changedtick: ChangedTick) -> Arc<AtomicU64> {
         let request = self
             .requests
             .entry(buffer_id)
@@ -162,7 +164,7 @@ impl Indexer {
         request.latest_task_id.clone()
     }
 
-    pub fn set_pending_task(&mut self, buffer_id: u64, task_id: TaskId) {
+    pub fn set_pending_task(&mut self, buffer_id: BufferId, task_id: TaskId) {
         if let Some(request) = self.requests.get_mut(&buffer_id) {
             request.pending_task_id = Some(task_id);
         }
@@ -301,6 +303,25 @@ impl Indexer {
         entries.sort_by(|left, right| left.keyword.cmp(&right.keyword));
         entries
     }
+
+    pub fn initialize_from_indexed(
+        &mut self,
+        buffer_id: BufferId,
+        changedtick: ChangedTick,
+        source_key: String,
+        keywords: HashMap<u32, HashSet<String>>,
+    ) {
+        self.requests.insert(
+            buffer_id,
+            IndexRequest {
+                changedtick,
+                pending_task_id: None,
+                latest_task_id: Arc::new(AtomicU64::new(0)),
+            },
+        );
+        self.buffer_keywords.insert(source_key, keywords);
+        self.rebuild_buffer_trie();
+    }
 }
 
 impl Default for Indexer {
@@ -309,23 +330,18 @@ impl Default for Indexer {
     }
 }
 
-pub fn index_buffer(
-    buffer_id: u64,
-    changedtick: u64,
-    source_key: String,
-    snapshot: BufferSnapshot,
-) -> IndexTaskResult {
-    index_buffer_cancellable(buffer_id, changedtick, source_key, snapshot, || false)
+pub fn index_buffer(source_key: String, snapshot: BufferSnapshot) -> IndexTaskResult {
+    index_buffer_cancellable(source_key, snapshot, || false)
         .expect("non-cancellable indexing cannot be cancelled")
 }
 
 pub fn index_buffer_cancellable(
-    buffer_id: u64,
-    changedtick: u64,
     source_key: String,
     snapshot: BufferSnapshot,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Option<IndexTaskResult> {
+    let buffer_id = snapshot.id();
+    let changedtick = snapshot.changedtick();
     let mut keywords = HashMap::new();
     for row in 0..snapshot.row_count() {
         if is_cancelled() {
@@ -399,17 +415,12 @@ mod tests {
         let mut buffers = vim_buffer::BufferManager::new();
         let buffer_id = buffers.create("alpha beta_2\nγamma alpha").id();
         let snapshot = buffers.get(buffer_id).unwrap().snapshot();
-        let changedtick = snapshot.changedtick().get();
-        let result = index_buffer(
-            buffer_id.get(),
-            changedtick,
-            "sample.rs".to_owned(),
-            snapshot,
-        );
+        let changedtick = snapshot.changedtick();
+        let result = index_buffer("sample.rs".to_owned(), snapshot.clone());
 
         let mut indexer = Indexer::new();
-        indexer.begin_index(buffer_id.get(), changedtick);
-        indexer.set_pending_task(buffer_id.get(), TaskId(1));
+        indexer.begin_index(buffer_id, changedtick);
+        indexer.set_pending_task(buffer_id, TaskId(1));
         assert!(indexer.apply_task_result(TaskId(1), result));
 
         assert_eq!(
@@ -427,14 +438,21 @@ mod tests {
     #[test]
     fn rejects_stale_background_results() {
         let mut indexer = Indexer::new();
-        indexer.begin_index(7, 1);
-        indexer.set_pending_task(7, TaskId(1));
-        indexer.begin_index(7, 2);
-        indexer.set_pending_task(7, TaskId(2));
+        let buf7 = BufferId::new(7).unwrap();
+        let tick1 = ChangedTick::INITIAL;
+        let tick2 = {
+            let mut b = vim_buffer::Buffer::new(clock::ReplicaId::LOCAL, buf7, "");
+            b.increment_changedtick();
+            b.changedtick()
+        };
+        indexer.begin_index(buf7, tick1);
+        indexer.set_pending_task(buf7, TaskId(1));
+        indexer.begin_index(buf7, tick2);
+        indexer.set_pending_task(buf7, TaskId(2));
 
         let stale = IndexTaskResult {
-            buffer_id: 7,
-            changedtick: 1,
+            buffer_id: buf7,
+            changedtick: tick1,
             source_key: "old.rs".to_owned(),
             keywords: HashMap::new(),
         };

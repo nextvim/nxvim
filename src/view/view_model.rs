@@ -35,6 +35,7 @@ pub struct EditorViewModel {
     active_cursor: Option<(u32, u32)>,
     mode_name: String,
     status_message: Option<String>,
+    scope_path: Vec<String>,
 }
 
 impl EditorViewModel {
@@ -59,20 +60,44 @@ impl EditorViewModel {
         let active_buffer_id = model
             .window_buffer(active_window)
             .map(|id| vim_ui::BufferId::new(id.get()));
-        let active_cursor = model.window_state(active_window).and_then(|window| {
-            if window.selections.selections.is_empty() {
-                return Some((1, 1));
+        let mut active_cursor = None;
+        let mut scope_path = Vec::new();
+
+        let mut status_message = model.status.clone();
+
+        if let Some(window) = model.window_state(active_window) {
+            if let Some(buf_id) = window_buffer_id(model, active_window) {
+                if let Ok(buffer) = model.get_buffer(buf_id) {
+                    let point = if window.selections.selections.is_empty() {
+                        text::Point::new(0, 0)
+                    } else {
+                        window
+                            .selections
+                            .primary()
+                            .head()
+                            .to_point(buffer.snapshot().as_inner())
+                    };
+                    active_cursor = Some((point.row + 1, point.column + 1));
+
+                    // Query treesitter scope at current cursor byte offset
+                    if let Some(state) = model.buffer_state(buf_id) {
+                        if let Ok(tree) = &state.treesitter {
+                            if let Ok(offset) = buffer
+                                .snapshot()
+                                .point_to_offset(vim_buffer::Point::new(point.row, point.column))
+                            {
+                                scope_path = tree
+                                    .scope_path_at_byte(offset.0)
+                                    .into_iter()
+                                    .filter(|node| node.named && !node.kind.is_empty())
+                                    .map(|node| node.kind)
+                                    .collect();
+                            }
+                        }
+                    }
+                }
             }
-            let buffer = model
-                .get_buffer(window_buffer_id(model, active_window)?)
-                .ok()?;
-            let point = window
-                .selections
-                .primary()
-                .head()
-                .to_point(buffer.snapshot().as_inner());
-            Some((point.row + 1, point.column + 1))
-        });
+        }
 
         let mut text_models = HashMap::new();
         for (window_id, buffer_id) in model.window_buffers() {
@@ -116,7 +141,8 @@ impl EditorViewModel {
             buffer_names,
             active_cursor,
             mode_name,
-            status_message: model.status.clone(),
+            status_message,
+            scope_path,
         }
     }
 }
@@ -156,6 +182,10 @@ impl vim_ui::UIContext for EditorViewModel {
 
     fn get_cursor_position(&self) -> Option<(u32, u32)> {
         self.active_cursor
+    }
+
+    fn get_scope_path(&self) -> &[String] {
+        &self.scope_path
     }
 }
 

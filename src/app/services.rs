@@ -69,6 +69,8 @@ impl Services {
         let mut background_workers = background_worker::WorkerManager::new();
         background_workers.add_worker("display_map");
         background_workers.add_worker("highlight");
+        background_workers.add_worker("treesitter");
+        background_workers.add_worker("indexer");
         Self {
             background_workers,
             clipboard: clipboard::Clipboard::new(),

@@ -69,7 +69,38 @@ impl Buffers {
     }
 
     pub fn state_mut(&mut self, id: BufferId) -> &mut BufferState {
-        self.states.entry(id).or_insert_with(BufferState::unloaded)
+        let inner = &self.inner;
+        self.states.entry(id).or_insert_with(|| {
+            if let Ok(buffer) = inner.get(id) {
+                let snapshot = buffer.snapshot();
+                let path_opt = buffer.path();
+                let grammar_opt = path_opt
+                    .and_then(|path| path.to_str())
+                    .and_then(vim_treesitter::Grammar::from_path);
+
+                let treesitter = if let Some(grammar) = grammar_opt {
+                    let parse_result = vim_treesitter::parse_snapshot(snapshot.clone(), grammar);
+                    parse_result.result
+                } else {
+                    Err("Not loaded".to_string())
+                };
+
+                let index = if let Some(path) = path_opt {
+                    let source_key = path.to_string_lossy().into_owned();
+                    Ok(vim_indexer::index_buffer(source_key, snapshot.clone()))
+                } else {
+                    Err("Not loaded".to_string())
+                };
+
+                BufferState {
+                    revision: 0,
+                    treesitter,
+                    index,
+                }
+            } else {
+                BufferState::unloaded()
+            }
+        })
     }
 
     pub fn create(&mut self, initial_text: impl Into<String>) -> BufferId {

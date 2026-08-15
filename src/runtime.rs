@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::app::services::{indexer, treesitter};
 use crate::controller::{Command, CommandOutcome, Dispatcher, ViewEffect};
 use crate::terminal::TerminalSession;
 use crate::view::{EditorViewModel, LayoutSnapshot};
@@ -136,6 +137,8 @@ impl Runtime {
         for window_id in window_ids {
             self.schedule_window_display_map(window_id);
             self.schedule_window_highlight(window_id, is_idle);
+            self.schedule_window_treesitter(window_id);
+            self.schedule_window_indexer(window_id);
         }
     }
 
@@ -186,7 +189,11 @@ impl Runtime {
         Some(())
     }
 
-    fn schedule_window_highlight(&mut self, window_id: vim_ui::WindowId, expanded: bool) -> Option<()> {
+    fn schedule_window_highlight(
+        &mut self,
+        window_id: vim_ui::WindowId,
+        expanded: bool,
+    ) -> Option<()> {
         let buffer_id = self.app.model.window_buffer(window_id)?;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
@@ -197,7 +204,7 @@ impl Runtime {
         let viewport_height = window.viewport.height as u32;
         let start_row = display_map_snapshot.buffer_row_for_display_row(scroll_y);
         let end_row = display_map_snapshot.buffer_row_for_display_row(
-            (scroll_y + viewport_height).min(display_map_snapshot.row_count())
+            (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
         );
 
         let file_path = buffer.path().and_then(|p| p.to_str());
@@ -211,6 +218,130 @@ impl Runtime {
             expanded,
         );
 
+        Some(())
+    }
+
+    fn schedule_window_treesitter(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
+        let buffer_id = self.app.model.window_buffer(window_id)?;
+        let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
+        let buffer = self.app.model.get_buffer(buffer_id).ok()?;
+        let path = buffer.path()?.to_str()?;
+        let grammar = treesitter::Grammar::from_path(path)?;
+        let changedtick = buffer.changedtick();
+
+        if !self.app.services.treesitter.is_parsing(buffer_id) && self.app.services.treesitter.syntax_tree(buffer_id).is_none() {
+            if let Some(state) = self.app.model.buffer_state(buffer_id) {
+                if let Ok(syntax_tree) = &state.treesitter {
+                    if syntax_tree.grammar() == grammar {
+                        self.app.services.treesitter.initialize_from_parsed(
+                            buffer_id,
+                            changedtick,
+                            grammar,
+                            syntax_tree.clone(),
+                        );
+                    }
+                }
+            }
+        }
+
+        if !self
+            .app
+            .services
+            .treesitter
+            .should_parse(buffer_id, changedtick, grammar)
+        {
+            return None;
+        }
+
+        let sequence = self
+            .app
+            .services
+            .treesitter
+            .begin_parse(buffer_id, changedtick, grammar);
+        let snapshot = buffer.snapshot().clone();
+        let owner = crate::app::services::TaskOwner {
+            buffer_id: Some(buffer_id),
+            window_id: Some(window_id),
+            revision,
+        };
+
+        let task_id = self.app.services.spawn_cancellable_task(
+            "treesitter",
+            sequence,
+            owner,
+            crate::app::services::TaskType::Treesitter,
+            move |token| {
+                let cancelled = move || token.is_cancelled();
+                let res = treesitter::parse_snapshot_cancellable(snapshot, grammar, cancelled);
+                Some(res.result)
+            },
+        )?;
+
+        self.app
+            .services
+            .treesitter
+            .set_pending_task(buffer_id, task_id);
+        Some(())
+    }
+
+    fn schedule_window_indexer(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
+        let buffer_id = self.app.model.window_buffer(window_id)?;
+        let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
+        let buffer = self.app.model.get_buffer(buffer_id).ok()?;
+        let changedtick = buffer.changedtick();
+
+        if self.app.services.indexer.should_index(buffer_id, changedtick) {
+            if let Some(state) = self.app.model.buffer_state(buffer_id) {
+                if let Ok(index_result) = &state.index {
+                    if index_result.changedtick == changedtick {
+                        self.app.services.indexer.initialize_from_indexed(
+                            buffer_id,
+                            changedtick,
+                            index_result.source_key.clone(),
+                            index_result.keywords.clone(),
+                        );
+                    }
+                }
+            }
+        }
+
+        if !self
+            .app
+            .services
+            .indexer
+            .should_index(buffer_id, changedtick)
+        {
+            return None;
+        }
+
+        let sequence = self
+            .app
+            .services
+            .indexer
+            .begin_index(buffer_id, changedtick);
+        let snapshot = buffer.snapshot().clone();
+        let source_key = buffer.path()?.to_string_lossy().into_owned();
+        let owner = crate::app::services::TaskOwner {
+            buffer_id: Some(buffer_id),
+            window_id: Some(window_id),
+            revision,
+        };
+
+        let task_id = self.app.services.spawn_cancellable_task(
+            "indexer",
+            sequence,
+            owner,
+            crate::app::services::TaskType::Indexer,
+            move |token| {
+                let cancelled = move || token.is_cancelled();
+                indexer::index_buffer_cancellable(source_key, snapshot, cancelled)
+            },
+        )?;
+
+        self.app
+            .services
+            .indexer
+            .set_pending_task(buffer_id, task_id);
         Some(())
     }
 

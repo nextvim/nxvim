@@ -15,6 +15,7 @@ impl View for StatusLineView {
         context: &dyn UIContext,
         renderer: &mut dyn Renderer,
     ) -> std::io::Result<()> {
+        // Line 1: Status message and cursor info
         renderer.move_to(area.x, area.y)?;
 
         let buffer_name = context
@@ -49,6 +50,25 @@ impl View for StatusLineView {
             renderer.print(&left)?;
             renderer.print(&" ".repeat(total_width - left_width - right_width))?;
             renderer.print(&right)?;
+        }
+
+        // Line 2: Treesitter scope under the current cursor
+        if area.height > 1 {
+            renderer.move_to(area.x, area.y + 1)?;
+            let mut scope_text = String::new();
+
+            let scope_path = context.get_scope_path();
+            if !scope_path.is_empty() {
+                scope_text = format!(" Scope: {}", scope_path.join(" > "));
+            } else {
+                scope_text = " Scope: [None]".to_string();
+            }
+
+            let truncated_scope: String = scope_text.chars().take(total_width).collect();
+            renderer.print(&truncated_scope)?;
+            if truncated_scope.chars().count() < total_width {
+                renderer.print(&" ".repeat(total_width - truncated_scope.chars().count()))?;
+            }
         }
         Ok(())
     }
