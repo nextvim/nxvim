@@ -78,6 +78,9 @@ impl Dispatcher {
                 &mut app.services.treesitter,
                 result,
             ),
+            Command::ClearSearchHighlight => {
+                LifecycleHandler::clear_search_highlight(&mut app.model)
+            }
             Command::RangeOp {
                 operation,
                 bang,

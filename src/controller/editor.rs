@@ -43,28 +43,63 @@ fn move_to_syntax_target(
     }
 }
 
-/// Builds a [`vim_scanner::StructuralScanner`] straight from the buffer's
-/// rope chunks, without first materializing the whole buffer into one
-/// owned `String` (unlike `buffer.as_text_buffer().text()`).
-fn scan_structure(buffer: &text::Buffer) -> vim_scanner::StructuralScanner {
-    vim_scanner::StructuralScanner::scan_chunks(buffer.as_rope().chunks())
+/// The number of rows scanned on each side of a cursor's row on the first
+/// attempt to resolve a delimiter match via the structural-scanner
+/// fallback. Doubled on each subsequent attempt until a match is found or
+/// the whole buffer has been scanned once.
+const SCANNER_FALLBACK_INITIAL_ROW_RADIUS: u32 = 64;
+
+/// Runs `query` against growing windows of rows around `byte`'s row,
+/// starting at [`SCANNER_FALLBACK_INITIAL_ROW_RADIUS`] rows on each side and
+/// doubling the radius on each attempt until `query` finds a match or the
+/// window covers the whole buffer. This avoids scanning (and allocating a
+/// full `StructuralScanner` for) the entire buffer just to resolve a single,
+/// usually nearby, delimiter match.
+///
+/// This is a heuristic: a string or comment spanning more rows than the
+/// window being scanned can leave the scan not knowing it started "inside"
+/// one, which could occasionally miscount nesting right at the window's
+/// edges. Callers that need perfect accuracy should prefer a real syntax
+/// tree instead.
+fn scan_expanding(
+    buffer: &text::Buffer,
+    byte: usize,
+    block_only: bool,
+) -> Option<vim_scanner::MatchedDelimiter> {
+    let row_count = buffer.row_count();
+    let cursor_row = byte.to_point(buffer).row;
+    let mut radius = SCANNER_FALLBACK_INITIAL_ROW_RADIUS;
+
+    loop {
+        let start_row = cursor_row.saturating_sub(radius);
+        let end_row = cursor_row.saturating_add(radius);
+        let covers_whole_buffer = start_row == 0 && end_row >= row_count;
+
+        if let Some(m) = vim_scanner::StructuralScanner::scan_rows_for_enclosing(
+            buffer,
+            start_row,
+            end_row,
+            byte,
+            block_only,
+        ) {
+            return Some(m);
+        }
+
+        if covers_whole_buffer {
+            return None;
+        }
+        radius = radius.saturating_mul(2);
+    }
 }
 
-/// Looks for a delimiter pair enclosing `byte` in an already-built `scan`.
+/// Looks for a delimiter pair enclosing `byte`, using the dependency-free
+/// [`vim_scanner::StructuralScanner`] instead of a tree-sitter syntax tree.
 /// Used as a fallback for `i{`/`a{`-style motions when no syntax tree is
 /// available for the buffer. Returns the byte offsets of the opening and
 /// closing delimiter characters if `ch` matches the kind of the innermost
 /// enclosing pair (backtick strings and tags aren't supported, since the
 /// scanner has no notion of either).
-///
-/// Callers driving multiple cursors from the same action should build the
-/// `scan` once (with [`scan_structure`]) and reuse it for every cursor,
-/// rather than rescanning the whole buffer per cursor.
-fn scanner_delimiter_match(
-    scan: &vim_scanner::StructuralScanner,
-    byte: usize,
-    ch: char,
-) -> Option<(usize, usize)> {
+fn scanner_delimiter_match(buffer: &text::Buffer, byte: usize, ch: char) -> Option<(usize, usize)> {
     let expected_kind = match ch {
         '{' | '}' => vim_scanner::DelimiterKind::Brace,
         '(' | ')' => vim_scanner::DelimiterKind::Paren,
@@ -73,9 +108,10 @@ fn scanner_delimiter_match(
         '\'' => vim_scanner::DelimiterKind::SingleQuote,
         _ => return None,
     };
-    let m = scan.innermost_at(byte)?;
+    let m = scan_expanding(buffer, byte, false)?;
     (m.kind == expected_kind).then_some((m.start, m.end))
 }
+
 
 /// Removes any fold overlapping the half-open byte range `start..end` (with a
 /// one-byte tolerance on either edge), so that a pending buffer edit over that
@@ -648,12 +684,6 @@ impl Editor {
             Action::MoveWithinCharacter { count, ch } => {
                 let select = mode.is_visual();
                 let cursors = buffer_display_context.selections.selections.clone();
-                // Built once per action (not once per cursor below), and only
-                // when it will actually be consulted: 'w'/'p' never need it,
-                // and a successful syntax tree takes priority over it.
-                let fallback_scan =
-                    (buffer_context.treesitter.is_err() && *ch != 'w' && *ch != 'p')
-                        .then(|| scan_structure(buffer.as_text_buffer()));
                 for cursor in cursors.iter() {
                     let mut updated = false;
                     if *ch == 'w' {
@@ -754,13 +784,11 @@ impl Editor {
                                 updated = true;
                             }
                         }
-                    } else if let Some((start, end)) = fallback_scan.as_ref().and_then(|scan| {
-                        scanner_delimiter_match(
-                            scan,
-                            buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
-                            *ch,
-                        )
-                    }) {
+                    } else if let Some((start, end)) = scanner_delimiter_match(
+                        buffer.as_text_buffer(),
+                        buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
+                        *ch,
+                    ) {
                         let start_offset = start + 1;
                         let end_offset = end.saturating_sub(1);
                         let start_anchor =
@@ -794,12 +822,6 @@ impl Editor {
             Action::MoveAroundCharacter { count, ch } => {
                 let select = mode.is_visual();
                 let cursors = buffer_display_context.selections.selections.clone();
-                // Built once per action (not once per cursor below), and only
-                // when it will actually be consulted: 'w'/'p' never need it,
-                // and a successful syntax tree takes priority over it.
-                let fallback_scan =
-                    (buffer_context.treesitter.is_err() && *ch != 'w' && *ch != 'p')
-                        .then(|| scan_structure(buffer.as_text_buffer()));
                 for cursor in cursors.iter() {
                     let mut updated = false;
                     if *ch == 'w' {
@@ -900,15 +922,11 @@ impl Editor {
                                 updated = true;
                             }
                         }
-                    } else if let Some((start_offset, end_offset)) =
-                        fallback_scan.as_ref().and_then(|scan| {
-                            scanner_delimiter_match(
-                                scan,
-                                buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
-                                *ch,
-                            )
-                        })
-                    {
+                    } else if let Some((start_offset, end_offset)) = scanner_delimiter_match(
+                        buffer.as_text_buffer(),
+                        buffer.as_text_buffer().offset_for_anchor(&cursor.head()),
+                        *ch,
+                    ) {
                         let start_anchor =
                             buffer.as_text_buffer().anchor_at(start_offset, Bias::Left);
                         let end_anchor = buffer.as_text_buffer().anchor_at(end_offset, Bias::Right);
@@ -1862,9 +1880,9 @@ impl Editor {
     /// cost of only understanding braces/parens/brackets (no language-aware
     /// notion of "block", and no support for tags or backtick strings).
     fn fold_with_scanner(&self, buffer: &Buffer, buffer_display_context: &mut WindowState) {
-        let scan = scan_structure(buffer.as_text_buffer());
+        let text_buffer = buffer.as_text_buffer();
         self.fold_enclosing(buffer, buffer_display_context, |head_offset| {
-            let block = scan.enclosing_block_at(head_offset)?;
+            let block = scan_expanding(text_buffer, head_offset, true)?;
             Some((block.outer_range(), block.inner_range()))
         });
     }
@@ -2533,5 +2551,115 @@ mod tests {
             .collect();
         selected.sort();
         assert_eq!(selected, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn scanner_fallback_expands_across_many_rows_to_find_a_distant_match() {
+        // The opening brace is on row 0, the closing brace 200 rows later,
+        // and the cursor sits on row 100: with the fallback's initial and
+        // first-doubled row radius (64, then 128), neither attempt's window
+        // reaches row 0, so this only succeeds if the scan keeps expanding
+        // until the window covers the whole buffer.
+        let mut lines = vec!["{".to_string()];
+        for i in 0..199 {
+            lines.push(format!("line{i}"));
+        }
+        lines.push("}".to_string());
+        let text = lines.join("\n");
+        let open_pos = text.find('{').unwrap();
+        let close_pos = text.rfind('}').unwrap();
+        let expected_inner = text[open_pos + 1..close_pos].to_string();
+
+        let cursor_row = 100u32;
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let mut buffer_context = BufferState::unloaded();
+        assert!(buffer_context.treesitter.is_err());
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        let cursor_offset = Point::new(cursor_row, 0).to_offset(buffer.as_text_buffer());
+        window_state.selections.selections.clear();
+        window_state
+            .selections
+            .add(buffer.as_text_buffer(), cursor_offset);
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveWithinCharacter { count: 1, ch: '{' },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        assert_eq!(
+            window_state.selections.text(buffer.as_text_buffer()),
+            expected_inner
+        );
+    }
+
+    #[test]
+    fn test_search_movements() {
+        let text = "hello\nworld\nrust nextvim\nnext level\n";
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 0);
+        window_state.selections.search = "next".to_string();
+        window_state.selections.regex = vim_buffer::compile("next").map(std::sync::Arc::new);
+
+        let editor = Editor::new();
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::SearchForward { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let cursor_head = window_state.selections.primary().head();
+        let point = cursor_head.to_point(buffer.as_text_buffer());
+        assert_eq!(point.row, 2);
+        assert_eq!(point.column, 5);
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::SearchForward { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let point = window_state.selections.primary().head().to_point(buffer.as_text_buffer());
+        assert_eq!(point.row, 3);
+        assert_eq!(point.column, 0);
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::SearchBackward { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let point = window_state.selections.primary().head().to_point(buffer.as_text_buffer());
+        assert_eq!(point.row, 2);
+        assert_eq!(point.column, 5);
     }
 }

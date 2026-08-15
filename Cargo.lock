@@ -3038,6 +3038,10 @@ dependencies = [
 [[package]]
 name = "vim-scanner"
 version = "0.1.0"
+dependencies = [
+ "clock",
+ "text",
+]
 
 [[package]]
 name = "vim-script"

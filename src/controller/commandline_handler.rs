@@ -44,6 +44,10 @@ impl CommandlineHandler {
                     _ => unreachable!(),
                 };
                 model.commandline_mode = mode_char;
+                if mode_char == '/' || mode_char == '?' {
+                    model.search_pattern = None;
+                    model.search_regex = None;
+                }
                 input.set_mode(Mode::Insert);
                 let _ = WindowOps::edit_window(
                     ui,

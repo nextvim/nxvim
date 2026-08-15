@@ -1,5 +1,6 @@
 use std::any::Any;
 use text::{Point, ToPoint};
+use vim_buffer::TextSearch;
 use vim_ui::{Rect, Renderer, View, WindowState};
 
 use crate::model::BufferState;
@@ -42,6 +43,7 @@ impl TextView {
             Some(&buffer_state.highlights),
             globals.search_pattern,
             globals.search_regex,
+            globals.colorscheme,
         );
         self.inner.set_model(model);
     }
@@ -73,7 +75,8 @@ pub fn build_text(
     mode: vim_input::Mode,
     highlights: Option<&textmate::BufferHighlightState>,
     _search_pattern: Option<&str>,
-    _search_regex: Option<&onig::Regex>,
+    search_regex: Option<&onig::Regex>,
+    colorscheme: Option<&vim_ui::ColorScheme>,
 ) -> vim_ui::TextViewModel {
     let mut rows = Vec::new();
     let mut saved_cursor = None;
@@ -104,6 +107,20 @@ pub fn build_text(
         let line_highlights = highlights.and_then(|h| h.highlight_row(buffer_row));
         let mut highlight_index = 0;
 
+        let mut match_ranges = Vec::<(usize, usize)>::new();
+        if let Some(regex) = search_regex {
+            let matches = line.find_pattern(regex);
+            match_ranges = matches
+                .iter()
+                .map(|(byte_start, byte_len, _)| {
+                    let byte_end = *byte_start + *byte_len;
+                    let start_char = line[..*byte_start].chars().count();
+                    let end_char = line[..byte_end].chars().count();
+                    (start_char, end_char)
+                })
+                .collect();
+        }
+
         let mut gutter_text = if window.show_gutter {
             format!(" {:2} ", buffer_row + 1)
         } else {
@@ -131,6 +148,13 @@ pub fn build_text(
                 vim_buffer::SelectionCellState::default()
             };
 
+            let in_match = if !is_eol {
+                let abs_column = column + scroll_x as usize;
+                match_ranges.iter().any(|&(s, e)| abs_column >= s && abs_column < e)
+            } else {
+                false
+            };
+
             if active && selection_state.at_cursor_head {
                 saved_cursor = Some(vim_ui::model::TextCursor {
                     position: vim_ui::model::DisplayPosition {
@@ -149,6 +173,13 @@ pub fn build_text(
             let mut style = vim_ui::Style::default();
             if selection_state.selected_cell || selection_state.at_cursor_head {
                 style.bg = Some(vim_ui::Color::Blue);
+            } else if in_match {
+                if let Some(cs_style) = colorscheme.and_then(|cs| cs.get_style("Search")) {
+                    style = *cs_style;
+                } else {
+                    style.fg = Some(vim_ui::Color::Black);
+                    style.bg = Some(vim_ui::Color::Yellow);
+                }
             } else if let Some(line_highlights) = line_highlights {
                 if let Some(span) =
                     highlight_at_column(line_highlights, &mut highlight_index, point.column)
@@ -344,6 +375,42 @@ mod tests {
         assert_eq!(highlight_at_column(&spans, &mut index, 7), Some(&spans[0]));
         assert_eq!(highlight_at_column(&spans, &mut index, 8), Some(&spans[0]));
         assert_eq!(highlight_at_column(&spans, &mut index, 9), None);
+    }
+
+    #[test]
+    fn test_search_regex_highlighting() {
+        use vim_buffer::{Buffer, BufferId};
+        use vim_ui::{Rect, Viewport, WindowState};
+        use super::build_text;
+
+        let buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "hello world\nrust nextvim\n",
+        );
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
+
+        let regex = onig::Regex::new("next").unwrap();
+        let model = build_text(
+            &buffer,
+            &window_state,
+            Rect::new(0, 0, 80, 24),
+            true,
+            vim_input::Mode::Normal,
+            None,
+            Some("next"),
+            Some(&regex),
+            None,
+        );
+
+        // Row 0: "hello world" -> no matches
+        // Row 1: "rust nextvim" -> "next" matches starting at character index 5, length 4.
+        let row1 = &model.rows[1];
+        let span_texts: Vec<&str> = row1.spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(span_texts.get(1), Some(&"next"));
+        assert_eq!(row1.spans[1].style.bg, Some(vim_ui::Color::Yellow));
+        assert_eq!(row1.spans[1].style.fg, Some(vim_ui::Color::Black));
     }
 }
 
