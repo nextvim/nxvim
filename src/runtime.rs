@@ -54,7 +54,11 @@ impl Runtime {
 
             let mut commands = Vec::new();
 
-            if self.app.services.poll() {
+            while let Some(cmd) = self.app.command_queue.pop_front() {
+                commands.push(cmd);
+            }
+
+            if commands.is_empty() && self.app.services.poll() {
                 commands.extend(
                     self.app
                         .services

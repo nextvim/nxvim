@@ -588,6 +588,23 @@ impl Keymap {
         normal_actions
             .bind("m{c}", Action::MarkSet { ch: '?' })
             .expect("Valid binding");
+        normal_actions
+            .bind(
+                "q{c}",
+                Action::BeginMacro {
+                    register: String::new(),
+                },
+            )
+            .expect("Valid binding");
+        normal_actions
+            .bind(
+                "@{c}",
+                Action::ReplayMacro {
+                    count: 1,
+                    register: String::new(),
+                },
+            )
+            .expect("Valid binding");
 
         normal_actions
             .bind("x", Action::DeleteChar { count: 1 })
