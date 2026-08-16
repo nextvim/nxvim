@@ -59,6 +59,8 @@ pub struct Services {
     pub treesitter: treesitter::TreeSitterService,
     raw_results: Vec<background_worker::BackgroundResult>,
     task_metadata: Mutex<HashMap<background_worker::TaskId, TaskMetadata>>,
+    pub repeat_actions: Option<Vec<vim_input::Action>>,
+    pub recording_repeat: Option<Vec<vim_input::Action>>,
 }
 
 impl Services {
@@ -76,6 +78,8 @@ impl Services {
             treesitter: treesitter::TreeSitterService::new(),
             raw_results: Vec::new(),
             task_metadata: Mutex::new(HashMap::new()),
+            repeat_actions: None,
+            recording_repeat: None,
         }
     }
 

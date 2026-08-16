@@ -57,6 +57,10 @@ impl InputController {
                     None
                 }
             }
+            Event::Paste(text) => Some(Command::Editor {
+                action: vim_input::Action::InsertText(text),
+                register: None,
+            }),
             _ => None,
         }
     }
@@ -139,6 +143,19 @@ mod tests {
                 action: vim_input::Action::SplitVertical { file_path: None },
                 register: None,
             })
+        ));
+    }
+
+    #[test]
+    fn test_paste_event_resolves_to_insert_text() {
+        let mut controller = InputController::new(Mode::Normal);
+        let event = Event::Paste("hello world".to_string());
+        assert!(matches!(
+            controller.feed_event(event),
+            Some(Command::Editor {
+                action: vim_input::Action::InsertText(text),
+                register: None,
+            }) if text == "hello world"
         ));
     }
 }

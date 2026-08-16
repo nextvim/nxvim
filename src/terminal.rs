@@ -2,6 +2,7 @@ use std::io::{self, stdout};
 
 use crossterm::{
     cursor::Show,
+    event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
     terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size,
@@ -17,7 +18,7 @@ pub struct TerminalSession {
 impl TerminalSession {
     pub fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
-        if let Err(error) = execute!(stdout(), EnterAlternateScreen, Show) {
+        if let Err(error) = execute!(stdout(), EnterAlternateScreen, Show, EnableBracketedPaste) {
             let _ = disable_raw_mode();
             return Err(error);
         }
@@ -33,7 +34,7 @@ impl TerminalSession {
         if self.restored {
             return Ok(());
         }
-        let screen_result = execute!(stdout(), Show, LeaveAlternateScreen);
+        let screen_result = execute!(stdout(), Show, LeaveAlternateScreen, DisableBracketedPaste);
         let raw_result = disable_raw_mode();
         self.restored = true;
         screen_result.and(raw_result)
