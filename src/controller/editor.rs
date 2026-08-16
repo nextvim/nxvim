@@ -8,6 +8,26 @@ use vim_buffer::{Buffer, Motions, SelectionSet};
 use vim_input::{Action, Mode};
 use vim_ui::WindowState;
 
+trait ToggleCaseExt {
+    fn toggle_case(&self) -> String;
+}
+
+impl ToggleCaseExt for str {
+    fn toggle_case(&self) -> String {
+        self.chars()
+            .map(|c| {
+                if c.is_lowercase() {
+                    c.to_uppercase().to_string()
+                } else if c.is_uppercase() {
+                    c.to_lowercase().to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect()
+    }
+}
+
 /// Moves each cursor to the start of the syntax node returned by `target` for its position,
 /// repeating `count` times. Stops early once no cursor can move any further.
 fn move_to_syntax_target(
@@ -307,7 +327,8 @@ impl Editor {
         // These actions immediately drops mode back to Normal
         if mode.is_visual() {
             match action {
-                Action::Yank { .. } | Action::YankLine { .. } | Action::YankMotion { .. } => {
+                Action::Yank { .. } | Action::YankLine { .. } | Action::YankMotion { .. }
+                | Action::ChangeCase { .. } => {
                     next_action = Action::SetToNormal
                 }
                 _ => {}
@@ -1374,6 +1395,89 @@ impl Editor {
                             &mut buffer_display_context.folds,
                             1,
                         );
+                    }
+                }
+            }
+            Action::ChangeCase { count } => {
+                let mut edits = Vec::new();
+                let mut new_selections = Vec::new();
+                let cursors = buffer_display_context.selections.selections.clone();
+
+                for cursor in cursors.iter() {
+                    let (start_offset, end_offset) = if buffer_display_context
+                        .selections
+                        .has_selection(buffer.as_text_buffer())
+                    {
+                        let head = cursor.head();
+                        let tail = cursor.tail();
+                        let (cs, ce) = if head.cmp(&tail, buffer.as_text_buffer()) == Ordering::Less {
+                            (head.bias_left(buffer.as_text_buffer()), tail.bias_right(buffer.as_text_buffer()))
+                        } else {
+                            (tail.bias_left(buffer.as_text_buffer()), head.bias_right(buffer.as_text_buffer()))
+                        };
+                        let start = buffer.as_text_buffer().offset_for_anchor(&cs);
+                        let mut end = buffer.as_text_buffer().offset_for_anchor(&ce);
+                        if start != end {
+                            end = buffer.as_text_buffer().clip_offset(end + 1, Bias::Right);
+                        }
+                        (start, end)
+                    } else {
+                        let head = cursor.head();
+                        let start = buffer.as_text_buffer().offset_for_anchor(&head);
+                        let end = buffer
+                            .as_text_buffer()
+                            .clip_offset(start + *count as usize, Bias::Right);
+                        (start, end)
+                    };
+
+                    if start_offset != end_offset {
+                        let text: String = buffer
+                            .as_text_buffer()
+                            .as_rope()
+                            .chunks_in_range(start_offset..end_offset)
+                            .collect();
+
+                        let toggled = text.toggle_case();
+                        edits.push((start_offset, end_offset, toggled));
+                    }
+                }
+
+                if !edits.is_empty() {
+                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
+                    for &(start, end, ref toggled) in &edits {
+                        tx.replace(
+                            None,
+                            vim_buffer::TextRange::new(
+                                vim_buffer::ByteOffset(start),
+                                vim_buffer::ByteOffset(end),
+                            )
+                            .unwrap(),
+                            toggled.as_str(),
+                        );
+                    }
+                    let _ = tx.commit(Some(buffer_display_context.selections.clone()));
+
+                    for (i, cursor) in cursors.iter().enumerate() {
+                        if i >= edits.len() {
+                            break;
+                        }
+                        let (start, _, ref toggled) = edits[i];
+                        let text_buf = buffer.as_text_buffer();
+                        let new_offset = text_buf.clip_offset(start + toggled.len(), Bias::Left);
+                        let new_anchor = text_buf.anchor_at(new_offset, Bias::Left);
+                        new_selections.push(Selection {
+                            id: cursor.id,
+                            start: new_anchor.clone(),
+                            end: new_anchor,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        });
+                    }
+
+                    for sel in new_selections {
+                        buffer_display_context
+                            .selections
+                            .update(buffer.as_text_buffer(), &sel);
                     }
                 }
             }
@@ -2678,5 +2782,77 @@ mod tests {
             .to_point(buffer.as_text_buffer());
         assert_eq!(point.row, 2);
         assert_eq!(point.column, 5);
+    }
+
+    #[test]
+    fn test_change_case_normal_and_visual() {
+        // Test Normal mode toggle case
+        let text = "Hello WORLD";
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Put cursor at index 1 ('e')
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 1);
+
+        let editor = Editor::new();
+        // Toggle 3 chars: "ell" -> "ELL"
+        let next_mode = editor
+            .execute(
+                Mode::Normal,
+                &Action::ChangeCase { count: 3 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        // Check text after toggle
+        let buffer_text: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text, "HELLo WORLD");
+
+        // Cursor should move right by 3 chars (from offset 1 to offset 4)
+        let point = window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.as_text_buffer());
+        assert_eq!(point.column, 4);
+
+        // Test Visual mode toggle case
+        let text2 = "Rust NextVim";
+        let mut buffer2 = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text2);
+        let mut window_state2 = WindowState::new(&buffer2, Viewport::default());
+
+        // Set visual selection on "NextVim" (offset 5 to 12)
+        window_state2.selections.selections.clear();
+        window_state2.selections.add(buffer2.as_text_buffer(), 5);
+        window_state2.selections.move_right(true, 7, buffer2.as_text_buffer());
+
+        let next_mode2 = editor
+            .execute(
+                Mode::Visual,
+                &Action::ChangeCase { count: 1 },
+                &mut buffer2,
+                &mut buffer_context,
+                &mut window_state2,
+                &mut services,
+            )
+            .unwrap();
+
+        // "NextVim" -> "nEXTvIM"
+        let buffer_text2: String = buffer2
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer2.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text2, "Rust nEXTvIM");
     }
 }
