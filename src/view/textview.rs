@@ -156,7 +156,9 @@ pub fn build_text(
 
             let in_match = if !is_eol {
                 let abs_column = column + scroll_x as usize;
-                match_ranges.iter().any(|&(s, e)| abs_column >= s && abs_column < e)
+                match_ranges
+                    .iter()
+                    .any(|&(s, e)| abs_column >= s && abs_column < e)
             } else {
                 false
             };
@@ -385,9 +387,9 @@ mod tests {
 
     #[test]
     fn test_search_regex_highlighting() {
+        use super::build_text;
         use vim_buffer::{Buffer, BufferId};
         use vim_ui::{Rect, Viewport, WindowState};
-        use super::build_text;
 
         let buffer = Buffer::new(
             BufferId::new(1).unwrap(),

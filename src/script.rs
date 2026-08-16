@@ -292,7 +292,10 @@ mod tests {
         runtime.execute(":1,2x").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::WriteQuit { path: None, force: false })
+            Some(Command::WriteQuit {
+                path: None,
+                force: false
+            })
         ));
 
         let mut runtime = ScriptRuntime::new();
@@ -349,4 +352,3 @@ mod tests {
         ));
     }
 }
-

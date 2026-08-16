@@ -149,6 +149,7 @@ impl Dispatcher {
                     &mut app.services,
                     active_window,
                     &action,
+                    register,
                 );
 
                 let mode_after = app.controller.mode();

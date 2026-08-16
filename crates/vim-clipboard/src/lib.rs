@@ -26,8 +26,14 @@ impl Clipboard {
     }
 
     pub fn set(&mut self, text: impl Into<String>, kind: ClipboardKind) {
-        let reg = Register::new(vec![text.into()], kind);
         let curr = self.current_register.get();
+        if curr == RegisterName::BlackHole {
+            // The black-hole register discards whatever is written to it and
+            // never affects the unnamed/numbered registers.
+            self.current_register.set(RegisterName::Unnamed);
+            return;
+        }
+        let reg = Register::new(vec![text.into()], kind);
         self.registers.set(curr, reg.clone());
         self.registers.push_numbered(reg);
         self.current_register.set(RegisterName::Unnamed);
@@ -61,6 +67,20 @@ impl Clipboard {
             .get(self.current_register.get())
             .map(|r| r.kind)
             .unwrap_or(ClipboardKind::Character)
+    }
+
+    /// Reads both the text and kind of the currently-selected register in a
+    /// single pass, then resets the selection back to the unnamed register.
+    ///
+    /// Unlike `take`, this does not clear the register's contents: a paste
+    /// should be repeatable, not one-shot.
+    pub fn read(&self) -> (String, ClipboardKind) {
+        let curr = self.current_register.get();
+        let reg = self.registers.get(curr);
+        let text = reg.map(|r| r.text()).unwrap_or_default();
+        let kind = reg.map(|r| r.kind).unwrap_or_default();
+        self.current_register.set(RegisterName::Unnamed);
+        (text, kind)
     }
 
     pub fn is_empty(&self) -> bool {

@@ -51,6 +51,12 @@ pub enum Action {
     Yank {
         count: u32,
     },
+    UpperCase {
+        count: u32,
+    },
+    LowerCase {
+        count: u32,
+    },
     Fold {
         count: u32,
     },
@@ -326,6 +332,14 @@ pub enum Action {
         count: u32,
         motion: Box<Action>,
     },
+    UpperCaseMotion {
+        count: u32,
+        motion: Box<Action>,
+    },
+    LowerCaseMotion {
+        count: u32,
+        motion: Box<Action>,
+    },
 
     // NORMAL
     DeleteLine {
@@ -338,6 +352,12 @@ pub enum Action {
         count: u32,
     },
     JoinLines {
+        count: u32,
+    },
+    UpperCaseLine {
+        count: u32,
+    },
+    LowerCaseLine {
         count: u32,
     },
     DeleteChar {
@@ -432,6 +452,8 @@ impl std::fmt::Display for Action {
                 write!(f, "ReplayMacro({}, count={})", register, count)
             }
             Action::Yank { count } => write!(f, "Yank({})", count),
+            Action::UpperCase { count } => write!(f, "UpperCase({})", count),
+            Action::LowerCase { count } => write!(f, "LowerCase({})", count),
             Action::Fold { count } => write!(f, "Fold({})", count),
             Action::Unfold { count } => write!(f, "Unfold({})", count),
             Action::FocusLeftWindow => write!(f, "FocusLeftWindow"),
@@ -549,10 +571,18 @@ impl std::fmt::Display for Action {
             Action::YankMotion { count, motion } => {
                 write!(f, "YankMotion({}, {})", count, motion)
             }
+            Action::UpperCaseMotion { count, motion } => {
+                write!(f, "UpperCaseMotion({}, {})", count, motion)
+            }
+            Action::LowerCaseMotion { count, motion } => {
+                write!(f, "LowerCaseMotion({}, {})", count, motion)
+            }
             Action::DeleteLine { count } => write!(f, "DeleteLine({})", count),
             Action::ChangeLine { count } => write!(f, "ChangeLine({})", count),
             Action::YankLine { count } => write!(f, "YankLine({})", count),
             Action::JoinLines { count } => write!(f, "JoinLines({})", count),
+            Action::UpperCaseLine { count } => write!(f, "UpperCaseLine({})", count),
+            Action::LowerCaseLine { count } => write!(f, "LowerCaseLine({})", count),
             Action::DeleteChar { count } => write!(f, "DeleteChar({})", count),
             Action::DeleteCharBefore { count } => write!(f, "DeleteCharBefore({})", count),
             Action::Put { count } => write!(f, "Put({})", count),
@@ -731,6 +761,8 @@ impl Action {
             Action::Delete { .. } => Action::Delete { count },
             Action::Change { .. } => Action::Change { count },
             Action::Yank { .. } => Action::Yank { count },
+            Action::UpperCase { .. } => Action::UpperCase { count },
+            Action::LowerCase { .. } => Action::LowerCase { count },
             Action::Fold { .. } => Action::Fold { count },
             Action::Unfold { .. } => Action::Unfold { count },
             Action::MoveToWord { .. } => Action::MoveToWord {
@@ -911,6 +943,8 @@ impl Action {
             Action::ChangeLine { .. } => Action::ChangeLine { count },
             Action::YankLine { .. } => Action::YankLine { count },
             Action::JoinLines { .. } => Action::JoinLines { count },
+            Action::UpperCaseLine { .. } => Action::UpperCaseLine { count },
+            Action::LowerCaseLine { .. } => Action::LowerCaseLine { count },
             Action::DeleteChar { .. } => Action::DeleteChar { count },
             Action::DeleteCharBefore { .. } => Action::DeleteCharBefore { count },
             Action::Put { .. } => Action::Put { count },
@@ -925,6 +959,8 @@ impl Action {
             Action::DeleteMotion { motion, .. } => Action::DeleteMotion { count, motion },
             Action::ChangeMotion { motion, .. } => Action::ChangeMotion { count, motion },
             Action::YankMotion { motion, .. } => Action::YankMotion { count, motion },
+            Action::UpperCaseMotion { motion, .. } => Action::UpperCaseMotion { count, motion },
+            Action::LowerCaseMotion { motion, .. } => Action::LowerCaseMotion { count, motion },
             Action::SetToNormal => Action::SetToNormal,
             Action::SetToInsert => Action::SetToInsert,
             Action::SetToAppend => Action::SetToAppend,
@@ -1008,6 +1044,8 @@ impl Action {
             Action::Delete { count } => *count,
             Action::Change { count } => *count,
             Action::Yank { count } => *count,
+            Action::UpperCase { count } => *count,
+            Action::LowerCase { count } => *count,
             Action::Fold { count } => *count,
             Action::Unfold { count } => *count,
             Action::MoveToWord { count, .. } => *count,
