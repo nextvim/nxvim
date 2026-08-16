@@ -252,10 +252,14 @@ impl Runtime {
         let display_map_snapshot = window.display_map.snapshot();
         let scroll_y = display_map_snapshot.scroll_y;
         let viewport_height = window.viewport.height as u32;
-        let start_row = display_map_snapshot.buffer_row_for_display_row(scroll_y);
-        let end_row = display_map_snapshot.buffer_row_for_display_row(
-            (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
-        );
+        let start_row = display_map_snapshot
+            .try_buffer_row_for_display_row(scroll_y)
+            .unwrap_or(0);
+        let end_row = display_map_snapshot
+            .try_buffer_row_for_display_row(
+                (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
+            )
+            .unwrap_or_else(|| display_map_snapshot.buffer_snapshot().max_point().row);
 
         let highlights = &mut self.app.model.buffer_state_mut(buffer_id)?.highlights;
         textmate::highlight_run(

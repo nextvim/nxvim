@@ -565,10 +565,16 @@ impl Keymap {
             )
             .expect("Valid binding");
 
+        // --- Non-Standard/Custom Mappings (Can be disabled if needed) ---
+        const ENABLE_NON_STANDARD_MAPPINGS: bool = true;
+        if ENABLE_NON_STANDARD_MAPPINGS {
+            normal_actions
+                .bind("<C-S-d>", Action::SelectSimilar)
+                .expect("Valid binding");
+        }
+        // ----------------------------------------------------------------
+
         // Normal Mode
-        normal_actions
-            .bind("<C-S-d>", Action::SelectSimilar)
-            .expect("Valid binding");
         normal_actions
             .bind("dd", Action::DeleteLine { count: 1 })
             .expect("Valid binding");
@@ -594,6 +600,19 @@ impl Keymap {
             .expect("Valid binding");
         normal_actions
             .bind("P", Action::PutBefore { count: 1 })
+            .expect("Valid binding");
+
+        normal_actions
+            .bind("gt", Action::NextTab { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("gT", Action::PreviousTab { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("<Tab>", Action::NextTab { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("<BackTab>", Action::PreviousTab { count: 1 })
             .expect("Valid binding");
 
 

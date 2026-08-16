@@ -76,11 +76,7 @@ fn scan_expanding(
         let covers_whole_buffer = start_row == 0 && end_row >= row_count;
 
         if let Some(m) = vim_scanner::StructuralScanner::scan_rows_for_enclosing(
-            buffer,
-            start_row,
-            end_row,
-            byte,
-            block_only,
+            buffer, start_row, end_row, byte, block_only,
         ) {
             return Some(m);
         }
@@ -106,12 +102,12 @@ fn scanner_delimiter_match(buffer: &text::Buffer, byte: usize, ch: char) -> Opti
         '[' | ']' => vim_scanner::DelimiterKind::Bracket,
         '"' => vim_scanner::DelimiterKind::DoubleQuote,
         '\'' => vim_scanner::DelimiterKind::SingleQuote,
+        '`' => vim_scanner::DelimiterKind::BackTick,
         _ => return None,
     };
     let m = scan_expanding(buffer, byte, false)?;
     (m.kind == expected_kind).then_some((m.start, m.end))
 }
-
 
 /// Removes any fold overlapping the half-open byte range `start..end` (with a
 /// one-byte tolerance on either edge), so that a pending buffer edit over that
@@ -2643,7 +2639,11 @@ mod tests {
             )
             .unwrap();
 
-        let point = window_state.selections.primary().head().to_point(buffer.as_text_buffer());
+        let point = window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.as_text_buffer());
         assert_eq!(point.row, 3);
         assert_eq!(point.column, 0);
 
@@ -2658,7 +2658,11 @@ mod tests {
             )
             .unwrap();
 
-        let point = window_state.selections.primary().head().to_point(buffer.as_text_buffer());
+        let point = window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.as_text_buffer());
         assert_eq!(point.row, 2);
         assert_eq!(point.column, 5);
     }

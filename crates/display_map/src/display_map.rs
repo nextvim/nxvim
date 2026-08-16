@@ -201,6 +201,7 @@ impl DisplayMap {
         if self.wrap_width == width {
             return;
         }
+        println!("DEBUG set_wrap_width: self.buffer_window = {:?}, width = {:?}", self.buffer_window, width);
         let old_scroll_row = self
             .snapshot()
             .try_buffer_row_for_display_row(self.scroll_y);
@@ -272,7 +273,10 @@ impl DisplayMap {
     }
 
     pub fn sync_hot_window(&mut self, buffer: BufferSnapshot, buffer_window: Range<u32>) {
-        if self.original_buffer.version == buffer.version && self.buffer_window == buffer_window {
+        if self.original_buffer.version == buffer.version
+            && self.buffer_window == buffer_window
+            && self.wrap_map.snapshot().covers_exactly(buffer_window.clone())
+        {
             return;
         }
         let old_scroll_row = self

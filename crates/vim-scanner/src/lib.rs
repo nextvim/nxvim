@@ -34,7 +34,6 @@ use text::ToOffset;
 /// A byte offset into the scanned text.
 pub type Position = usize;
 
-
 /// The kind of a structural delimiter this scanner understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DelimiterKind {
@@ -43,6 +42,7 @@ pub enum DelimiterKind {
     Bracket,
     DoubleQuote,
     SingleQuote,
+    BackTick,
 }
 
 impl DelimiterKind {
@@ -68,6 +68,7 @@ impl DelimiterKind {
             DelimiterKind::Bracket => '[',
             DelimiterKind::DoubleQuote => '"',
             DelimiterKind::SingleQuote => '\'',
+            DelimiterKind::BackTick => '`',
         }
     }
 
@@ -78,6 +79,7 @@ impl DelimiterKind {
             DelimiterKind::Bracket => ']',
             DelimiterKind::DoubleQuote => '"',
             DelimiterKind::SingleQuote => '\'',
+            DelimiterKind::BackTick => '`',
         }
     }
 }
@@ -327,7 +329,10 @@ impl StructuralScanner {
                                     start: open.start,
                                     end: idx,
                                 };
-                                if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                if m.start <= byte
+                                    && byte <= m.end
+                                    && (!block_only || m.kind.is_block())
+                                {
                                     return Some(m);
                                 }
                             }
@@ -338,7 +343,10 @@ impl StructuralScanner {
                                     start: open.start,
                                     end: idx,
                                 };
-                                if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                                if m.start <= byte
+                                    && byte <= m.end
+                                    && (!block_only || m.kind.is_block())
+                                {
                                     return Some(m);
                                 }
                             }
@@ -378,7 +386,10 @@ impl StructuralScanner {
                                 start: open.start,
                                 end: idx,
                             };
-                            if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                            if m.start <= byte
+                                && byte <= m.end
+                                && (!block_only || m.kind.is_block())
+                            {
                                 return Some(m);
                             }
                         }
@@ -392,7 +403,10 @@ impl StructuralScanner {
                                 start: open.start,
                                 end: idx,
                             };
-                            if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                            if m.start <= byte
+                                && byte <= m.end
+                                && (!block_only || m.kind.is_block())
+                            {
                                 return Some(m);
                             }
                         }
@@ -406,7 +420,10 @@ impl StructuralScanner {
                                 start: open.start,
                                 end: idx,
                             };
-                            if m.start <= byte && byte <= m.end && (!block_only || m.kind.is_block()) {
+                            if m.start <= byte
+                                && byte <= m.end
+                                && (!block_only || m.kind.is_block())
+                            {
                                 return Some(m);
                             }
                         }
@@ -420,7 +437,6 @@ impl StructuralScanner {
         None
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -568,13 +584,13 @@ mod tests {
             text::BufferId::new(1).unwrap(),
             "{\n  (  )\n}",
         );
-        // Positions: 
+        // Positions:
         // 0:'{'
         // 1:'\n'
         // 2:' ' 3:' ' 4:'(' 5:' ' 6:' ' 7:')'
         // 8:'\n'
         // 9:'}'
-        
+
         let m = StructuralScanner::scan_rows_for_enclosing(&buffer, 0, 3, 5, false).unwrap();
         assert_eq!(m.kind, DelimiterKind::Paren);
         assert_eq!((m.start, m.end), (4, 7));
