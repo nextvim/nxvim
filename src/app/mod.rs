@@ -16,6 +16,7 @@ pub struct App {
     pub script: crate::script::ScriptRuntime,
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
+    pub command_queue: std::collections::VecDeque<crate::controller::Command>,
 }
 
 impl App {
@@ -46,6 +47,7 @@ impl App {
             script: crate::script::ScriptRuntime::new(),
             ui,
             view_ids,
+            command_queue: std::collections::VecDeque::new(),
         };
 
         app.init(args.pre_config_cmds, args.post_config_cmds);

@@ -183,6 +183,97 @@ mod tests {
     }
 
     #[test]
+    fn test_macro_recording_and_replay() {
+        let mut app = app();
+
+        // 1. Send BeginMacro action for register "a"
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::BeginMacro {
+                    register: "a".to_string(),
+                },
+                register: None,
+            },
+        );
+        assert!(app.services.macros.is_recording());
+        assert!(app.controller.in_recording());
+
+        // 2. Record some normal actions
+        let down = Action::MoveDown {
+            count: 1,
+            select: false,
+        };
+        let right = Action::MoveRight {
+            count: 1,
+            select: false,
+        };
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: down.clone(),
+                register: None,
+            },
+        );
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: right.clone(),
+                register: None,
+            },
+        );
+
+        // 3. Stop recording macro
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::EndMacro,
+                register: None,
+            },
+        );
+        assert!(!app.services.macros.is_recording());
+        assert!(!app.controller.in_recording());
+
+        // Verify the macro contains the actions
+        let recorded = app.services.macros.get("a").unwrap();
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(recorded[0].action, down);
+        assert_eq!(recorded[1].action, right);
+
+        // 4. Replay macro
+        assert!(app.command_queue.is_empty());
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::ReplayMacro {
+                    count: 2,
+                    register: "a".to_string(),
+                },
+                register: None,
+            },
+        );
+
+        // Verify the actions were queued in app.command_queue
+        assert_eq!(app.command_queue.len(), 4);
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor { action: Action::MoveDown { .. }, .. })
+        ));
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor { action: Action::MoveRight { .. }, .. })
+        ));
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor { action: Action::MoveDown { .. }, .. })
+        ));
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor { action: Action::MoveRight { .. }, .. })
+        ));
+    }
+
+    #[test]
     fn range_op_delete_removes_the_resolved_line_range() {
         let mut app = app();
         let main = app.view_ids.main;

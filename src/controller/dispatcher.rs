@@ -97,6 +97,36 @@ impl Dispatcher {
                 }
                 app.model.status = Some(message);
 
+                match &action {
+                    vim_input::Action::BeginMacro { register } => {
+                        app.services.macros.begin(register.clone());
+                        app.controller.set_in_recording(true);
+                        app.model.status = Some(format!("recording @{register}"));
+                        return CommandOutcome::redraw();
+                    }
+                    vim_input::Action::EndMacro => {
+                        app.services.macros.end();
+                        app.controller.set_in_recording(false);
+                        app.model.status = Some("macro recorded".to_string());
+                        return CommandOutcome::redraw();
+                    }
+                    vim_input::Action::ReplayMacro { count, register } => {
+                        let replay_actions = app.services.macros.replay(register, *count);
+                        for rec in replay_actions {
+                            app.command_queue.push_back(Command::Editor {
+                                action: rec.action,
+                                register: rec.register,
+                            });
+                        }
+                        return CommandOutcome::redraw();
+                    }
+                    _ => {
+                        if app.services.macros.is_recording() {
+                            app.services.macros.record(action.clone(), register);
+                        }
+                    }
+                }
+
                 let mut outcome = EditorHandler::execute(
                     &mut app.ui,
                     &mut app.model,

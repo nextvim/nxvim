@@ -60,6 +60,14 @@ impl InputController {
             _ => None,
         }
     }
+
+    pub fn set_in_recording(&mut self, in_recording: bool) {
+        self.resolver.set_in_recording(in_recording);
+    }
+
+    pub fn in_recording(&self) -> bool {
+        self.resolver.in_recording()
+    }
 }
 
 /// Translate a Crossterm `KeyEvent` into a `vim_input::Key`.

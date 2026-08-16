@@ -68,6 +68,7 @@ pub struct Resolver {
     operator_count: u32,
     register: Option<char>,
     waiting_for_register: bool,
+    in_recording: bool,
 }
 
 impl Default for Resolver {
@@ -87,6 +88,7 @@ impl Resolver {
             operator_count: 1,
             register: None,
             waiting_for_register: false,
+            in_recording: false,
         }
     }
 
@@ -97,6 +99,14 @@ impl Resolver {
     pub fn set_mode(&mut self, mode: Mode) {
         self.reset();
         self.mode = mode;
+    }
+
+    pub fn in_recording(&self) -> bool {
+        self.in_recording
+    }
+
+    pub fn set_in_recording(&mut self, in_recording: bool) {
+        self.in_recording = in_recording;
     }
 
     pub fn is_pending(&self) -> bool {
@@ -130,6 +140,16 @@ impl Resolver {
 
         if self.mode == Mode::Insert {
             return self.feed_insert(key, keymap);
+        }
+
+        if self.in_recording
+            && key.modifiers.is_empty()
+            && key.code == KeyCode::Char('q')
+        {
+            return ResolveOutcome::Resolved(ResolvedAction {
+                action: Action::EndMacro,
+                register: None,
+            });
         }
 
         if self.waiting_for_register {
@@ -479,5 +499,21 @@ mod tests {
         let action = resolved(resolver.feed(Key::char('p'), &map));
         assert_eq!(action.register, Some('a'));
         assert_eq!(action.action, Action::Put { count: 1 });
+    }
+
+    #[test]
+    fn test_macro_recording_resolves_q_only_when_in_recording() {
+        let map = Keymap::vim_defaults();
+        let mut resolver = Resolver::default();
+
+        // 1. Initially NOT recording. 'q' expects register key (pending 'q{c}')
+        assert_eq!(resolver.feed(Key::char('q'), &map), ResolveOutcome::Pending);
+        resolver.reset();
+
+        // 2. Set recording to true. 'q' should resolve immediately to EndMacro
+        resolver.set_in_recording(true);
+        let action = resolved(resolver.feed(Key::char('q'), &map));
+        assert_eq!(action.action, Action::EndMacro);
+        assert_eq!(action.register, None);
     }
 }
