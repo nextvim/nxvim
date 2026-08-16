@@ -2,6 +2,7 @@
 //!
 //! This module wires model, controller-facing services, UI synchronization,
 //! and scripting. Semantic state remains in `model` and behavior in `controller`.
+pub mod args;
 pub mod services;
 pub mod ui;
 pub mod windows;
@@ -18,10 +19,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(screen_rect: ui::Rect, paths: Vec<std::path::PathBuf>) -> Self {
+    pub fn new(screen_rect: ui::Rect, args: args::Args) -> Self {
         let mut ui = ui::Ui::new(screen_rect);
         let view_ids = ui::setup_initial_layout(&mut ui).unwrap();
-        let model = crate::model::EditorModel::new(paths);
+        let model = crate::model::EditorModel::new(args.paths);
 
         let initial_buffer = model
             .get_buffer(model.initial_buffer())
@@ -47,13 +48,19 @@ impl App {
             view_ids,
         };
 
-        app.init();
+        app.init(args.pre_config_cmds, args.post_config_cmds);
         app
     }
 
-    pub fn init(&mut self) {
+    pub fn init(&mut self, pre_config_cmds: Vec<String>, post_config_cmds: Vec<String>) {
         if cfg!(test) {
             return;
+        }
+
+        for cmd in pre_config_cmds {
+            if let Err(err) = self.script.execute(&cmd) {
+                log::error!("Error executing pre-config command {}: {}", cmd, err);
+            }
         }
 
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
@@ -74,6 +81,12 @@ impl App {
                     }
                     break;
                 }
+            }
+        }
+
+        for cmd in post_config_cmds {
+            if let Err(err) = self.script.execute(&cmd) {
+                log::error!("Error executing post-config command {}: {}", cmd, err);
             }
         }
     }

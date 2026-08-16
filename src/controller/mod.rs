@@ -36,7 +36,7 @@ mod tests {
     use vim_ui::{NavigationDirection, Rect, SplitAxis};
 
     fn app() -> crate::app::App {
-        crate::app::App::new(Rect::new(0, 0, 80, 24), Vec::new())
+        crate::app::App::new(Rect::new(0, 0, 80, 24), crate::app::args::Args::default())
     }
 
     fn window_buffer(
@@ -118,7 +118,13 @@ mod tests {
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
-        let mut app = crate::app::App::new(Rect::new(0, 0, 80, 24), vec![path.clone()]);
+        let mut app = crate::app::App::new(
+            Rect::new(0, 0, 80, 24),
+            crate::app::args::Args {
+                paths: vec![path.clone()],
+                ..Default::default()
+            },
+        );
 
         let outcome = Dispatcher::dispatch(
             &mut app,
@@ -334,13 +340,54 @@ mod tests {
     }
 
     #[test]
+    fn test_x_command_integration() {
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-command-x-integration-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut app = crate::app::App::new(
+            Rect::new(0, 0, 80, 24),
+            crate::app::args::Args {
+                paths: vec![path.clone()],
+                ..Default::default()
+            },
+        );
+
+        // write initial contents to the buffer so it's not empty
+        {
+            let buffer_id = app.model.open_path(&path);
+            let buffer = app.model.get_buffer_mut(buffer_id).unwrap();
+            let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
+            tx.replace(None, vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(0)).unwrap(), "line 1\nline 2\nline 3\n");
+            tx.commit(None).unwrap();
+        }
+
+        // execute `:1,2x`
+        app.script.execute(":1,2x").unwrap();
+        let cmd = app.script.try_next_command().unwrap();
+        println!("Ranged x command: {:?}", cmd);
+        let outcome = Dispatcher::dispatch(&mut app, cmd);
+        println!("Outcome: {:?}", outcome);
+
+        assert!(path.is_file());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn write_quit_saves_the_buffer_and_quits_when_it_is_the_last_window() {
         let path = std::env::temp_dir().join(format!(
             "nxvim-command-wq-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
-        let mut app = crate::app::App::new(Rect::new(0, 0, 80, 24), vec![path.clone()]);
+        let mut app = crate::app::App::new(
+            Rect::new(0, 0, 80, 24),
+            crate::app::args::Args {
+                paths: vec![path.clone()],
+                ..Default::default()
+            },
+        );
 
         let outcome = Dispatcher::dispatch(
             &mut app,
@@ -362,7 +409,13 @@ mod tests {
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
-        let mut app = crate::app::App::new(Rect::new(0, 0, 80, 24), vec![path.clone()]);
+        let mut app = crate::app::App::new(
+            Rect::new(0, 0, 80, 24),
+            crate::app::args::Args {
+                paths: vec![path.clone()],
+                ..Default::default()
+            },
+        );
 
         let outcome = Dispatcher::dispatch(&mut app, Command::WriteQuitAll { force: false });
 

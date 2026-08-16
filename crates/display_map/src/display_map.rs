@@ -201,7 +201,6 @@ impl DisplayMap {
         if self.wrap_width == width {
             return;
         }
-        println!("DEBUG set_wrap_width: self.buffer_window = {:?}, width = {:?}", self.buffer_window, width);
         let old_scroll_row = self
             .snapshot()
             .try_buffer_row_for_display_row(self.scroll_y);

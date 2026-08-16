@@ -24,9 +24,10 @@ impl Runtime {
         let terminal = TerminalSession::enter()?;
         let rect = terminal.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
 
+        let args = crate::app::args::Args::parse();
         Ok(Self {
             terminal,
-            app: App::new(rect, std::env::args_os().skip(1).map(Into::into).collect()),
+            app: App::new(rect, args),
             buffered_renderer: BufferedRenderer::new(rect.width, rect.height),
         })
     }
