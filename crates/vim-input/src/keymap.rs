@@ -885,6 +885,9 @@ impl Keymap {
         visual_actions
             .bind("<Esc>", Action::Clear)
             .expect("Valid binding");
+        visual_actions
+            .bind("~", Action::ChangeCase { count: 1 })
+            .expect("Valid binding");
 
         Self {
             op_actions,

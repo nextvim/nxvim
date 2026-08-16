@@ -12,6 +12,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "bprevious" | "bprev" | "previoustab" => buffers(request),
         "save" | "write" | "update" => files(request),
         "edit" | "enew" | "view" | "visual" | "ex" => edit(request),
+        "split" | "vsplit" => split(request),
         "saveas" => saveas(request),
         "qall" | "quitall" => qall(request),
         "cquit" => cquit(request),
@@ -173,4 +174,24 @@ fn put(request: CommandRequest) -> Result<Command, RuntimeError> {
         count: request.command.count,
         register: request.command.register,
     })
+}
+
+fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let argument = request.command.arguments.trim();
+    let file_path = if argument.is_empty() {
+        None
+    } else {
+        Some(argument.to_string())
+    };
+    match request.command.name.as_str() {
+        "split" => Ok(Command::Editor {
+            action: vim_input::Action::SplitHorizontal { file_path },
+            register: None,
+        }),
+        "vsplit" => Ok(Command::Editor {
+            action: vim_input::Action::SplitVertical { file_path },
+            register: None,
+        }),
+        _ => unreachable!(),
+    }
 }

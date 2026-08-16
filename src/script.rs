@@ -302,5 +302,51 @@ mod tests {
             Some(Command::WriteQuitAll { force: false })
         ));
     }
+
+    #[test]
+    fn split_and_vsplit_commands_are_dispatched() {
+        // Test :split with no file path
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("split").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Editor {
+                action: vim_input::Action::SplitHorizontal { file_path: None },
+                register: None,
+            })
+        ));
+
+        // Test :vsplit with file path
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("vsplit my_file.rs").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Editor {
+                action: vim_input::Action::SplitVertical { file_path: Some(path) },
+                register: None,
+            }) if path == "my_file.rs"
+        ));
+
+        // Test abbreviations :sp and :vs
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("sp").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Editor {
+                action: vim_input::Action::SplitHorizontal { file_path: None },
+                register: None,
+            })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("vs").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Editor {
+                action: vim_input::Action::SplitVertical { file_path: None },
+                register: None,
+            })
+        ));
+    }
 }
 
