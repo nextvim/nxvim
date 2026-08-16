@@ -38,13 +38,43 @@ impl App {
             window_state.set_show_gutter(false);
         }
 
-        Self {
+        let mut app = Self {
             model,
             controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
             services: services::Services::new(),
             script: crate::script::ScriptRuntime::new(),
             ui,
             view_ids,
+        };
+
+        app.init();
+        app
+    }
+
+    pub fn init(&mut self) {
+        if cfg!(test) {
+            return;
+        }
+
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        if let Some(home) = home {
+            let paths = [
+                home.join(".config/nxvim/init.vim"),
+                home.join(".nxvimrc"),
+                home.join(".nxvim/nxvimrc"),
+                home.join(".config/nxvim/nxvimrc"),
+            ];
+
+            for path in &paths {
+                if path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        if let Err(err) = self.script.execute(&content) {
+                            log::error!("Error executing init file {:?}: {}", path, err);
+                        }
+                    }
+                    break;
+                }
+            }
         }
     }
 }

@@ -99,7 +99,10 @@ pub fn build_text(
     let mut prev_row = 0;
     for row in start_row..end_row {
         let line = display_map_snapshot.line_text(row);
-        let buffer_row = display_map_snapshot.buffer_row_for_display_row(row);
+        let buffer_row = match display_map_snapshot.try_buffer_row_for_display_row(row) {
+            Some(r) => r,
+            None => continue,
+        };
         let mut spans = Vec::<vim_ui::model::TextSpan>::new();
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line_chars.len();
@@ -141,7 +144,10 @@ pub fn build_text(
             // needed here.
             let character = if is_eol { ' ' } else { line_chars[column] };
             let display_point = display_map::DisplayPoint::new(row, (column as u32) + scroll_x);
-            let point = display_map_snapshot.display_point_to_point(display_point);
+            let point = match display_map_snapshot.try_display_point_to_point(display_point) {
+                Some(p) => p,
+                None => continue,
+            };
             let selection_state = if let Some(ref resolved) = resolved_selections {
                 resolved.is_selected(point.row, point.column)
             } else {
@@ -230,7 +236,7 @@ pub fn build_text(
         let display_snapshot = window.display_map.snapshot();
         let original_buffer = display_snapshot.buffer_snapshot();
         let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
-            display_snapshot.anchor_to_display_point(cursor_anchor)
+            display_snapshot.try_anchor_to_display_point(cursor_anchor)
         } else {
             let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
             let max_row = original_buffer.row_count().saturating_sub(1);
@@ -240,9 +246,9 @@ pub fn build_text(
             } else {
                 0
             };
-            display_snapshot.point_to_display_point(Point { row, column })
+            display_snapshot.try_point_to_display_point(Point { row, column })
         };
-        Some(display_cursor.row())
+        display_cursor.map(|dc| dc.row())
     } else {
         None
     };
@@ -303,7 +309,7 @@ fn fallback_cursor(
     let display_snapshot = window.display_map.snapshot();
     let original_buffer = display_snapshot.buffer_snapshot();
     let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
-        display_snapshot.anchor_to_display_point(cursor_anchor)
+        display_snapshot.try_anchor_to_display_point(cursor_anchor)?
     } else {
         let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
         let max_row = original_buffer.row_count().saturating_sub(1);
@@ -313,7 +319,7 @@ fn fallback_cursor(
         } else {
             0
         };
-        display_snapshot.point_to_display_point(Point { row, column })
+        display_snapshot.try_point_to_display_point(Point { row, column })?
     };
     let scroll_y = window.display_map.scroll_y;
     let scroll_x = window.display_map.scroll_x;
@@ -323,7 +329,7 @@ fn fallback_cursor(
         return None;
     }
     let offset = if window.show_gutter {
-        let buffer_row = display_snapshot.buffer_row_for_display_row(display_cursor.row());
+        let buffer_row = display_snapshot.try_buffer_row_for_display_row(display_cursor.row())?;
         format!(" {:2} ", buffer_row + 1).len() as u32
     } else {
         0

@@ -474,3 +474,4 @@ mod tests {
         assert!(outcome.redraw);
     }
 }
+
