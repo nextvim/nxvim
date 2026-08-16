@@ -1,4 +1,4 @@
-use crate::search::TextSearch;
+use crate::search::{TextSearch, compile};
 use onig::Regex;
 use std::cmp::Ordering;
 use sum_tree::Bias;
@@ -71,6 +71,10 @@ pub trait Motions {
     // Paragraph motions
     fn move_to_previous_paragraph(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor>;
     fn move_to_next_paragraph(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor>;
+
+    // Sentence motions
+    fn move_to_previous_sentence(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor>;
+    fn move_to_next_sentence(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor>;
 
     fn move_to_previous_match(&mut self, text: &str, buffer: &Buffer) -> Option<Selection<Anchor>>;
     fn move_to_next_match(&mut self, text: &str, buffer: &Buffer) -> Option<Selection<Anchor>>;
@@ -678,6 +682,131 @@ impl Motions for Selection<Anchor> {
         }
     }
 
+    fn move_to_previous_sentence(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor> {
+        let point = self.head().to_point(buffer);
+
+        // A sentence ends with a word immediately followed by a period and a
+        // space (`\b\w+\. `). An empty line is also treated as a sentence
+        // boundary, the same way it terminates a paragraph. Every candidate
+        // boundary is compared directly against the original point, so a
+        // boundary is only used if it's strictly before where we started.
+        let target_point = compile(r"\b\w+\. ")
+            .and_then(|sentence_end| {
+                let mut row = point.row;
+
+                loop {
+                    if buffer.line_len(row) == 0 {
+                        let candidate = Point::new(row + 1, 0);
+                        if candidate < point {
+                            break Some(candidate);
+                        }
+                    } else {
+                        let text = buffer.row_text(row) + " ";
+                        let real_len = buffer.line_len(row) as usize;
+
+                        let candidate = text
+                            .as_str()
+                            .find_pattern(&sentence_end)
+                            .into_iter()
+                            .rev()
+                            .filter_map(|(start, len, _)| {
+                                let end = start + len;
+                                let target = if end > real_len {
+                                    Point::new(row + 1, 0)
+                                } else {
+                                    Point::new(row, end as u32)
+                                };
+                                (target < point).then_some(target)
+                            })
+                            .next();
+
+                        if let Some(candidate) = candidate {
+                            break Some(candidate);
+                        }
+                    }
+
+                    if row == 0 {
+                        break None;
+                    }
+                    row -= 1;
+                }
+            })
+            .unwrap_or(Point::new(0, 0));
+
+        let mut offset = target_point.to_offset(buffer);
+        offset = buffer.clip_offset(offset, Bias::Right);
+        let new_head = buffer.anchor_at(offset, Bias::Left);
+        Selection {
+            id: self.id,
+            start: new_head,
+            end: if anchor { self.tail() } else { new_head },
+            reversed: true,
+            goal: SelectionGoal::None,
+        }
+    }
+
+    fn move_to_next_sentence(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor> {
+        let point = self.head().to_point(buffer);
+
+        // Mirrors `move_to_previous_sentence`, scanning forward instead of
+        // backward: a sentence boundary is a word immediately followed by a
+        // period and a space (`\b\w+\. `), or an empty line. Every candidate
+        // boundary is compared directly against the original point, so a
+        // boundary is only used if it's strictly after where we started.
+        let target_point = compile(r"\b\w+\. ")
+            .and_then(|sentence_end| {
+                let mut row = point.row;
+
+                loop {
+                    if row >= buffer.row_count() {
+                        break None;
+                    }
+
+                    if buffer.line_len(row) == 0 {
+                        let candidate = Point::new(row + 1, 0);
+                        if candidate > point {
+                            break Some(candidate);
+                        }
+                    } else {
+                        let text = buffer.row_text(row) + " ";
+                        let real_len = buffer.line_len(row) as usize;
+
+                        let candidate = text
+                            .as_str()
+                            .find_pattern(&sentence_end)
+                            .into_iter()
+                            .filter_map(|(start, len, _)| {
+                                let end = start + len;
+                                let target = if end > real_len {
+                                    Point::new(row + 1, 0)
+                                } else {
+                                    Point::new(row, end as u32)
+                                };
+                                (target > point).then_some(target)
+                            })
+                            .next();
+
+                        if let Some(candidate) = candidate {
+                            break Some(candidate);
+                        }
+                    }
+
+                    row += 1;
+                }
+            })
+            .unwrap_or(Point::new(buffer.row_count(), 0));
+
+        let offset = target_point.to_offset(buffer);
+        let new_head = buffer.anchor_at(offset, Bias::Left);
+        Selection {
+            id: self.id,
+            start: new_head,
+            end: if anchor { self.tail() } else { new_head },
+            reversed: true,
+            goal: SelectionGoal::None,
+        }
+    }
+
     fn move_to_previous_match(
         &mut self,
         search: &str,
@@ -1111,6 +1240,198 @@ mod tests {
         // Move to previous word end again -> should go to 'o' of hello (line 0, index 4)
         cursor = cursor.move_to_previous_word_end(false, &buffer);
         assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 4));
+    }
+
+    #[test]
+    fn test_move_to_previous_sentence_within_a_line() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "One. Two. Three.",
+        );
+        // "One. " -> 0..5, "Two. " -> 5..10, "Three." starts at 10.
+
+        // From inside "Three", the previous sentence boundary is the start
+        // of "Three" itself.
+        let cursor = selection(&buffer, 0, 13, 13, false);
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 10));
+
+        // Repeating from exactly the start of "Three" goes back to the start
+        // of "Two".
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 5));
+
+        // Repeating from exactly the start of "Two" goes back to the start
+        // of "One" (the beginning of the document).
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 0));
+
+        // Already at the start of the document: stays put.
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 0));
+    }
+
+    #[test]
+    fn test_move_to_previous_sentence_requires_period_and_space() {
+        // "Mr. Smith" should not be treated as two sentences ending at "Mr."
+        // when there's no word before point ending in ". " earlier than
+        // "Really"; but "Really." followed by a space is a real boundary.
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "Really. Ok then.",
+        );
+        let cursor = selection(&buffer, 0, 12, 12, false);
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 8));
+    }
+
+    #[test]
+    fn test_move_to_previous_sentence_crosses_lines() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "Line one. Line two.\nLine three. Line four.",
+        );
+        // Row 0 ("Line one. Line two.") is 19 characters, plus a newline,
+        // so row 1 starts at offset 20.
+
+        // From inside "Line four" on row 1, the previous boundary is the
+        // start of "Line four" on the same row.
+        let cursor = selection(&buffer, 0, 20 + 15, 20 + 15, false);
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(1, 12));
+
+        // From the start of "Line four", the previous boundary is the start
+        // of "Line three", still on row 1.
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(1, 0));
+
+        // From the start of row 1, cross back onto row 0's second sentence.
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 10));
+    }
+
+    #[test]
+    fn test_move_to_previous_sentence_stops_at_empty_line() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "Line one. Line two.\n\nLine three.",
+        );
+        // Row 0 is 19 characters (offsets 0..19) followed by a newline at 19.
+        // Row 1 is empty, its own newline is at offset 20, so row 2 starts at
+        // offset 21.
+
+        // From inside "Line three" (row 2), there is no sentence-ending
+        // punctuation before point on row 2, but row 1 is empty, so the
+        // previous sentence boundary is the start of row 2.
+        let cursor = selection(&buffer, 0, 21 + 8, 21 + 8, false);
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(2, 0));
+
+        // Pressing it again lands on the empty row itself, matching how
+        // paragraph motions stop at blank lines.
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(1, 0));
+
+        // Pressing it once more crosses the empty line and lands on the last
+        // sentence of row 0.
+        let cursor = cursor.move_to_previous_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 10));
+    }
+
+    #[test]
+    fn test_move_to_next_sentence_within_a_line() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "One. Two. Three.",
+        );
+        // "One. " -> 0..5, "Two. " -> 5..10, "Three." starts at 10.
+
+        // From the start of "One", the next boundary is the start of "Two".
+        let cursor = selection(&buffer, 0, 0, 0, false);
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 5));
+
+        // From the start of "Two", the next boundary is the start of
+        // "Three".
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 10));
+
+        // From the start of "Three", there's no sentence left, so it moves
+        // to the end of the document.
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 16));
+
+        // Already at the end of the document: stays put.
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 16));
+    }
+
+    #[test]
+    fn test_move_to_next_sentence_requires_period_and_space() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "Really. Ok then.",
+        );
+        let cursor = selection(&buffer, 0, 0, 0, false);
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 8));
+    }
+
+    #[test]
+    fn test_move_to_next_sentence_crosses_lines() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "Line one. Line two.\nLine three. Line four.",
+        );
+        // Row 0 ("Line one. Line two.") is 19 characters, plus a newline,
+        // so row 1 starts at offset 20.
+
+        // From the start of "Line one", the next boundary is the start of
+        // "Line two", still on row 0.
+        let cursor = selection(&buffer, 0, 0, 0, false);
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(0, 10));
+
+        // From the start of "Line two", the next boundary crosses onto row
+        // 1, to the start of "Line three".
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(1, 0));
+
+        // From the start of "Line three", the next boundary is the start of
+        // "Line four", still on row 1.
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(1, 12));
+    }
+
+    #[test]
+    fn test_move_to_next_sentence_stops_at_empty_line() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "Line one. Line two.\n\nLine three.",
+        );
+        // Row 0 is 19 characters (offsets 0..19) followed by a newline at 19.
+        // Row 1 is empty, its own newline is at offset 20, so row 2 starts at
+        // offset 21.
+
+        // From the start of "Line two" (row 0), the next boundary lands on
+        // the empty row itself, matching how paragraph motions stop at
+        // blank lines.
+        let cursor = selection(&buffer, 0, 10, 10, false);
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(1, 0));
+
+        // Pressing it again crosses the empty line and lands on the start
+        // of "Line three".
+        let cursor = cursor.move_to_next_sentence(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(2, 0));
     }
 
     #[test]

@@ -28,7 +28,11 @@ impl From<&CommandSpec> for CommandDefinition {
         Self {
             name: spec.name.to_owned(),
             minimum_abbreviation: spec.minimum_abbreviation,
-            aliases: spec.aliases.iter().map(|(a, m)| (a.to_string(), *m)).collect(),
+            aliases: spec
+                .aliases
+                .iter()
+                .map(|(a, m)| (a.to_string(), *m))
+                .collect(),
             accepts_bang: spec.accepts_bang,
             accepts_range: spec.accepts_range,
             accepts_count: spec.accepts_count,
@@ -37,7 +41,11 @@ impl From<&CommandSpec> for CommandDefinition {
             accepts_cmd: spec.accepts_cmd,
             filename_behavior: spec.filename_behavior,
             bar_behavior: spec.bar_behavior,
-            allowed_modifiers: spec.allowed_modifiers.iter().map(|s| s.to_string()).collect(),
+            allowed_modifiers: spec
+                .allowed_modifiers
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             required_capabilities: spec.required_capabilities.to_vec(),
             default_range: spec.default_range.map(|s| s.to_owned()),
             address_interpretation: spec.address_interpretation,
@@ -792,7 +800,14 @@ pub static COMMAND_SPECS: &[CommandSpec] = &[
     CommandSpec {
         name: "print",
         minimum_abbreviation: 1,
-        aliases: &[("p", 1), ("P", 1), ("list", 2), ("number", 2), ("nu", 2), ("z", 1)],
+        aliases: &[
+            ("p", 1),
+            ("P", 1),
+            ("list", 2),
+            ("number", 2),
+            ("nu", 2),
+            ("z", 1),
+        ],
         accepts_bang: false,
         accepts_range: true,
         accepts_count: true,

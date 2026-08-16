@@ -71,8 +71,8 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `>` — Indent selection or range.
 [x] `<` — Unindent selection or range.
 [x] `~` — Toggle case of characters.
-[ ] `gu` — Make range lowercase. *Pending integration.*
-[ ] `gU` — Make range uppercase. *Pending integration.*
+[x] `gu` — Make range lowercase. *Pending integration.*
+[x] `gU` — Make range uppercase. *Pending integration.*
 
 ### Doubled Operators
 [x] `dd` / `cc` / `yy` / `>>` / `<<` — Operator acts on the current line.
@@ -109,7 +109,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 *Registers are defined in `crates/vim-clipboard`, but are not fully wired to the editor handlers.*
 
 [x] **Unnamed register** (`"`) — Hooks up directly to the editor-wide clipboard (`services.clipboard`).
-[ ] **Named registers** (`"a` to `"z`) — *Parser supports them, but executor doesn't write/read from named maps yet.*
+[x] **Named registers** (`"a` to `"z`) — *Parser supports them, but executor doesn't write/read from named maps yet.*
 [ ] **Yank register** (`"0`) — *Not wired.*
 [ ] **Delete registers** (`"1`–`"9`) — *Not wired.*
 [ ] **Clipboard registers** (`"+` / `"*`) — *Not wired directly (unnamed register acts as the main system bridge).*
@@ -126,9 +126,9 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `i(` / `a(` / `i)` / `a)` — Inner / Outer Parentheses.
 [x] `i[` / `a[` — Inner / Outer Brackets.
 [x] `i{` / `a{` — Inner / Outer Braces.
-[x] `it` / `at` — Inner / Outer Tags (XML/HTML).
+[ ] `it` / `at` — Inner / Outer Tags (XML/HTML).
 [x] `ip` / `ap` — Inner / Outer Paragraphs.
-[ ] `is` / `as` — Inner / Outer Sentences. *Pending implementation.*
+[x] `is` / `as` — Inner / Outer Sentences. *Pending implementation.*
 
 ---
 
@@ -327,12 +327,12 @@ These aren't user-facing commands, but they're important for implementing Vim co
 
 These can be added later.
 
-[ ] Vimscript compatibility
+[?] Vimscript compatibility
 [ ] Plugin system
 [ ] Autocommands
-[ ] Key mappings
+[?] Key mappings
 [ ] Abbreviations
-[ ] Folds
+[x] Folds
 [ ] Tags / ctags
 [ ] Quickfix
 [ ] Location lists
@@ -385,7 +385,7 @@ A regular Vim user should be able to do all of these without encountering missin
 [x] Undo with `u`
 [x] Redo with `Ctrl-r`
 [x] Repeat an edit with `.`
-[ ] Use registers
+[x] Use registers
 [x] Use marks
 [x] Split windows
 [x] Navigate between windows

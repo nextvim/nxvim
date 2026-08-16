@@ -23,8 +23,9 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "nohlsearch" | "nohl" => Ok(Command::ClearSearchHighlight),
         "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "copy" | "move" | "join"
         | "print" | "change" | "/" | "?" | "substitute" | "s" | "&" | "~" | "smagic"
-        | "snomagic" | "global" | "g" | "vglobal" | "v" | "vimgrep"
-        | "vimgrepadd" => placeholders(request),
+        | "snomagic" | "global" | "g" | "vglobal" | "v" | "vimgrep" | "vimgrepadd" => {
+            placeholders(request)
+        }
         "delete" => delete(request),
         "yank" => yank(request),
         "put" => put(request),

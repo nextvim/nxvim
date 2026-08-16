@@ -142,10 +142,7 @@ impl Resolver {
             return self.feed_insert(key, keymap);
         }
 
-        if self.in_recording
-            && key.modifiers.is_empty()
-            && key.code == KeyCode::Char('q')
-        {
+        if self.in_recording && key.modifiers.is_empty() && key.code == KeyCode::Char('q') {
             return ResolveOutcome::Resolved(ResolvedAction {
                 action: Action::EndMacro,
                 register: None,
@@ -398,6 +395,14 @@ fn compose_operator(operator: Action, motion: Action) -> Action {
             count,
             motion: Box::new(motion),
         },
+        Action::UpperCase { .. } => Action::UpperCaseMotion {
+            count,
+            motion: Box::new(motion),
+        },
+        Action::LowerCase { .. } => Action::LowerCaseMotion {
+            count,
+            motion: Box::new(motion),
+        },
         _ => Action::NoOp,
     }
 }
@@ -405,7 +410,11 @@ fn compose_operator(operator: Action, motion: Action) -> Action {
 fn is_doubled_operator_action(action: &Action) -> bool {
     matches!(
         action,
-        Action::DeleteLine { .. } | Action::ChangeLine { .. } | Action::YankLine { .. }
+        Action::DeleteLine { .. }
+            | Action::ChangeLine { .. }
+            | Action::YankLine { .. }
+            | Action::UpperCaseLine { .. }
+            | Action::LowerCaseLine { .. }
     )
 }
 
@@ -468,6 +477,56 @@ mod tests {
         assert_eq!(
             resolved(resolver.feed(Key::char('d'), &map)).action,
             Action::DeleteLine { count: 1 }
+        );
+    }
+
+    #[test]
+    fn resolves_gu_and_gu_operator_with_motion_and_doubled_form() {
+        let map = Keymap::vim_defaults();
+        let mut resolver = Resolver::default();
+
+        // `guw` lowercases the word under the cursor.
+        assert_eq!(resolver.feed(Key::char('g'), &map), ResolveOutcome::Pending);
+        assert_eq!(resolver.feed(Key::char('u'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('w'), &map)).action,
+            Action::LowerCaseMotion {
+                count: 1,
+                motion: Box::new(Action::MoveToWord {
+                    count: 1,
+                    select: false
+                })
+            }
+        );
+
+        // `gUw` uppercases the word under the cursor.
+        assert_eq!(resolver.feed(Key::char('g'), &map), ResolveOutcome::Pending);
+        assert_eq!(resolver.feed(Key::char('U'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('w'), &map)).action,
+            Action::UpperCaseMotion {
+                count: 1,
+                motion: Box::new(Action::MoveToWord {
+                    count: 1,
+                    select: false
+                })
+            }
+        );
+
+        // `guu` (doubled operator) lowercases the current line.
+        assert_eq!(resolver.feed(Key::char('g'), &map), ResolveOutcome::Pending);
+        assert_eq!(resolver.feed(Key::char('u'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('u'), &map)).action,
+            Action::LowerCaseLine { count: 1 }
+        );
+
+        // `gUU` (doubled operator) uppercases the current line.
+        assert_eq!(resolver.feed(Key::char('g'), &map), ResolveOutcome::Pending);
+        assert_eq!(resolver.feed(Key::char('U'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('U'), &map)).action,
+            Action::UpperCaseLine { count: 1 }
         );
     }
 

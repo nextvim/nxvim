@@ -42,11 +42,7 @@ impl Args {
             } else if arg.starts_with("-c") {
                 post_config_cmds.push(arg["-c".len()..].to_string());
             } else if arg.starts_with('+') {
-                let cmd = if arg.len() > 1 {
-                    &arg[1..]
-                } else {
-                    "$"
-                };
+                let cmd = if arg.len() > 1 { &arg[1..] } else { "$" };
                 post_config_cmds.push(cmd.to_string());
             } else {
                 paths.push(PathBuf::from(arg_os.as_ref()));
@@ -68,10 +64,12 @@ mod tests {
     #[test]
     fn test_args_parsing() {
         let input = vec![
-            "--cmd", "set tabstop=4",
+            "--cmd",
+            "set tabstop=4",
             "--cmd=set shiftwidth=4",
             "file1.rs",
-            "-c", "w",
+            "-c",
+            "w",
             "-cqa",
             "+set nu",
             "+",
@@ -79,14 +77,14 @@ mod tests {
             "--cmd",
             "file2.rs",
         ];
-        
+
         let parsed = Args::parse_from(input);
-        
+
         assert_eq!(
             parsed.pre_config_cmds,
             vec!["set tabstop=4".to_string(), "set shiftwidth=4".to_string()]
         );
-        
+
         assert_eq!(
             parsed.post_config_cmds,
             vec![
@@ -96,7 +94,7 @@ mod tests {
                 "$".to_string()
             ]
         );
-        
+
         assert_eq!(
             parsed.paths,
             vec![

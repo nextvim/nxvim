@@ -30,6 +30,22 @@ pub trait TextSearch {
         regex: &Regex,
         position: usize,
     ) -> Option<(usize, usize, &str)>;
+    fn find_next_match_end(&self, search: &str, position: usize) -> Option<(usize, usize, &str)>;
+    fn find_previous_match_end(
+        &self,
+        search: &str,
+        position: usize,
+    ) -> Option<(usize, usize, &str)>;
+    fn find_next_pattern_match_end(
+        &self,
+        regex: &Regex,
+        position: usize,
+    ) -> Option<(usize, usize, &str)>;
+    fn find_previous_pattern_match_end(
+        &self,
+        regex: &Regex,
+        position: usize,
+    ) -> Option<(usize, usize, &str)>;
 }
 
 impl TextSearch for str {
@@ -56,30 +72,31 @@ impl TextSearch for str {
     fn find_pattern(&self, regex: &Regex) -> Vec<(usize, usize, &str)> {
         let mut out = Vec::new();
         let mut offset = 0;
-        while offset <= self.len() {
-            if let Some(caps) = regex.captures(&self[offset..]) {
-                if let Some((start, end)) = caps.pos(0) {
-                    let abs_start = offset + start;
-                    let abs_end = offset + end;
-                    let len = abs_end - abs_start;
-                    let slice = &self[abs_start..abs_end];
-                    out.push((abs_start, len, slice));
-                    if abs_end == offset {
-                        if let Some(ch) = self[offset..].chars().next() {
-                            offset += ch.len_utf8();
-                        } else {
-                            break;
-                        }
-                    } else {
-                        offset = abs_end;
-                    }
-                } else {
-                    break;
-                }
-            } else {
+
+        while offset < self.len() {
+            let Some(caps) = regex.captures(&self[offset..]) else {
                 break;
+            };
+
+            let Some((start, end)) = caps.pos(0) else {
+                break;
+            };
+
+            let abs_start = offset + start;
+            let abs_end = offset + end;
+
+            out.push((abs_start, abs_end - abs_start, &self[abs_start..abs_end]));
+
+            if abs_end == offset {
+                let Some(ch) = self[offset..].chars().next() else {
+                    break;
+                };
+                offset += ch.len_utf8();
+            } else {
+                offset = abs_end;
             }
         }
+
         out
     }
 
@@ -161,6 +178,23 @@ impl TextSearch for str {
             .find(|(start, _, _)| *start < position)
     }
 
+    fn find_next_match_end(&self, search: &str, position: usize) -> Option<(usize, usize, &str)> {
+        self.find_string(search)
+            .into_iter()
+            .find(|(_, end, _)| (*end - 1) > position)
+    }
+
+    fn find_previous_match_end(
+        &self,
+        search: &str,
+        position: usize,
+    ) -> Option<(usize, usize, &str)> {
+        self.find_string(search)
+            .into_iter()
+            .rev()
+            .find(|(_, end, _)| (*end - 1) < position)
+    }
+
     fn find_next_pattern_match(
         &self,
         search: &Regex,
@@ -180,6 +214,27 @@ impl TextSearch for str {
             .into_iter()
             .rev()
             .find(|(start, _, _)| *start < position)
+    }
+
+    fn find_next_pattern_match_end(
+        &self,
+        search: &Regex,
+        position: usize,
+    ) -> Option<(usize, usize, &str)> {
+        self.find_pattern(search)
+            .into_iter()
+            .find(|(_, end, _)| (*end - 1) > position)
+    }
+
+    fn find_previous_pattern_match_end(
+        &self,
+        search: &Regex,
+        position: usize,
+    ) -> Option<(usize, usize, &str)> {
+        self.find_pattern(search)
+            .into_iter()
+            .rev()
+            .find(|(_, end, _)| (*end - 1) < position)
     }
 
     fn find_big_words(&self) -> Vec<(usize, usize, &str)> {
@@ -239,5 +294,105 @@ impl Search {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_next_match_returns_first_match_at_or_after_position() {
+        let text = "foo bar foo baz foo";
+        // matches start at 0, 8, 16
+
+        // Position of a match itself is inclusive.
+        assert_eq!(text.find_next_match("foo", 0), Some((0, 3, "foo")));
+        assert_eq!(text.find_next_match("foo", 8), Some((8, 3, "foo")));
+        assert_eq!(text.find_next_match("foo", 16), Some((16, 3, "foo")));
+
+        // Positions in between find the following match.
+        assert_eq!(text.find_next_match("foo", 1), Some((8, 3, "foo")));
+        assert_eq!(text.find_next_match("foo", 9), Some((16, 3, "foo")));
+
+        // Nothing left after the last match.
+        assert_eq!(text.find_next_match("foo", 17), None);
+    }
+
+    #[test]
+    fn find_next_match_returns_none_when_absent() {
+        assert_eq!("abc".find_next_match("z", 0), None);
+    }
+
+    #[test]
+    fn find_next_match_allows_overlapping_matches() {
+        let text = "aaaa";
+        // "aa" overlaps itself at starts 0, 1, 2.
+        assert_eq!(text.find_next_match("aa", 0), Some((0, 2, "aa")));
+        assert_eq!(text.find_next_match("aa", 1), Some((1, 2, "aa")));
+        assert_eq!(text.find_next_match("aa", 2), Some((2, 2, "aa")));
+        assert_eq!(text.find_next_match("aa", 3), None);
+    }
+
+    #[test]
+    fn find_previous_match_returns_closest_match_strictly_before_position() {
+        let text = "foo bar foo baz foo";
+        // matches start at 0, 8, 16 (text.len() == 19)
+
+        assert_eq!(text.find_previous_match("foo", 19), Some((16, 3, "foo")));
+
+        // Sitting exactly on a match's start does not return that match.
+        assert_eq!(text.find_previous_match("foo", 16), Some((8, 3, "foo")));
+        assert_eq!(text.find_previous_match("foo", 9), Some((8, 3, "foo")));
+        assert_eq!(text.find_previous_match("foo", 8), Some((0, 3, "foo")));
+
+        // Nothing before the first match.
+        assert_eq!(text.find_previous_match("foo", 0), None);
+    }
+
+    #[test]
+    fn find_next_and_previous_match_agree_with_find_string() {
+        let text = "the quick brown fox jumps over the lazy dog the end";
+        let matches = text.find_string("the");
+        assert_eq!(matches.len(), 3);
+
+        assert_eq!(text.find_next_match("the", 0), Some(matches[0]));
+        assert_eq!(
+            text.find_previous_match("the", text.len()),
+            Some(matches[2])
+        );
+    }
+
+    #[test]
+    fn find_next_pattern_match_returns_first_match_at_or_after_position() {
+        let text = "foo1 bar foo22 baz foo333";
+        let re = compile(r"foo\d+").unwrap();
+        // matches: (0, 4, "foo1"), (9, 5, "foo22"), (19, 6, "foo333")
+
+        assert_eq!(text.find_next_pattern_match(&re, 0), Some((0, 4, "foo1")));
+        assert_eq!(text.find_next_pattern_match(&re, 1), Some((9, 5, "foo22")));
+        assert_eq!(text.find_next_pattern_match(&re, 9), Some((9, 5, "foo22")));
+        assert_eq!(text.find_next_pattern_match(&re, 25), None);
+    }
+
+    #[test]
+    fn find_previous_pattern_match_returns_closest_match_strictly_before_position() {
+        let text = "foo1 bar foo22 baz foo333";
+        let re = compile(r"foo\d+").unwrap();
+        // matches: (0, 4, "foo1"), (9, 5, "foo22"), (19, 6, "foo333")
+
+        assert_eq!(
+            text.find_previous_pattern_match(&re, text.len()),
+            Some((19, 6, "foo333"))
+        );
+        assert_eq!(
+            text.find_previous_pattern_match(&re, 19),
+            Some((9, 5, "foo22"))
+        );
+        assert_eq!(
+            text.find_previous_pattern_match(&re, 9),
+            Some((0, 4, "foo1"))
+        );
+        assert_eq!(text.find_previous_pattern_match(&re, 0), None);
     }
 }

@@ -257,19 +257,31 @@ mod tests {
         assert_eq!(app.command_queue.len(), 4);
         assert!(matches!(
             app.command_queue.pop_front(),
-            Some(Command::Editor { action: Action::MoveDown { .. }, .. })
+            Some(Command::Editor {
+                action: Action::MoveDown { .. },
+                ..
+            })
         ));
         assert!(matches!(
             app.command_queue.pop_front(),
-            Some(Command::Editor { action: Action::MoveRight { .. }, .. })
+            Some(Command::Editor {
+                action: Action::MoveRight { .. },
+                ..
+            })
         ));
         assert!(matches!(
             app.command_queue.pop_front(),
-            Some(Command::Editor { action: Action::MoveDown { .. }, .. })
+            Some(Command::Editor {
+                action: Action::MoveDown { .. },
+                ..
+            })
         ));
         assert!(matches!(
             app.command_queue.pop_front(),
-            Some(Command::Editor { action: Action::MoveRight { .. }, .. })
+            Some(Command::Editor {
+                action: Action::MoveRight { .. },
+                ..
+            })
         ));
     }
 
@@ -304,11 +316,17 @@ mod tests {
         assert_eq!(app.command_queue.len(), 2);
         assert!(matches!(
             app.command_queue.pop_front(),
-            Some(Command::Editor { action: Action::DeleteChar { .. }, .. })
+            Some(Command::Editor {
+                action: Action::DeleteChar { .. },
+                ..
+            })
         ));
         assert!(matches!(
             app.command_queue.pop_front(),
-            Some(Command::Editor { action: Action::DeleteChar { .. }, .. })
+            Some(Command::Editor {
+                action: Action::DeleteChar { .. },
+                ..
+            })
         ));
     }
 
@@ -419,6 +437,85 @@ mod tests {
     }
 
     #[test]
+    fn named_register_isolates_yank_and_put_from_the_unnamed_register() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+
+        // Yank line 1 ("one") into named register 'a'.
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::YankLines {
+                    start_line: 1,
+                    end_line: 1,
+                },
+                register: Some('a'),
+            },
+        );
+        {
+            let buffer = app.model.get_buffer(buffer_id).unwrap();
+            let text_buffer = buffer.as_text_buffer();
+            let text: String = text_buffer
+                .as_rope()
+                .chunks_in_range(0..text_buffer.len())
+                .collect();
+            eprintln!("AFTER FIRST YANK: {:?}", text);
+        }
+
+        // Yank line 3 ("three") into the unnamed register.
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::YankLines {
+                    start_line: 3,
+                    end_line: 3,
+                },
+                register: None,
+            },
+        );
+
+        assert_eq!(
+            app.services
+                .clipboard
+                .registers
+                .get(vim_clipboard::RegisterName::Named('a'))
+                .unwrap()
+                .text(),
+            "one\n",
+            "named register 'a' must retain its own yank independently of the unnamed register"
+        );
+        assert_eq!(app.services.clipboard.text(), "three");
+
+        // Put from register 'a' after line 3; it must paste "one", not the
+        // most recently yanked "three" that lives in the unnamed register.
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::PutLines {
+                    line: 3,
+                    before: false,
+                },
+                register: Some('a'),
+            },
+        );
+        assert!(outcome.redraw);
+
+        let buffer = app.model.get_buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let text: String = text_buffer
+            .as_rope()
+            .chunks_in_range(0..text_buffer.len())
+            .collect();
+        assert_eq!(text, "one\ntwo\nthree\none\n");
+    }
+
+    #[test]
     fn range_op_put_inserts_the_yanked_text_after_the_addressed_line() {
         let mut app = app();
         let main = app.view_ids.main;
@@ -489,7 +586,12 @@ mod tests {
             let buffer_id = app.model.open_path(&path);
             let buffer = app.model.get_buffer_mut(buffer_id).unwrap();
             let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-            tx.replace(None, vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(0)).unwrap(), "line 1\nline 2\nline 3\n");
+            tx.replace(
+                None,
+                vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(0))
+                    .unwrap(),
+                "line 1\nline 2\nline 3\n",
+            );
             tx.commit(None).unwrap();
         }
 
@@ -657,4 +759,3 @@ mod tests {
         assert!(outcome.redraw);
     }
 }
-

@@ -8,23 +8,39 @@ use vim_buffer::{Buffer, Motions, SelectionSet};
 use vim_input::{Action, Mode};
 use vim_ui::WindowState;
 
-trait ToggleCaseExt {
-    fn toggle_case(&self) -> String;
+/// The kind of case transformation to apply to a span of text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaseChange {
+    /// Swap the case of every letter (used by `~`).
+    Toggle,
+    /// Force every letter to uppercase (used by `gU`).
+    Upper,
+    /// Force every letter to lowercase (used by `gu`).
+    Lower,
 }
 
-impl ToggleCaseExt for str {
-    fn toggle_case(&self) -> String {
-        self.chars()
-            .map(|c| {
-                if c.is_lowercase() {
-                    c.to_uppercase().to_string()
-                } else if c.is_uppercase() {
-                    c.to_lowercase().to_string()
-                } else {
-                    c.to_string()
-                }
-            })
-            .collect()
+trait CaseChangeExt {
+    fn change_case(&self, change: CaseChange) -> String;
+}
+
+impl CaseChangeExt for str {
+    fn change_case(&self, change: CaseChange) -> String {
+        match change {
+            CaseChange::Toggle => self
+                .chars()
+                .map(|c| {
+                    if c.is_lowercase() {
+                        c.to_uppercase().to_string()
+                    } else if c.is_uppercase() {
+                        c.to_lowercase().to_string()
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect(),
+            CaseChange::Upper => self.to_uppercase(),
+            CaseChange::Lower => self.to_lowercase(),
+        }
     }
 }
 
@@ -281,11 +297,12 @@ impl Editor {
             let head = primary.head();
             let tail = primary.tail();
             let text_buf = buffer.as_text_buffer();
-            let (top, end) = if text_buf.offset_for_anchor(&head) <= text_buf.offset_for_anchor(&tail) {
-                (head, tail)
-            } else {
-                (tail, head)
-            };
+            let (top, end) =
+                if text_buf.offset_for_anchor(&head) <= text_buf.offset_for_anchor(&tail) {
+                    (head, tail)
+                } else {
+                    (tail, head)
+                };
             _ = buffer.set_mark_anchor('<', top);
             _ = buffer.set_mark_anchor('>', end);
         }
@@ -327,10 +344,14 @@ impl Editor {
         // These actions immediately drops mode back to Normal
         if mode.is_visual() {
             match action {
-                Action::Yank { .. } | Action::YankLine { .. } | Action::YankMotion { .. }
-                | Action::ChangeCase { .. } => {
-                    next_action = Action::SetToNormal
-                }
+                Action::Yank { .. }
+                | Action::YankLine { .. }
+                | Action::YankMotion { .. }
+                | Action::ChangeCase { .. }
+                | Action::UpperCaseLine { .. }
+                | Action::LowerCaseLine { .. }
+                | Action::UpperCaseMotion { .. }
+                | Action::LowerCaseMotion { .. } => next_action = Action::SetToNormal,
                 _ => {}
             }
         }
@@ -729,6 +750,43 @@ impl Editor {
                         buffer_display_context
                             .selections
                             .update(buffer.as_text_buffer(), &next);
+                        updated = true;
+                    } else if *ch == 's' {
+                        let text_buffer = buffer.as_text_buffer();
+                        let prev_p = cursor
+                            .move_to_previous_sentence(false, text_buffer)
+                            .head()
+                            .to_point(text_buffer);
+                        let next_p = cursor
+                            .move_to_next_sentence(false, text_buffer)
+                            .head()
+                            .to_point(text_buffer);
+
+                        let start_offset = prev_p.to_offset(text_buffer);
+                        let next_offset = next_p.to_offset(text_buffer);
+
+                        // `next_p` marks the start of the *next* sentence
+                        // (or the end of the document if there isn't one).
+                        // Trim the whitespace between the end of the
+                        // current sentence and that boundary so the inner
+                        // sentence doesn't include the trailing space (or a
+                        // blank line separating paragraphs).
+                        let between: String = text_buffer
+                            .as_rope()
+                            .chunks_in_range(start_offset..next_offset)
+                            .collect();
+                        let end_offset = (start_offset + between.trim_end().len())
+                            .saturating_sub(1)
+                            .max(start_offset);
+
+                        let next = Selection {
+                            id: cursor.id,
+                            start: text_buffer.anchor_at(start_offset, Bias::Left),
+                            end: text_buffer.anchor_at(end_offset, Bias::Right),
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        };
+                        buffer_display_context.selections.update(text_buffer, &next);
                         updated = true;
                     } else if *ch == 'p' {
                         let prev_p = cursor
@@ -1410,10 +1468,17 @@ impl Editor {
                     {
                         let head = cursor.head();
                         let tail = cursor.tail();
-                        let (cs, ce) = if head.cmp(&tail, buffer.as_text_buffer()) == Ordering::Less {
-                            (head.bias_left(buffer.as_text_buffer()), tail.bias_right(buffer.as_text_buffer()))
+                        let (cs, ce) = if head.cmp(&tail, buffer.as_text_buffer()) == Ordering::Less
+                        {
+                            (
+                                head.bias_left(buffer.as_text_buffer()),
+                                tail.bias_right(buffer.as_text_buffer()),
+                            )
                         } else {
-                            (tail.bias_left(buffer.as_text_buffer()), head.bias_right(buffer.as_text_buffer()))
+                            (
+                                tail.bias_left(buffer.as_text_buffer()),
+                                head.bias_right(buffer.as_text_buffer()),
+                            )
                         };
                         let start = buffer.as_text_buffer().offset_for_anchor(&cs);
                         let mut end = buffer.as_text_buffer().offset_for_anchor(&ce);
@@ -1437,7 +1502,7 @@ impl Editor {
                             .chunks_in_range(start_offset..end_offset)
                             .collect();
 
-                        let toggled = text.toggle_case();
+                        let toggled = text.change_case(CaseChange::Toggle);
                         edits.push((start_offset, end_offset, toggled));
                     }
                 }
@@ -1480,6 +1545,19 @@ impl Editor {
                             .update(buffer.as_text_buffer(), &sel);
                     }
                 }
+            }
+            Action::UpperCaseLine { count } | Action::LowerCaseLine { count } => {
+                let change = if matches!(action, Action::UpperCaseLine { .. }) {
+                    CaseChange::Upper
+                } else {
+                    CaseChange::Lower
+                };
+                self.change_case_lines(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    *count,
+                    change,
+                );
             }
             Action::DeleteLines {
                 start_line,
@@ -1571,9 +1649,11 @@ impl Editor {
                     let anchor_row = if *before { target_row - 1 } else { target_row };
                     let anchor_offset =
                         Point::new(anchor_row, 0).to_offset(buffer.as_text_buffer());
-                    buffer_display_context
-                        .selections
-                        .clear(buffer.as_text_buffer());
+                    // `SelectionSet::clear` only collapses existing selections
+                    // down to one (it doesn't empty the list), so `add` right
+                    // after it would leave two cursors instead of moving the
+                    // one we have. Empty the list outright first.
+                    buffer_display_context.selections.selections.clear();
                     buffer_display_context
                         .selections
                         .add(buffer.as_text_buffer(), anchor_offset);
@@ -1706,7 +1786,18 @@ impl Editor {
                         .update(buffer.as_text_buffer(), &next);
                 }
             }
-            Action::ChangeMotion { count, motion } | Action::DeleteMotion { count, motion } => {
+            Action::ChangeMotion { count, motion }
+            | Action::DeleteMotion { count, motion }
+            | Action::UpperCaseMotion { count, motion }
+            | Action::LowerCaseMotion { count, motion } => {
+                // `gu`/`gU` change the case of the motion's span in place instead of yanking
+                // and deleting it, so they don't need a clipboard capture or selection restore.
+                let case_change = match action {
+                    Action::UpperCaseMotion { .. } => Some(CaseChange::Upper),
+                    Action::LowerCaseMotion { .. } => Some(CaseChange::Lower),
+                    _ => None,
+                };
+
                 let mut motion = (**motion).clone();
                 let is_textobject = match &motion {
                     Action::MoveToWord { .. }
@@ -1738,36 +1829,12 @@ impl Editor {
                     _ => {}
                 }
 
-                let selections = buffer_display_context.selections.selections.clone();
-                let point = buffer_display_context.selections.point;
-                let anchor = buffer_display_context.selections.anchor.clone();
+                if case_change.is_none() {
+                    let selections = buffer_display_context.selections.selections.clone();
+                    let point = buffer_display_context.selections.point;
+                    let anchor = buffer_display_context.selections.anchor.clone();
 
-                for _ in 0..*count {
-                    self.apply_action(
-                        mode,
-                        &motion,
-                        buffer,
-                        buffer_context,
-                        buffer_display_context,
-                        services,
-                    );
-                }
-
-                let text = buffer_display_context
-                    .selections
-                    .text(buffer.as_text_buffer());
-                services.clipboard.set_text(text);
-
-                buffer_display_context.selections.selections = selections;
-                buffer_display_context.selections.point = point;
-                buffer_display_context.selections.anchor = anchor;
-
-                if is_textobject {
-                    let inclusive = matches!(
-                        motion,
-                        Action::MoveWithinCharacter { .. } | Action::MoveAroundCharacter { .. }
-                    );
-                    for _idx in 0..*count {
+                    for _ in 0..*count {
                         self.apply_action(
                             mode,
                             &motion,
@@ -1776,12 +1843,47 @@ impl Editor {
                             buffer_display_context,
                             services,
                         );
-                        self.delete_text_object(
+                    }
+
+                    let text = buffer_display_context
+                        .selections
+                        .text(buffer.as_text_buffer());
+                    services.clipboard.set_text(text);
+
+                    buffer_display_context.selections.selections = selections;
+                    buffer_display_context.selections.point = point;
+                    buffer_display_context.selections.anchor = anchor;
+                }
+
+                if is_textobject {
+                    let inclusive = matches!(
+                        motion,
+                        Action::MoveWithinCharacter { .. } | Action::MoveAroundCharacter { .. }
+                    );
+                    for _ in 0..*count {
+                        self.apply_action(
+                            mode,
+                            &motion,
                             buffer,
-                            &mut buffer_display_context.selections,
-                            &mut buffer_display_context.folds,
-                            inclusive,
+                            buffer_context,
+                            buffer_display_context,
+                            services,
                         );
+                        if let Some(change) = case_change {
+                            self.change_case_text_object(
+                                buffer,
+                                &mut buffer_display_context.selections,
+                                inclusive,
+                                change,
+                            );
+                        } else {
+                            self.delete_text_object(
+                                buffer,
+                                &mut buffer_display_context.selections,
+                                &mut buffer_display_context.folds,
+                                inclusive,
+                            );
+                        }
                     }
                 } else {
                     for _ in 0..*count {
@@ -1793,12 +1895,20 @@ impl Editor {
                             buffer_display_context,
                             services,
                         );
-                        self.delete_text(
-                            buffer,
-                            &mut buffer_display_context.selections,
-                            &mut buffer_display_context.folds,
-                            0,
-                        );
+                        if let Some(change) = case_change {
+                            self.change_case_text(
+                                buffer,
+                                &mut buffer_display_context.selections,
+                                change,
+                            );
+                        } else {
+                            self.delete_text(
+                                buffer,
+                                &mut buffer_display_context.selections,
+                                &mut buffer_display_context.folds,
+                                0,
+                            );
+                        }
                     }
                 }
             }
@@ -2241,12 +2351,11 @@ impl Editor {
         if services.clipboard.is_empty() || count == 0 {
             return;
         }
-        let text = services.clipboard.text().to_string();
-        let kind = services.clipboard.kind();
+        let (text, kind) = services.clipboard.read();
 
         match kind {
             vim_clipboard::ClipboardKind::Character | vim_clipboard::ClipboardKind::Block => {
-                selections.move_right(false, 1, buffer.as_text_buffer());
+                // selections.move_right(false, 1, buffer.as_text_buffer());
                 for _ in 0..count {
                     self.insert_text(buffer, selections, &text);
                 }
@@ -2433,6 +2542,182 @@ impl Editor {
         }
     }
 
+    /// Changes the case of the text spanned by each cursor's selection, mirroring the range
+    /// computed by [`Editor::delete_text`] (always inclusive of one extra character when the
+    /// selection is non-empty). Used for motion-based case changes like `guw`/`gUw`.
+    fn change_case_text(
+        &self,
+        buffer: &mut Buffer,
+        selections: &mut SelectionSet,
+        change: CaseChange,
+    ) -> bool {
+        self.change_case_ranges(buffer, selections, true, change)
+    }
+
+    /// Changes the case of the text spanned by each cursor's selection, mirroring the range
+    /// computed by [`Editor::delete_text_object`] (only inclusive of the trailing character when
+    /// `inclusive` is set). Used for motion-based case changes over text objects, like `giw`.
+    fn change_case_text_object(
+        &self,
+        buffer: &mut Buffer,
+        selections: &mut SelectionSet,
+        inclusive: bool,
+        change: CaseChange,
+    ) -> bool {
+        self.change_case_ranges(buffer, selections, inclusive, change)
+    }
+
+    fn change_case_ranges(
+        &self,
+        buffer: &mut Buffer,
+        selections: &mut SelectionSet,
+        inclusive: bool,
+        change: CaseChange,
+    ) -> bool {
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        let cursors = selections.selections.clone();
+        for cursor in cursors.iter() {
+            let (start, end) = {
+                let (cs, ce) = if cursor.head().cmp(&cursor.tail(), buffer.as_text_buffer())
+                    == Ordering::Less
+                {
+                    (
+                        cursor.head().bias_left(buffer.as_text_buffer()),
+                        cursor.tail().bias_right(buffer.as_text_buffer()),
+                    )
+                } else {
+                    (
+                        cursor.tail().bias_left(buffer.as_text_buffer()),
+                        cursor.head().bias_right(buffer.as_text_buffer()),
+                    )
+                };
+
+                let start = buffer.as_text_buffer().offset_for_anchor(&cs);
+                let mut end = buffer.as_text_buffer().offset_for_anchor(&ce);
+                if inclusive && start != end {
+                    end = buffer.as_text_buffer().clip_offset(end + 1, Bias::Right);
+                }
+                (start, end)
+            };
+
+            if start != end {
+                let text: String = buffer
+                    .as_text_buffer()
+                    .as_rope()
+                    .chunks_in_range(start..end)
+                    .collect();
+                edits.push((start, end, text.change_case(change)));
+            }
+        }
+
+        if edits.is_empty() {
+            return false;
+        }
+
+        let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
+        for (start, end, changed) in &edits {
+            tx.replace(
+                None,
+                vim_buffer::TextRange::new(
+                    vim_buffer::ByteOffset(*start),
+                    vim_buffer::ByteOffset(*end),
+                )
+                .unwrap(),
+                changed.as_str(),
+            );
+        }
+        let _ = tx.commit(Some(selections.clone()));
+
+        let mut new_selections = Vec::new();
+        for (cursor, (start, _, _)) in cursors.iter().zip(edits.iter()) {
+            let anchor = buffer.as_text_buffer().anchor_at(*start, Bias::Left);
+            new_selections.push(Selection {
+                id: cursor.id,
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+        }
+        for sel in new_selections {
+            selections.update(buffer.as_text_buffer(), &sel);
+        }
+
+        true
+    }
+
+    /// Changes the case of `count` whole lines starting at each cursor's current line, mirroring
+    /// the row range computed by [`Editor::delete_current_line`]. Used for `guu`/`gUU`.
+    fn change_case_lines(
+        &self,
+        buffer: &mut Buffer,
+        selections: &mut SelectionSet,
+        count: u32,
+        change: CaseChange,
+    ) {
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        let cursors = selections.selections.clone();
+        for cursor in cursors.iter() {
+            let point = cursor.head().to_point(buffer.as_text_buffer());
+            let start_row = point.row;
+            let end_row = (start_row + count).min(buffer.as_text_buffer().row_count());
+
+            let start = Point::new(start_row, 0).to_offset(buffer.as_text_buffer());
+            let end_point = Point::new(end_row, 0);
+            let end = buffer
+                .as_text_buffer()
+                .clip_point(end_point, Bias::Right)
+                .to_offset(buffer.as_text_buffer());
+
+            if start != end {
+                let text: String = buffer
+                    .as_text_buffer()
+                    .as_rope()
+                    .chunks_in_range(start..end)
+                    .collect();
+                edits.push((start, end, text.change_case(change)));
+            }
+        }
+
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
+        for (start, end, changed) in &edits {
+            tx.replace(
+                None,
+                vim_buffer::TextRange::new(
+                    vim_buffer::ByteOffset(*start),
+                    vim_buffer::ByteOffset(*end),
+                )
+                .unwrap(),
+                changed.as_str(),
+            );
+        }
+        let _ = tx.commit(Some(selections.clone()));
+
+        // Replacing a range's text does not guarantee old anchors within that range keep their
+        // original relative offset, so recompute fresh anchors at the start of each edited range
+        // before moving to the first non-blank column.
+        let mut new_selections = Vec::new();
+        for (cursor, (start, _, _)) in cursors.iter().zip(edits.iter()) {
+            let anchor = buffer.as_text_buffer().anchor_at(*start, Bias::Left);
+            new_selections.push(Selection {
+                id: cursor.id,
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+        }
+        for sel in new_selections {
+            selections.update(buffer.as_text_buffer(), &sel);
+        }
+
+        selections.move_to_start_of_line_non_space(false, buffer.as_text_buffer());
+    }
+
     pub fn delete_current_line(
         &self,
         buffer: &mut Buffer,
@@ -2537,6 +2822,36 @@ mod tests {
     }
 
     #[test]
+    fn debug_put_lines_isolated() {
+        let mut buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "one\ntwo\nthree",
+        );
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+        services.clipboard.set_lines("one\n");
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::PutLines {
+                    line: 3,
+                    before: false,
+                },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        eprintln!("RESULT: {:?}", buffer.as_text_buffer().text());
+    }
+
+    #[test]
     fn deleting_a_folds_entire_line_does_not_panic_on_the_next_update() {
         // Without `remove_overlapping_folds`, this fold would keep pointing at
         // row 1 after `dd` removes every row, and `WindowState::update`'s call
@@ -2595,6 +2910,76 @@ mod tests {
         assert_eq!(
             window_state.selections.text(buffer.as_text_buffer()),
             " hello "
+        );
+    }
+
+    #[test]
+    fn move_within_character_selects_inner_sentence_excluding_trailing_space() {
+        let mut buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "One. Two. Three.",
+        );
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Place the cursor on the 'w' of "Two".
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 6);
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveWithinCharacter { count: 1, ch: 's' },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        // The inner sentence stops at the period, excluding the space that
+        // separates it from "Three.".
+        assert_eq!(
+            window_state.selections.text(buffer.as_text_buffer()),
+            "Two."
+        );
+    }
+
+    #[test]
+    fn move_within_character_selects_inner_sentence_across_a_blank_line() {
+        let mut buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "Line one. Line two.\n\nLine three.",
+        );
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Place the cursor on the 't' of "two", the last sentence on row 0.
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 15);
+
+        let editor = Editor::new();
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveWithinCharacter { count: 1, ch: 's' },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .expect("action applies without panicking");
+
+        // The inner sentence stops at the period, excluding the newline and
+        // the following blank line.
+        assert_eq!(
+            window_state.selections.text(buffer.as_text_buffer()),
+            "Line two."
         );
     }
 
@@ -2834,7 +3219,9 @@ mod tests {
         // Set visual selection on "NextVim" (offset 5 to 12)
         window_state2.selections.selections.clear();
         window_state2.selections.add(buffer2.as_text_buffer(), 5);
-        window_state2.selections.move_right(true, 7, buffer2.as_text_buffer());
+        window_state2
+            .selections
+            .move_right(true, 7, buffer2.as_text_buffer());
 
         let next_mode2 = editor
             .execute(
@@ -2854,5 +3241,139 @@ mod tests {
             .chunks_in_range(0..buffer2.as_text_buffer().len())
             .collect();
         assert_eq!(buffer_text2, "Rust nEXTvIM");
+    }
+
+    #[test]
+    fn test_guu_and_guu_change_case_of_whole_lines() {
+        let text = "Hello World\nSecond Line\nThird Line\n";
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Put cursor in the middle of the first line.
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 3);
+
+        let editor = Editor::new();
+
+        // guu lowercases the current line and moves the cursor to the first non-blank.
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::LowerCaseLine { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let buffer_text: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text, "hello world\nSecond Line\nThird Line\n");
+
+        let point = window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.as_text_buffer());
+        assert_eq!(point.row, 0);
+        assert_eq!(point.column, 0);
+
+        // gUU (with a count of 2) uppercases the current and next line.
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::UpperCaseLine { count: 2 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let buffer_text: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text, "HELLO WORLD\nSECOND LINE\nThird Line\n");
+    }
+
+    #[test]
+    fn test_gu_motion_and_gu_motion_change_case_of_a_range() {
+        let text = "Hello World Again";
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Put cursor at the start of "World".
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 6);
+
+        let editor = Editor::new();
+
+        // guw lowercases from the cursor to the start of the next word.
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::LowerCaseMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveToWord {
+                        count: 1,
+                        select: false,
+                    }),
+                },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let buffer_text: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text, "Hello world Again");
+
+        // Cursor should rest at the start of the changed range.
+        let point = window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.as_text_buffer());
+        assert_eq!(point.column, 6);
+
+        // gUw uppercases from the cursor to the start of the next word.
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::UpperCaseMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveToWord {
+                        count: 1,
+                        select: false,
+                    }),
+                },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let buffer_text: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text, "Hello WORLD Again");
     }
 }

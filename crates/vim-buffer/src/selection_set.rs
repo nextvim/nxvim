@@ -696,6 +696,26 @@ impl SelectionSet {
         }
     }
 
+    pub fn move_to_previous_sentence(&mut self, anchor: bool, count: u32, buffer: &Buffer) {
+        for _ in 0..count {
+            let cursors = self.selections.clone();
+            for cursor in cursors.iter() {
+                let next = cursor.clone().move_to_previous_sentence(anchor, buffer);
+                self.update(buffer, &next);
+            }
+        }
+    }
+
+    pub fn move_to_next_sentence(&mut self, anchor: bool, count: u32, buffer: &Buffer) {
+        for _ in 0..count {
+            let cursors = self.selections.clone();
+            for cursor in cursors.iter() {
+                let next = cursor.clone().move_to_next_sentence(anchor, buffer);
+                self.update(buffer, &next);
+            }
+        }
+    }
+
     pub fn move_to_previous_match(&mut self, text: &str, pattern: bool, buffer: &Buffer) {
         if pattern && text != self.search {
             self.search = text.to_string();
@@ -851,7 +871,8 @@ impl ResolvedSelectionSet {
     }
 
     pub fn is_selected(&self, row: u32, column: u32) -> SelectionCellState {
-        let at_primary_cursor_head = row == self.primary_head.row && column == self.primary_head.column;
+        let at_primary_cursor_head =
+            row == self.primary_head.row && column == self.primary_head.column;
         let mut at_cursor_head = false;
         for cursor in self.selections.iter() {
             at_cursor_head |= row == cursor.head.row && column == cursor.head.column;

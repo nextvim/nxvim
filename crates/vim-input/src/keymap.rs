@@ -47,6 +47,12 @@ impl Keymap {
         op_actions
             .bind("y", Action::Yank { count: 1 })
             .expect("Valid binding");
+        op_actions
+            .bind("gU", Action::UpperCase { count: 1 })
+            .expect("Valid binding");
+        op_actions
+            .bind("gu", Action::LowerCase { count: 1 })
+            .expect("Valid binding");
 
         // Motions
         motion_actions
@@ -586,6 +592,13 @@ impl Keymap {
             .expect("Valid binding");
 
         normal_actions
+            .bind("gUU", Action::UpperCaseLine { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("guu", Action::LowerCaseLine { count: 1 })
+            .expect("Valid binding");
+
+        normal_actions
             .bind("m{c}", Action::MarkSet { ch: '?' })
             .expect("Valid binding");
         normal_actions
@@ -631,8 +644,6 @@ impl Keymap {
         normal_actions
             .bind("<BackTab>", Action::PreviousTab { count: 1 })
             .expect("Valid binding");
-
-
 
         normal_actions
             .bind("<C-w><h>", Action::FocusLeftWindow)

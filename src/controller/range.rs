@@ -126,6 +126,7 @@ impl RangeCommandHandler {
             &mut app.services,
             active_window,
             &action,
+            register,
         );
 
         if BufferHandler::handles(&action) {
