@@ -285,4 +285,22 @@ mod tests {
             ));
         }
     }
+
+    #[test]
+    fn test_x_command() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute(":1,2x").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::WriteQuit { path: None, force: false })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute(":xa").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::WriteQuitAll { force: false })
+        ));
+    }
 }
+

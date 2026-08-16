@@ -1,13 +1,7 @@
 use onig::Regex;
 
 pub fn compile(pattern: &str) -> Option<Regex> {
-    match Regex::new(pattern) {
-        Ok(regex) => Some(regex),
-        Err(err) => {
-            eprintln!("Regex compile error: {}", err);
-            None
-        }
-    }
+    Regex::new(pattern).ok()
 }
 
 pub trait TextSearch {

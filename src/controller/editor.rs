@@ -256,6 +256,19 @@ impl Editor {
                 .selections
                 .sync_line(buffer.as_text_buffer());
         }
+        if mode.is_visual() {
+            let primary = buffer_display_context.selections.primary();
+            let head = primary.head();
+            let tail = primary.tail();
+            let text_buf = buffer.as_text_buffer();
+            let (top, end) = if text_buf.offset_for_anchor(&head) <= text_buf.offset_for_anchor(&tail) {
+                (head, tail)
+            } else {
+                (tail, head)
+            };
+            _ = buffer.set_mark_anchor('<', top);
+            _ = buffer.set_mark_anchor('>', end);
+        }
     }
 
     fn apply_action(
