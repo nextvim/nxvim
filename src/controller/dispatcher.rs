@@ -120,12 +120,27 @@ impl Dispatcher {
                         }
                         return CommandOutcome::redraw();
                     }
+                    vim_input::Action::Repeat { count } => {
+                        if let Some(ref actions) = app.services.repeat_actions {
+                            for _ in 0..*count {
+                                for act in actions {
+                                    app.command_queue.push_back(Command::Editor {
+                                        action: act.clone(),
+                                        register: None,
+                                    });
+                                }
+                            }
+                        }
+                        return CommandOutcome::redraw();
+                    }
                     _ => {
                         if app.services.macros.is_recording() {
                             app.services.macros.record(action.clone(), register);
                         }
                     }
                 }
+
+                let mode_before = app.controller.mode();
 
                 let mut outcome = EditorHandler::execute(
                     &mut app.ui,
@@ -135,6 +150,74 @@ impl Dispatcher {
                     active_window,
                     &action,
                 );
+
+                let mode_after = app.controller.mode();
+                let is_repeat = matches!(action, vim_input::Action::Repeat { .. });
+                if !is_repeat {
+                    let is_modifying = matches!(
+                        action,
+                        vim_input::Action::Delete { .. }
+                            | vim_input::Action::DeleteChar { .. }
+                            | vim_input::Action::DeleteCharBefore { .. }
+                            | vim_input::Action::DeleteLine { .. }
+                            | vim_input::Action::DeleteLines { .. }
+                            | vim_input::Action::DeleteMotion { .. }
+                            | vim_input::Action::Change { .. }
+                            | vim_input::Action::ChangeLine { .. }
+                            | vim_input::Action::ChangeMotion { .. }
+                            | vim_input::Action::Put { .. }
+                            | vim_input::Action::PutLines { .. }
+                            | vim_input::Action::JoinLines { .. }
+                            | vim_input::Action::InsertText { .. }
+                            | vim_input::Action::InsertNewLine { .. }
+                            | vim_input::Action::InsertNewLineMotion { .. }
+                            | vim_input::Action::InsertTab
+                            | vim_input::Action::SetToOpenLineBelow { .. }
+                            | vim_input::Action::SetToOpenLineAbove { .. }
+                            | vim_input::Action::SetToInsert
+                            | vim_input::Action::SetToAppend
+                            | vim_input::Action::SetToAppendEndOfLine
+                            | vim_input::Action::SetToInsertStartOfLineNonSpace
+                    );
+
+                    if is_modifying {
+                        let is_insert_entering = matches!(
+                            action,
+                            vim_input::Action::SetToInsert
+                                | vim_input::Action::SetToAppend
+                                | vim_input::Action::SetToAppendEndOfLine
+                                | vim_input::Action::SetToInsertStartOfLineNonSpace
+                                | vim_input::Action::SetToOpenLineBelow { .. }
+                                | vim_input::Action::SetToOpenLineAbove { .. }
+                                | vim_input::Action::Change { .. }
+                                | vim_input::Action::ChangeLine { .. }
+                                | vim_input::Action::ChangeMotion { .. }
+                        );
+
+                        if mode_before == vim_input::Mode::Normal || mode_before.is_visual() {
+                            if is_insert_entering {
+                                app.services.recording_repeat = Some(vec![action.clone()]);
+                            } else {
+                                app.services.repeat_actions = Some(vec![action.clone()]);
+                                app.services.recording_repeat = None;
+                            }
+                        } else if mode_before == vim_input::Mode::Insert {
+                            if let Some(ref mut rec) = app.services.recording_repeat {
+                                rec.push(action.clone());
+                            }
+                        }
+                    } else if mode_before == vim_input::Mode::Insert {
+                        if let Some(ref mut rec) = app.services.recording_repeat {
+                            rec.push(action.clone());
+                        }
+                    }
+                }
+
+                if mode_after == vim_input::Mode::Normal {
+                    if let Some(rec) = app.services.recording_repeat.take() {
+                        app.services.repeat_actions = Some(rec);
+                    }
+                }
 
                 if BufferHandler::handles(&action) {
                     outcome.merge(BufferHandler::execute(

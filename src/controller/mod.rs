@@ -274,6 +274,45 @@ mod tests {
     }
 
     #[test]
+    fn test_repeat_last_change() {
+        let mut app = app();
+
+        // 1. Trigger a modifying action (e.g. Delete Char)
+        let delete = Action::DeleteChar { count: 1 };
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: delete.clone(),
+                register: None,
+            },
+        );
+
+        // Verify it was recorded as the last change
+        assert_eq!(app.services.repeat_actions.as_ref().unwrap().len(), 1);
+        assert_eq!(app.services.repeat_actions.as_ref().unwrap()[0], delete);
+
+        // 2. Dispatch repeat command
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::Repeat { count: 2 },
+                register: None,
+            },
+        );
+
+        // Verify the deleted actions were queued twice in app.command_queue
+        assert_eq!(app.command_queue.len(), 2);
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor { action: Action::DeleteChar { .. }, .. })
+        ));
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor { action: Action::DeleteChar { .. }, .. })
+        ));
+    }
+
+    #[test]
     fn range_op_delete_removes_the_resolved_line_range() {
         let mut app = app();
         let main = app.view_ids.main;
