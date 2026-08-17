@@ -1419,12 +1419,21 @@ impl Editor {
                         .text(buffer.as_text_buffer())
                 } else {
                     let primary = buffer_display_context.selections.first().unwrap();
-                    let head_offset = buffer.as_text_buffer().offset_for_anchor(&primary.head());
-                    let start_offset = if head_offset >= *count as usize {
+                    let mut head_offset =
+                        buffer.as_text_buffer().offset_for_anchor(&primary.head());
+                    let mut start_offset = if head_offset >= *count as usize {
                         head_offset - *count as usize
                     } else {
                         0
                     };
+
+                    start_offset = buffer
+                        .as_text_buffer()
+                        .clip_offset(start_offset, Bias::Left);
+                    head_offset = buffer
+                        .as_text_buffer()
+                        .clip_offset(head_offset, Bias::Right);
+
                     buffer
                         .as_text_buffer()
                         .as_rope()
