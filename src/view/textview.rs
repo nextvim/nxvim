@@ -98,14 +98,14 @@ pub fn build_text(
 
     let mut prev_row = 0;
     for row in start_row..end_row {
-        let line = display_map_snapshot.line_text(row);
+        let line = display_map_snapshot.line_text(row) + " ";
         let buffer_row = match display_map_snapshot.try_buffer_row_for_display_row(row) {
             Some(r) => r,
             None => continue,
         };
         let mut spans = Vec::<vim_ui::model::TextSpan>::new();
         let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
-        let line_len = line_chars.len();
+        let line_len = line.len();
 
         let line_highlights = highlights.and_then(|h| h.highlight_row(buffer_row));
         let mut highlight_index = 0;
@@ -137,19 +137,27 @@ pub fn build_text(
 
         let mut gutter_style = vim_ui::Style::default();
 
-        for column in 0..=line_len {
+        let mut byte_column = 0;
+        let mut column_offset = 0;
+        for (column, character) in line.chars().skip(scroll_x as usize).enumerate() {
+            let byte_display_point = display_map::DisplayPoint::new(row, byte_column as u32);
+            let orig_point = display_map_snapshot.display_point_to_point(byte_display_point);
+            let char_len = character.len_utf8();
+            byte_column += char_len;
+
+            let is_utf8 = char_len > 1;
             let is_eol = column == line_len;
+
             // `line_text` already expands tabs into spaces up to the next tab
             // stop (see `display_map::tab_map`), so no special-casing is
             // needed here.
-            let character = if is_eol { ' ' } else { line_chars[column] };
             let display_point = display_map::DisplayPoint::new(row, (column as u32) + scroll_x);
             let point = match display_map_snapshot.try_display_point_to_point(display_point) {
                 Some(p) => p,
-                None => continue,
+                None => orig_point,
             };
             let selection_state = if let Some(ref resolved) = resolved_selections {
-                resolved.is_selected(point.row, point.column)
+                resolved.is_selected(orig_point.row, orig_point.column)
             } else {
                 vim_buffer::SelectionCellState::default()
             };
@@ -167,11 +175,15 @@ pub fn build_text(
                 saved_cursor = Some(vim_ui::model::TextCursor {
                     position: vim_ui::model::DisplayPosition {
                         row: row - start_row,
-                        column: column as u32 + cursor_offset,
+                        column: (column + column_offset) as u32 + cursor_offset,
                     },
                     shape: cursor_shape(mode),
                     visible: true,
                 });
+            }
+
+            if is_utf8 {
+                column_offset += 1;
             }
 
             if is_eol && !selection_state.selected_cell && !selection_state.at_cursor_head {

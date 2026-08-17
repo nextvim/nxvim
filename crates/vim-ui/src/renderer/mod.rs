@@ -144,12 +144,12 @@ impl BufferedRenderer {
         queue!(writer, Hide)?;
 
         for y in 0..self.current.height {
+            let mut offset_x = 0;
             for x in 0..self.current.width {
                 let current_cell = self.current.get_cell(x, y).unwrap();
                 let last_cell = self.last.get_cell(x, y).unwrap();
-
                 if current_cell != last_cell {
-                    queue!(writer, MoveTo(x, y))?;
+                    queue!(writer, MoveTo(x + offset_x, y))?;
 
                     if current_cell.fg != last_fg {
                         queue!(writer, SetForegroundColor(current_cell.fg.into()))?;
@@ -161,6 +161,11 @@ impl BufferedRenderer {
                     }
 
                     queue!(writer, Print(current_cell.symbol))?;
+                }
+
+                // hack!
+                if current_cell.symbol.len_utf8() > 1 {
+                    offset_x += 1;
                 }
             }
         }
