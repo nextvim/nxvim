@@ -166,11 +166,14 @@ impl DisplayMap {
         self.inlay_map = InlayMap::new(self.fold_map.folded_buffer().clone());
         self.block_map = BlockMap::new(self.fold_map.folded_buffer().clone());
         if folds_changed {
-            self.buffer_window = 0..buffer.row_count();
-            self.wrap_map = WrapMap::new(
+            // Folding changes the synthetic buffer, but the editor still only
+            // needs exact wrapping for the current hot window. Rebuilding the
+            // whole folded document here makes `zc` scale with file size.
+            self.wrap_map = WrapMap::new_windowed(
                 self.fold_map.folded_buffer().clone(),
                 self.wrap_width,
                 self.tab_map.tab_size(),
+                self.buffer_window.clone(),
             );
         } else {
             self.wrap_map.sync(self.fold_map.folded_buffer().clone());
@@ -708,6 +711,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn folding_a_large_buffer_only_wraps_the_hot_window() {
+        let buffer = large_buffer(100_000);
+        let mut map = DisplayMap::new_windowed(buffer.snapshot().clone(), Some(80), 50_000..50_100);
+
+        crate::wrap_map::reset_build_stats();
+        map.fold(
+            vec![Fold {
+                start: Point::new(100, 0),
+                end: Point::new(101, 0),
+            }],
+            buffer.snapshot().clone(),
+        );
+
+        let stats = crate::wrap_map::build_stats();
+        assert!(
+            stats.rows <= 101,
+            "folding rebuilt wrapping outside the hot window: {stats:?}"
+        );
     }
 
     #[test]
