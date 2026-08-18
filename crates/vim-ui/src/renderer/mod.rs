@@ -102,6 +102,10 @@ pub struct BufferedRenderer {
     current_bg: Color,
 }
 
+fn cell_width(symbol: char) -> u16 {
+    symbol.width().unwrap_or(1).max(1) as u16
+}
+
 impl BufferedRenderer {
     pub fn new(width: u16, height: u16) -> Self {
         let mut last = ScreenBuffer::new(width, height);
@@ -137,34 +141,56 @@ impl BufferedRenderer {
             cursor::{Hide, SetCursorStyle, Show},
             execute, queue,
             style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+            terminal::{Clear, ClearType},
         };
 
         queue!(writer, Hide)?;
 
-        // ScreenBuffer indices are logical character slots, while the terminal
-        // cursor uses display columns. Repaint each row from a clean surface so
-        // deleting a wide UTF-8 character cannot leave its trailing cell (or a
-        // following character) at a stale physical column.
+        // ScreenBuffer columns are logical character slots, while the terminal
+        // cursor uses display columns. Find the first changed display column for
+        // each row, then clear and repaint only that suffix. Besides avoiding a
+        // visible full-screen erase on every redraw, using the old and new widths
+        // ensures deleting or replacing a wide character clears its tail.
         for y in 0..self.current.height {
+            let mut current_x = 0u16;
+            let mut last_x = 0u16;
+            let mut first_changed = None;
+
+            for x in 0..self.current.width {
+                let current_cell = self.current.get_cell(x, y).unwrap();
+                let last_cell = self.last.get_cell(x, y).unwrap();
+                if current_cell != last_cell {
+                    first_changed = Some(current_x.min(last_x));
+                    break;
+                }
+                current_x = current_x.saturating_add(cell_width(current_cell.symbol));
+                last_x = last_x.saturating_add(cell_width(last_cell.symbol));
+            }
+
+            let Some(first_changed) = first_changed else {
+                continue;
+            };
+
             queue!(
                 writer,
-                MoveTo(0, y),
-                ResetColor,
-                Print(" ".repeat(self.current.width as usize))
+                MoveTo(first_changed, y),
+                Clear(ClearType::UntilNewLine),
+                ResetColor
             )?;
 
             let mut display_x = 0u16;
             for x in 0..self.current.width {
                 let current_cell = self.current.get_cell(x, y).unwrap();
-                let width = current_cell.symbol.width().unwrap_or(1).max(1) as u16;
+                let width = cell_width(current_cell.symbol);
                 if display_x >= self.current.width {
                     break;
                 }
-
-                queue!(writer, MoveTo(display_x, y))?;
-                queue!(writer, SetForegroundColor(current_cell.fg.into()))?;
-                queue!(writer, SetBackgroundColor(current_cell.bg.into()))?;
-                queue!(writer, Print(current_cell.symbol))?;
+                if display_x >= first_changed {
+                    queue!(writer, MoveTo(display_x, y))?;
+                    queue!(writer, SetForegroundColor(current_cell.fg.into()))?;
+                    queue!(writer, SetBackgroundColor(current_cell.bg.into()))?;
+                    queue!(writer, Print(current_cell.symbol))?;
+                }
                 display_x = display_x.saturating_add(width);
             }
         }
