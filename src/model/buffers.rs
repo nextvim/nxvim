@@ -58,6 +58,18 @@ impl Buffers {
         }
     }
 
+    /// Opens or creates a named buffer without changing or removing the
+    /// buffer that is currently displayed. The caller decides which window
+    /// should display the returned buffer.
+    pub fn open_path(&mut self, path: impl AsRef<Path>) -> BufferId {
+        let path = path.as_ref();
+        self.inner
+            .load(path)
+            .or_else(|_| self.inner.create_named(path, ""))
+            .map(|(buffer_id, _)| buffer_id)
+            .expect("opening a buffer path should produce a buffer")
+    }
+
     pub fn current(&self) -> BufferId {
         self.inner
             .current()
@@ -176,6 +188,25 @@ mod tests {
 
         assert_eq!(buffers.current(), opened);
         assert_eq!(buffers.list().len(), 1);
+        assert_eq!(buffers.get(opened).unwrap().path(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn opening_a_path_for_edit_keeps_the_current_buffer() {
+        let mut buffers = Buffers::new();
+        let original = buffers.current();
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-edit-buffer-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+
+        let opened = buffers.open_path(&path);
+
+        assert_ne!(opened, original);
+        assert_eq!(buffers.current(), original);
+        assert_eq!(buffers.list().len(), 2);
+        assert_eq!(buffers.get(original).unwrap().path(), None);
         assert_eq!(buffers.get(opened).unwrap().path(), Some(path.as_path()));
     }
 }

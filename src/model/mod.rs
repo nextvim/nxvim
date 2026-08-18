@@ -68,7 +68,7 @@ impl EditorModel {
     }
 
     pub fn open_path(&mut self, path: impl AsRef<std::path::Path>) -> BufferId {
-        self.buffers.open_paths(vec![path])
+        self.buffers.open_path(path)
     }
 
     pub fn wipe(
