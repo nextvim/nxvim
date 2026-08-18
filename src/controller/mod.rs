@@ -146,6 +146,36 @@ mod tests {
     }
 
     #[test]
+    fn edit_adds_a_buffer_without_replacing_the_current_one() {
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-command-edit-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut app = app();
+        let main = app.view_ids.main;
+        let original = window_buffer(&app, main).unwrap();
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::Edit {
+                path: Some(path.clone()),
+                force: false,
+            },
+        );
+
+        let edited = window_buffer(&app, main).unwrap();
+        assert!(outcome.redraw);
+        assert_ne!(edited, original);
+        assert!(app.model.list().contains(&original));
+        assert_eq!(app.model.list().len(), 2);
+        assert_eq!(
+            app.model.get_buffer(edited).unwrap().path(),
+            Some(path.as_path())
+        );
+    }
+
+    #[test]
     fn command_action_requests_commandline_focus_and_insert_mode() {
         let mut app = app();
         let outcome = Dispatcher::dispatch(

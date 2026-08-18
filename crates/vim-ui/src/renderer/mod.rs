@@ -141,16 +141,15 @@ impl BufferedRenderer {
             cursor::{Hide, SetCursorStyle, Show},
             execute, queue,
             style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-            terminal::{Clear, ClearType},
         };
 
         queue!(writer, Hide)?;
 
         // ScreenBuffer columns are logical character slots, while the terminal
         // cursor uses display columns. Find the first changed display column for
-        // each row, then clear and repaint only that suffix. Besides avoiding a
-        // visible full-screen erase on every redraw, using the old and new widths
-        // ensures deleting or replacing a wide character clears its tail.
+        // each row, then repaint only that suffix. Rows are rendered to their
+        // full width by the views, so clearing the suffix first is unnecessary
+        // and can briefly expose the terminal's default background.
         for y in 0..self.current.height {
             let mut current_x = 0u16;
             let mut last_x = 0u16;
@@ -171,12 +170,7 @@ impl BufferedRenderer {
                 continue;
             };
 
-            queue!(
-                writer,
-                MoveTo(first_changed, y),
-                Clear(ClearType::UntilNewLine),
-                ResetColor
-            )?;
+            queue!(writer, MoveTo(first_changed, y), ResetColor)?;
 
             let mut display_x = 0u16;
             for x in 0..self.current.width {
