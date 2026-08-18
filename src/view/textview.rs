@@ -105,7 +105,6 @@ pub fn build_text(
             None => continue,
         };
         let mut spans = Vec::<vim_ui::model::TextSpan>::new();
-        let line_chars: Vec<char> = line.chars().skip(scroll_x as usize).collect();
         let line_len = line.len();
 
         let line_highlights = highlights.and_then(|h| h.highlight_row(buffer_row));
@@ -136,24 +135,44 @@ pub fn build_text(
         prev_row = buffer_row + 1;
         let cursor_offset = gutter_text.len() as u32;
 
-        let mut gutter_style = vim_ui::Style::default();
+        let default_style = vim_ui::Style::default();
+        let gutter_style = default_style.clone();
+        let mut search_style = colorscheme
+            .and_then(|cs| cs.get_style("Search"))
+            .cloned()
+            .unwrap_or_else(|| {
+                let mut style = default_style.clone();
+                style.fg = Some(vim_ui::Color::Black);
+                style.bg = Some(vim_ui::Color::Yellow);
+                style
+            });
 
         let mut byte_column = 0;
-        let mut column_offset = 0;
-        for (column, character) in line.chars().skip(scroll_x as usize).enumerate() {
-            let byte_display_point = display_map::DisplayPoint::new(row, byte_column as u32);
-            let orig_point = display_map_snapshot.display_point_to_point(byte_display_point);
+        let mut display_column = 0u32;
+        for (char_index, character) in line.chars().enumerate() {
             let char_len = character.len_utf8();
-
+            let char_width = character.width().unwrap_or(1) as u32;
+            let current_display_column = display_column;
+            let is_eol = byte_column + char_len == line_len;
             byte_column += char_len;
+            display_column += char_width;
 
-            let is_utf8 = char_len > 1;
-            let is_eol = column == line_len;
+            // DisplayPoint columns are rendered cell columns, whereas buffer
+            // Point columns are UTF-8 byte offsets. Do not use a character
+            // index for the cursor position: wide/non-ASCII characters make
+            // those coordinate systems diverge.
+            if current_display_column < scroll_x {
+                continue;
+            }
+            let column = current_display_column - scroll_x;
+            let orig_point = display_map_snapshot.display_point_to_point(
+                display_map::DisplayPoint::new(row, current_display_column),
+            );
 
             // `line_text` already expands tabs into spaces up to the next tab
             // stop (see `display_map::tab_map`), so no special-casing is
             // needed here.
-            let display_point = display_map::DisplayPoint::new(row, (column as u32) + scroll_x);
+            let display_point = display_map::DisplayPoint::new(row, current_display_column);
             let point = match display_map_snapshot.try_display_point_to_point(display_point) {
                 Some(p) => p,
                 None => orig_point,
@@ -165,10 +184,9 @@ pub fn build_text(
             };
 
             let in_match = if !is_eol {
-                let abs_column = column + scroll_x as usize;
                 match_ranges
                     .iter()
-                    .any(|&(s, e)| abs_column >= s && abs_column < e)
+                    .any(|&(s, e)| char_index >= s && char_index < e)
             } else {
                 false
             };
@@ -177,15 +195,11 @@ pub fn build_text(
                 saved_cursor = Some(vim_ui::model::TextCursor {
                     position: vim_ui::model::DisplayPosition {
                         row: row - start_row,
-                        column: (column + column_offset) as u32 + cursor_offset,
+                        column: column + cursor_offset,
                     },
                     shape: cursor_shape(mode),
                     visible: true,
                 });
-            }
-
-            if is_utf8 {
-                column_offset += character.width().unwrap_or(1).saturating_sub(1);
             }
 
             if is_eol && !selection_state.selected_cell && !selection_state.at_cursor_head {
@@ -194,15 +208,14 @@ pub fn build_text(
 
             let mut style = vim_ui::Style::default();
             if selection_state.selected_cell || selection_state.at_cursor_head {
-                style.bg = Some(vim_ui::Color::Blue);
-            } else if in_match {
-                if let Some(cs_style) = colorscheme.and_then(|cs| cs.get_style("Search")) {
-                    style = *cs_style;
-                } else {
-                    style.fg = Some(vim_ui::Color::Black);
-                    style.bg = Some(vim_ui::Color::Yellow);
+                if !selection_state.at_primary_cursor_head {
+                    style.bg = search_style.bg;
                 }
-            } else if let Some(line_highlights) = line_highlights {
+            } else if in_match {
+                style.bg = search_style.bg;
+            }
+
+            if let Some(line_highlights) = line_highlights {
                 if let Some(span) =
                     highlight_at_column(line_highlights, &mut highlight_index, point.column)
                 {
@@ -429,6 +442,7 @@ mod tests {
         // Row 0: "hello world" -> no matches
         // Row 1: "rust nextvim" -> "next" matches starting at character index 5, length 4.
         let row1 = &model.rows[1];
+
         let span_texts: Vec<&str> = row1.spans.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(span_texts.get(1), Some(&"next"));
         assert_eq!(row1.spans[1].style.bg, Some(vim_ui::Color::Yellow));
@@ -439,6 +453,7 @@ mod tests {
 fn cursor_shape(mode: vim_input::Mode) -> vim_ui::model::CursorShape {
     if mode == vim_input::Mode::Insert {
         vim_ui::model::CursorShape::BlinkingBar
+        // vim_ui::model::CursorShape::BlinkingBlock
     } else {
         vim_ui::model::CursorShape::Block
     }

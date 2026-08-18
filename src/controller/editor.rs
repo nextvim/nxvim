@@ -336,11 +336,11 @@ impl Editor {
         }
 
         // These actions immediately elevates mode to Insert
-        if mode == Mode::VisualBlock {
+        if mode.is_visual() {
             match action {
-                Action::Delete { .. } | Action::DeleteMotion { .. } => {
-                    next_action = Action::SetToInsert
-                }
+                Action::DeleteCharBefore { .. }
+                | Action::Delete { .. }
+                | Action::DeleteMotion { .. } => next_action = Action::SetToInsert,
                 _ => {}
             }
         }
