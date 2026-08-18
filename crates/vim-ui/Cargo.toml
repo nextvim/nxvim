@@ -10,3 +10,4 @@ vim-buffer = { path = "../vim-buffer" }
 display_map = { path = "../display_map" }
 text = { path = "../zed/crates/text" }
 clock = { path = "../zed/crates/clock" }
+unicode-width = "0.2"

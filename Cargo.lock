@@ -664,6 +664,7 @@ dependencies = [
  "sum_tree",
  "text",
  "unicode-segmentation",
+ "unicode-width",
  "util",
  "vim-buffer",
  "ztracing",
@@ -1528,6 +1529,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-zig",
  "unicode-segmentation",
+ "unicode-width",
  "util",
  "vim-buffer",
  "vim-clipboard",
@@ -3073,6 +3075,7 @@ dependencies = [
  "display_map",
  "text",
  "textmate",
+ "unicode-width",
  "vim-buffer",
 ]
 

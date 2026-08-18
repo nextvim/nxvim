@@ -6,6 +6,7 @@ pub use self::crossterm::CrosstermRenderer;
 
 use crate::rect::Rect;
 use crate::types::Color;
+use unicode_width::UnicodeWidthChar;
 
 pub trait Renderer {
     fn move_to(&mut self, x: u16, y: u16) -> std::io::Result<()>;
@@ -138,35 +139,33 @@ impl BufferedRenderer {
             style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
         };
 
-        let mut last_fg = Color::Reset;
-        let mut last_bg = Color::Reset;
-
         queue!(writer, Hide)?;
 
+        // ScreenBuffer indices are logical character slots, while the terminal
+        // cursor uses display columns. Repaint each row from a clean surface so
+        // deleting a wide UTF-8 character cannot leave its trailing cell (or a
+        // following character) at a stale physical column.
         for y in 0..self.current.height {
-            let mut offset_x = 0;
+            queue!(
+                writer,
+                MoveTo(0, y),
+                ResetColor,
+                Print(" ".repeat(self.current.width as usize))
+            )?;
+
+            let mut display_x = 0u16;
             for x in 0..self.current.width {
                 let current_cell = self.current.get_cell(x, y).unwrap();
-                let last_cell = self.last.get_cell(x, y).unwrap();
-                if current_cell != last_cell {
-                    queue!(writer, MoveTo(x + offset_x, y))?;
-
-                    if current_cell.fg != last_fg {
-                        queue!(writer, SetForegroundColor(current_cell.fg.into()))?;
-                        last_fg = current_cell.fg;
-                    }
-                    if current_cell.bg != last_bg {
-                        queue!(writer, SetBackgroundColor(current_cell.bg.into()))?;
-                        last_bg = current_cell.bg;
-                    }
-
-                    queue!(writer, Print(current_cell.symbol))?;
+                let width = current_cell.symbol.width().unwrap_or(1).max(1) as u16;
+                if display_x >= self.current.width {
+                    break;
                 }
 
-                // hack!
-                if current_cell.symbol.len_utf8() > 1 {
-                    offset_x += 1;
-                }
+                queue!(writer, MoveTo(display_x, y))?;
+                queue!(writer, SetForegroundColor(current_cell.fg.into()))?;
+                queue!(writer, SetBackgroundColor(current_cell.bg.into()))?;
+                queue!(writer, Print(current_cell.symbol))?;
+                display_x = display_x.saturating_add(width);
             }
         }
 

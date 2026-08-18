@@ -292,6 +292,9 @@ impl Editor {
                 .selections
                 .sync_line(buffer.as_text_buffer());
         }
+        buffer_display_context
+            .selections
+            .collapse_overlapping_cursors(buffer.as_text_buffer());
         if mode.is_visual() {
             let primary = buffer_display_context.selections.primary();
             let head = primary.head();
@@ -1362,7 +1365,7 @@ impl Editor {
                     let head_offset = buffer.as_text_buffer().offset_for_anchor(&primary.head());
                     let end_offset = buffer
                         .as_text_buffer()
-                        .clip_offset(head_offset + *count as usize, Bias::Right);
+                        .clip_offset(head_offset.saturating_add(*count as usize), Bias::Right);
                     buffer
                         .as_text_buffer()
                         .as_rope()
@@ -2450,16 +2453,20 @@ impl Editor {
 
                 let start = buffer.as_text_buffer().offset_for_anchor(&cs);
                 let mut end = buffer.as_text_buffer().offset_for_anchor(&ce);
+
                 if start != end {
-                    end = buffer.as_text_buffer().clip_offset(end + 1, Bias::Right);
+                    end = buffer
+                        .as_text_buffer()
+                        .clip_offset(end.saturating_add(1), Bias::Right);
                 }
+
                 (start, end)
             };
 
             if count != 0 {
                 end = buffer
                     .as_text_buffer()
-                    .clip_offset(end + count, Bias::Right);
+                    .clip_offset(end.saturating_add(count), Bias::Right);
             }
 
             if start != end {
@@ -2518,8 +2525,11 @@ impl Editor {
                 let start = buffer.as_text_buffer().offset_for_anchor(&cs);
                 let mut end = buffer.as_text_buffer().offset_for_anchor(&ce);
                 if inclusive && start != end {
-                    end = buffer.as_text_buffer().clip_offset(end + 1, Bias::Right);
+                    end = buffer
+                        .as_text_buffer()
+                        .clip_offset(end.saturating_add(1), Bias::Right);
                 }
+
                 (start, end)
             };
 

@@ -2,6 +2,8 @@ use crate::model::{ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::window::View;
+use unicode_width::UnicodeWidthChar;
+use unicode_width::UnicodeWidthStr;
 
 /// Renders an already-built `TextViewModel`. Mechanical: knows nothing about
 /// buffers, windows, or how the model was produced. The host rebuilds
@@ -48,7 +50,7 @@ impl View for TextView {
             if let Some(gutter) = &row.gutter {
                 renderer.set_style(gutter.style)?;
                 let text: String = gutter.text.chars().take(width as usize).collect();
-                used += text.chars().count();
+                used += text.width();
                 renderer.print(&text)?;
             }
             for span in &row.spans {
@@ -57,7 +59,7 @@ impl View for TextView {
                 }
                 renderer.set_style(span.style)?;
                 let text: String = span.text.chars().take(width as usize - used).collect();
-                used += text.chars().count();
+                used += text.width();
                 renderer.print(&text)?;
             }
             if used < width as usize {

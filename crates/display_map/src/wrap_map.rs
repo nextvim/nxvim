@@ -1,6 +1,7 @@
 use std::{cmp, ops::Range};
 use sum_tree::{Bias, ContextLessSummary, Dimension, Dimensions, Item, SeekTarget, SumTree};
 use text::{BufferSnapshot, Edit, Point};
+use unicode_width::UnicodeWidthChar;
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -107,6 +108,7 @@ enum TransformKind {
     /// so (like `Wrap`) queries landing anywhere inside this transform
     /// resolve to its start rather than being linearly interpolated.
     Tab,
+    Character,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +151,16 @@ impl Transform {
                 output: WrapPoint::new(0, width),
             },
             kind: TransformKind::Tab,
+        }
+    }
+
+    fn character(input_width: u32, display_width: u32) -> Self {
+        Self {
+            summary: TransformSummary {
+                input: Point::new(0, input_width),
+                output: WrapPoint::new(0, display_width),
+            },
+            kind: TransformKind::Character,
         }
     }
 
@@ -448,7 +460,8 @@ fn build_single_row_transforms(
         if cancellation.is_some_and(|c| c.is_cancelled()) {
             return false;
         }
-        let ch_len = ch.len_utf8() as u32;
+        let input_width = ch.len_utf8() as u32;
+        let display_width = ch.width().unwrap_or(0) as u32;
         if ch == '\t' {
             let mut tab_width = tab_size - (visual_column % tab_size);
             if let Some(width) = width
@@ -466,14 +479,19 @@ fn build_single_row_transforms(
         } else {
             if let Some(width) = width
                 && visual_column > 0
-                && visual_column + ch_len > width
+                && visual_column + display_width > width
             {
                 record_transform();
                 transforms.push(Transform::wrap(), ());
                 visual_column = 0;
             }
-            push_isomorphic(transforms, Point::new(0, ch_len));
-            visual_column += ch_len;
+            if display_width == 1 {
+                push_isomorphic(transforms, Point::new(0, input_width));
+            } else {
+                record_transform();
+                transforms.push(Transform::character(input_width, display_width), ());
+            }
+            visual_column += display_width;
         }
     }
 
@@ -993,6 +1011,31 @@ mod tests {
         assert_eq!(
             snapshot.from_wrap_point(WrapPoint::new(1, 0)),
             Point::new(0, 3)
+        );
+    }
+
+    #[test]
+    fn wraps_using_unicode_display_width_not_utf8_length() {
+        let snapshot = snapshot("a😀b", Some(3));
+
+        assert_eq!(snapshot.row_count(), 2);
+        assert_eq!(snapshot.line_len(0), 3);
+        assert_eq!(snapshot.line_len(1), 1);
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 1)),
+            WrapPoint::new(0, 1)
+        );
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 5)),
+            WrapPoint::new(1, 0)
+        );
+        assert_eq!(
+            snapshot.to_wrap_point(Point::new(0, 6)),
+            WrapPoint::new(1, 1)
+        );
+        assert_eq!(
+            snapshot.from_wrap_point(WrapPoint::new(0, 3)),
+            Point::new(0, 5)
         );
     }
 
