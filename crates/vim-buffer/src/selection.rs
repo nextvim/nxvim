@@ -1,5 +1,5 @@
 use crate::{BufferError, BufferSnapshot, ByteOffset, TextRange};
-use text::{Anchor, Selection};
+use text::{Anchor, Bias, Selection};
 
 pub trait SelectionExt {
     /// Resolves the selection into a characterwise `TextRange` (either inclusive or exclusive).
@@ -29,12 +29,15 @@ impl SelectionExt for Selection<Anchor> {
         }
         let head = inner.offset_for_anchor(&self.head());
         let anchor = inner.offset_for_anchor(&self.tail());
+
         let (start, end) = if head <= anchor {
             (head, anchor)
         } else {
             (anchor, head)
         };
+
         let end = inclusive_end(snapshot, end, inclusive);
+
         Ok(vec![text_range(start, end)])
     }
 

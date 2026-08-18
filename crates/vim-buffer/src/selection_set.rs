@@ -158,6 +158,23 @@ impl SelectionSet {
         })
     }
 
+    /// Removes duplicate selections that occupy the same range, regardless of
+    /// their direction. The first selection is retained so the primary cursor
+    /// and selection ordering remain stable.
+    pub fn collapse_overlapping_cursors(&mut self, buffer: &Buffer) {
+        let mut ranges = HashSet::with_capacity(self.selections.len());
+        self.selections.retain(|selection| {
+            let head = buffer.offset_for_anchor(&selection.head());
+            let tail = buffer.offset_for_anchor(&selection.tail());
+            let range = if head <= tail {
+                (head, tail)
+            } else {
+                (tail, head)
+            };
+            ranges.insert(range)
+        });
+    }
+
     pub fn text(&self, buffer: &Buffer) -> String {
         self.selections
             .iter()

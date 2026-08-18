@@ -21,6 +21,7 @@
 
 use std::ops::Range;
 use text::{BufferSnapshot, Point};
+use unicode_width::UnicodeWidthChar;
 
 /// A position in tab-expanded coordinate space: same row as the underlying
 /// text, but with columns measured after expanding any tabs into spaces.
@@ -142,7 +143,7 @@ impl TabMap {
         if ch == '\t' {
             column + self.tab_stop_width(column)
         } else {
-            column + ch.len_utf8() as u32
+            column + ch.width().unwrap_or(0) as u32
         }
     }
 }

@@ -8,6 +8,24 @@ pub trait BufferText {
     fn row_text(&self, row: u32) -> String;
 }
 
+/// Returns the greatest valid UTF-8 boundary at or before `offset`.
+fn floor_char_boundary(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+/// Returns the start of the character immediately before `offset`.
+fn previous_char_boundary(text: &str, offset: usize) -> usize {
+    let offset = floor_char_boundary(text, offset);
+    text[..offset]
+        .char_indices()
+        .next_back()
+        .map_or(0, |(index, _)| index)
+}
+
 impl BufferText for Buffer {
     fn row_text(&self, row: u32) -> String {
         let start = Point::new(row, 0).to_offset(self);
@@ -164,7 +182,7 @@ impl Motions for Selection<Anchor> {
         let mut point = self.head().to_point(&buffer);
         if point.column != 0 {
             let row_text = buffer.row_text(point.row);
-            let current_col = point.column as usize;
+            let current_col = floor_char_boundary(&row_text, point.column as usize);
             if let Some(ch) = row_text[..current_col].chars().next_back() {
                 point.column = point.column.saturating_sub(ch.len_utf8() as u32);
             } else {
@@ -192,7 +210,7 @@ impl Motions for Selection<Anchor> {
         let row_text = buffer.row_text(point.row);
         let l = row_text.len() as u32;
         if point.column < l {
-            let current_col = point.column as usize;
+            let current_col = floor_char_boundary(&row_text, point.column as usize);
             if let Some(ch) = row_text[current_col..].chars().next() {
                 point.column += ch.len_utf8() as u32;
             } else {
@@ -361,7 +379,11 @@ impl Motions for Selection<Anchor> {
         let line_text = buffer.row_text(point.row);
         let mut found_count = 0;
         if forward {
-            let start_idx = (point.column as usize).saturating_add(1);
+            let current_idx = floor_char_boundary(&line_text, point.column as usize);
+            let start_idx = line_text[current_idx..]
+                .chars()
+                .next()
+                .map_or(line_text.len(), |c| current_idx + c.len_utf8());
             if start_idx < line_text.len() {
                 for (idx, c) in line_text[start_idx..].char_indices() {
                     if c == ch {
@@ -383,7 +405,7 @@ impl Motions for Selection<Anchor> {
                 }
             }
         } else {
-            let end_idx = point.column as usize;
+            let end_idx = floor_char_boundary(&line_text, point.column as usize);
             if end_idx > 0 {
                 for (idx, c) in line_text[..end_idx].char_indices().rev() {
                     if c == ch {
@@ -441,7 +463,7 @@ impl Motions for Selection<Anchor> {
         let text = buffer.row_text(point.row);
         let previous_column = point.column;
         if let Some(word) = text.as_str().find_next_word_end(point.column as usize) {
-            point.column = (word.1 - 1) as u32;
+            point.column = previous_char_boundary(&text, word.1) as u32;
         } else {
             point.column = buffer.line_len(point.row);
         }
@@ -511,7 +533,7 @@ impl Motions for Selection<Anchor> {
         let mut point = self.head().to_point(buffer);
         let text = buffer.row_text(point.row);
         if let Some(word) = text.as_str().find_next_word_end(point.column as usize) {
-            point.column = (word.1 - 1) as u32;
+            point.column = previous_char_boundary(&text, word.1) as u32;
         } else {
             point.column = buffer.line_len(point.row);
         }
@@ -532,7 +554,7 @@ impl Motions for Selection<Anchor> {
         let text = buffer.row_text(point.row);
         let previous_column = point.column;
         if let Some(word) = text.as_str().find_previous_word_end(point.column as usize) {
-            point.column = (word.1 - 1) as u32;
+            point.column = previous_char_boundary(&text, word.1) as u32;
         } else {
             point.column = 0;
         }
@@ -592,7 +614,7 @@ impl Motions for Selection<Anchor> {
         let mut point = self.head().to_point(buffer);
         let text = buffer.row_text(point.row);
         if let Some(word) = text.as_str().find_next_big_word_end(point.column as usize) {
-            point.column = (word.1 - 1) as u32;
+            point.column = previous_char_boundary(&text, word.1) as u32;
         } else {
             point.column = text.len() as u32;
         }
@@ -614,7 +636,7 @@ impl Motions for Selection<Anchor> {
             .as_str()
             .find_previous_big_word_end(point.column as usize)
         {
-            point.column = (word.1 - 1) as u32;
+            point.column = previous_char_boundary(&text, word.1) as u32;
         } else {
             point.column = 0;
         }
@@ -1130,6 +1152,13 @@ mod tests {
         assert!(selections.has_similar_cursor(&selection(&buffer, 1, 1, 3, false), &buffer));
         assert!(selections.has_similar_cursor(&selection(&buffer, 1, 3, 1, false), &buffer));
         assert!(!selections.has_similar_cursor(&selection(&buffer, 1, 2, 4, false), &buffer));
+
+        selections
+            .selections
+            .push(selection(&buffer, 1, 3, 1, true));
+        selections.collapse_overlapping_cursors(&buffer);
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections.primary().id, 0);
     }
 
     #[test]
@@ -1193,6 +1222,35 @@ mod tests {
         };
         let result = cursor.move_within_character(true, 1, '{', &buffer);
         assert_eq!(result.text(&buffer), "hello");
+    }
+
+    #[test]
+    fn utf8_motions_never_slice_inside_a_character() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "α😀x café");
+        let cursor = selection(&buffer, 0, 0, 0, false);
+
+        let next = cursor.move_right_once(false, &buffer);
+        assert_eq!(next.head().to_point(&buffer), Point::new(0, 2));
+
+        let found = cursor.find_character(true, 1, 'x', true, false, &buffer);
+        assert_eq!(found.head().to_point(&buffer), Point::new(0, 6));
+
+        let previous = found.move_left_once(false, &buffer);
+        assert_eq!(previous.head().to_point(&buffer), Point::new(0, 2));
+    }
+
+    #[test]
+    fn utf8_word_end_stays_on_character_boundary() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "café тест");
+        let cursor = selection(&buffer, 0, 0, 0, false);
+
+        let end = cursor.move_to_word_end(false, &buffer);
+        assert_eq!(end.head().to_point(&buffer), Point::new(0, 3));
+        assert!(
+            buffer
+                .as_rope()
+                .is_char_boundary(end.head().to_point(&buffer).to_offset(&buffer))
+        );
     }
 
     #[test]

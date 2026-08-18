@@ -274,7 +274,10 @@ impl DisplayMap {
     pub fn sync_hot_window(&mut self, buffer: BufferSnapshot, buffer_window: Range<u32>) {
         if self.original_buffer.version == buffer.version
             && self.buffer_window == buffer_window
-            && self.wrap_map.snapshot().covers_exactly(buffer_window.clone())
+            && self
+                .wrap_map
+                .snapshot()
+                .covers_exactly(buffer_window.clone())
         {
             return;
         }
@@ -683,9 +686,8 @@ mod tests {
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "aéøbc");
         let display = DisplayMap::new(buffer.snapshot().clone(), Some(3)).snapshot();
 
-        assert_eq!(display.line_text(0), "aé");
-        assert_eq!(display.line_text(1), "øb");
-        assert_eq!(display.line_text(2), "c");
+        assert_eq!(display.line_text(0), "aéø");
+        assert_eq!(display.line_text(1), "bc");
     }
 
     #[test]

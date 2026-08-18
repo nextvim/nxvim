@@ -5,6 +5,7 @@ use vim_ui::{Rect, Renderer, View, WindowState};
 
 use crate::model::BufferState;
 use crate::view::globals::RenderGlobals;
+use unicode_width::UnicodeWidthChar;
 
 /// Renders one window's buffer content. Owns a small, cheap `vim_ui::TextView`
 /// model rebuilt each frame by `refresh` from the three data tiers (window
@@ -143,6 +144,7 @@ pub fn build_text(
             let byte_display_point = display_map::DisplayPoint::new(row, byte_column as u32);
             let orig_point = display_map_snapshot.display_point_to_point(byte_display_point);
             let char_len = character.len_utf8();
+
             byte_column += char_len;
 
             let is_utf8 = char_len > 1;
@@ -183,7 +185,7 @@ pub fn build_text(
             }
 
             if is_utf8 {
-                column_offset += 1;
+                column_offset += character.width().unwrap_or(1).saturating_sub(1);
             }
 
             if is_eol && !selection_state.selected_cell && !selection_state.at_cursor_head {
