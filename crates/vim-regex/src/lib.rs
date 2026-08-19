@@ -30,8 +30,9 @@ pub use fixture::{FIXTURE_SCHEMA_VERSION, Fixture, FixtureDocument, FixtureLoadE
 pub use hybrid::{HybridRegex, Match};
 
 /// A compiled Vim regular expression using the native Oniguruma translation path.
+#[derive(Debug, PartialEq)]
 pub struct Regex {
-    inner: HybridRegex,
+    pub inner: HybridRegex,
 }
 
 impl Regex {

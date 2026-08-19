@@ -1,3 +1,4 @@
+use onig::Regex;
 use text::{Point, ToOffset, ToPoint};
 use vim_input::Action;
 use vim_ui::{Ui, WindowId};
@@ -77,7 +78,10 @@ impl EditorHandler {
                                 model.search_pattern = None;
                                 model.search_regex = None;
                             } else {
-                                model.search_regex = onig::Regex::new(&pattern).ok();
+                                // model.search_regex =
+                                //     Regex::compile(&pattern, vim_regex::CompileOptions::default())
+                                //         .ok();
+                                model.search_regex = Regex::new(&pattern).ok();
                                 model.search_pattern = Some(pattern);
                             }
                         }

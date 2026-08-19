@@ -460,8 +460,9 @@ fn build_single_row_transforms(
         if cancellation.is_some_and(|c| c.is_cancelled()) {
             return false;
         }
-        let input_width = ch.len_utf8() as u32;
-        let display_width = ch.width().unwrap_or(0) as u32;
+        let mut input_width = ch.len_utf8() as u32;
+        let mut display_width = ch.width().unwrap_or(0) as u32;
+
         if ch == '\t' {
             let mut tab_width = tab_size - (visual_column % tab_size);
             if let Some(width) = width

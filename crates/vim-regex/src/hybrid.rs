@@ -22,6 +22,7 @@ pub struct Match {
     pub external_captures: Vec<Option<Range<usize>>>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct HybridRegex {
     regex: Regex,
     plan: BackendPlan,

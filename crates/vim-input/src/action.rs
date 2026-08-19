@@ -318,6 +318,12 @@ pub enum Action {
     SearchBackward {
         count: u32,
     },
+    SearchWordUnderForward {
+        count: u32,
+    },
+    SearchWordUnderBackward {
+        count: u32,
+    },
 
     // OPT+MOTION
     DeleteMotion {
@@ -521,6 +527,12 @@ impl std::fmt::Display for Action {
             Action::MoveToColumn { count } => write!(f, "MoveToColumn({})", count),
             Action::SearchForward { count } => write!(f, "SearchForward {}", count),
             Action::SearchBackward { count } => write!(f, "SearchBackward {}", count),
+            Action::SearchWordUnderForward { count } => {
+                write!(f, "SearchWordUnderForward {}", count)
+            }
+            Action::SearchWordUnderBackward { count } => {
+                write!(f, "SearchWordUnderBackward {}", count)
+            }
             Action::StandBy { count, .. } => write!(f, "StandBy({})", count),
             Action::MoveLeft { count, .. } => write!(f, "MoveLeft({})", count),
             Action::MoveRight { count, .. } => write!(f, "MoveRight({})", count),
@@ -911,6 +923,8 @@ impl Action {
             Action::MoveToColumn { .. } => Action::MoveToColumn { count },
             Action::SearchForward { .. } => Action::SearchForward { count },
             Action::SearchBackward { .. } => Action::SearchBackward { count },
+            Action::SearchWordUnderForward { .. } => Action::SearchWordUnderForward { count },
+            Action::SearchWordUnderBackward { .. } => Action::SearchWordUnderBackward { count },
             Action::StandBy { .. } => Action::StandBy {
                 count,
                 select: false,
@@ -1081,6 +1095,8 @@ impl Action {
             Action::MoveToColumn { count } => *count,
             Action::SearchForward { count } => *count,
             Action::SearchBackward { count } => *count,
+            Action::SearchWordUnderForward { count } => *count,
+            Action::SearchWordUnderBackward { count } => *count,
             Action::MoveLeft { count, .. } => *count,
             Action::MoveRight { count, .. } => *count,
             Action::MoveUp { count, .. } => *count,

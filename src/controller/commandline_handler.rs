@@ -1,3 +1,4 @@
+use onig::Regex;
 use text::{Point, ToOffset, ToPoint};
 use vim_input::{Action, Mode};
 use vim_ui::{Ui, WindowId};
@@ -87,10 +88,14 @@ impl CommandlineHandler {
                 if let Some(command) = Self::current_command(ui, model, active_window) {
                     if command.starts_with('/') || command.starts_with('?') {
                         let pattern = command[1..].to_string();
-                        model.search_regex = onig::Regex::new(&pattern).ok();
+                        // model.search_regex =
+                        //     Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                        model.search_regex = Regex::new(&pattern).ok();
                         model.search_pattern = Some(pattern);
                     } else if model.commandline_mode == '/' || model.commandline_mode == '?' {
-                        model.search_regex = onig::Regex::new(&command).ok();
+                        // model.search_regex =
+                        //     Regex::compile(&command, vim_regex::CompileOptions::default()).ok();
+                        model.search_regex = Regex::new(&command).ok();
                         model.search_pattern = Some(command.clone());
                     }
                     let cmd_to_execute = if command.starts_with(':')

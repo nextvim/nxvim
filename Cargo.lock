@@ -2982,10 +2982,10 @@ name = "vim-buffer"
 version = "0.1.0"
 dependencies = [
  "clock",
- "onig",
  "proptest",
  "sum_tree",
  "text",
+ "vim-regex",
 ]
 
 [[package]]
