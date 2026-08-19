@@ -39,8 +39,7 @@ impl View for TextView {
         for viewport_row in 0..height {
             renderer.move_to(area.x, area.y + viewport_row)?;
             renderer.set_style(model.default_style)?;
-            renderer.print(&" ".repeat(width as usize))?;
-
+            // renderer.print(&" ".repeat(width as usize))?;
             let Some(row) = model.rows.get(viewport_row as usize) else {
                 draw_scrollbar(renderer, area, model.scrollbar, viewport_row, height)?;
                 continue;

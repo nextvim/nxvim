@@ -70,11 +70,30 @@ impl Services {
         background_workers.add_worker("highlight");
         background_workers.add_worker("treesitter");
         background_workers.add_worker("indexer");
+
+        let mut macros = macros::MacroRecorder::new();
+        macros.begin("*");
+        macros.record(vim_input::Action::SetToVisual, None);
+        macros.record(
+            vim_input::Action::MoveWithinCharacter { count: 1, ch: 'w' },
+            None,
+        );
+        macros.record(vim_input::Action::SetToCommandSearchForward, None);
+        macros.end();
+        macros.begin("#");
+        macros.record(vim_input::Action::SetToVisual, None);
+        macros.record(
+            vim_input::Action::MoveWithinCharacter { count: 1, ch: 'w' },
+            None,
+        );
+        macros.record(vim_input::Action::SetToCommandSearchBackward, None);
+        macros.end();
+
         Self {
             background_workers,
             clipboard: clipboard::Clipboard::new(),
             indexer: indexer::Indexer::new(),
-            macros: macros::MacroRecorder::new(),
+            macros,
             treesitter: treesitter::TreeSitterService::new(),
             raw_results: Vec::new(),
             task_metadata: Mutex::new(HashMap::new()),

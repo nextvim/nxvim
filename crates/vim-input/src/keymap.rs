@@ -753,6 +753,13 @@ impl Keymap {
             .bind("<Esc>", Action::Clear)
             .expect("Valid binding");
 
+        normal_actions
+            .bind("*", Action::SearchWordUnderForward { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("#", Action::SearchWordUnderBackward { count: 1 })
+            .expect("Valid binding");
+
         // Mode Change
         mode_actions
             .bind("i", Action::SetToInsert)

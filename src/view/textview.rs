@@ -112,16 +112,16 @@ pub fn build_text(
 
         let mut match_ranges = Vec::<(usize, usize)>::new();
         if let Some(regex) = search_regex {
-            let matches = line.find_pattern(regex);
-            match_ranges = matches
-                .iter()
-                .map(|(byte_start, byte_len, _)| {
-                    let byte_end = *byte_start + *byte_len;
-                    let start_char = line[..*byte_start].chars().count();
-                    let end_char = line[..byte_end].chars().count();
-                    (start_char, end_char)
-                })
-                .collect();
+            // let matches = line.find_pattern(regex);
+            // match_ranges = matches
+            //     .iter()
+            //     .map(|(byte_start, byte_len, _)| {
+            //         let byte_end = *byte_start + *byte_len;
+            //         let start_char = line[..*byte_start].chars().count();
+            //         let end_char = line[..byte_end].chars().count();
+            //         (start_char, end_char)
+            //     })
+            //     .collect();
         }
 
         let mut gutter_text = if window.show_gutter {
@@ -133,7 +133,8 @@ pub fn build_text(
             gutter_text = " ".repeat(gutter_text.len());
         }
         prev_row = buffer_row + 1;
-        let cursor_offset = gutter_text.len() as u32;
+        let gutter_width = gutter_text.len() as u32;
+        let cursor_offset = gutter_width as u32;
 
         let default_style = vim_ui::Style::default();
         let gutter_style = default_style.clone();
@@ -149,9 +150,10 @@ pub fn build_text(
 
         let mut byte_column = 0;
         let mut display_column = 0u32;
-        for (char_index, character) in line.chars().enumerate() {
-            let char_len = character.len_utf8();
-            let char_width = character.width().unwrap_or(1) as u32;
+        for (char_index, mut character) in line.chars().enumerate() {
+            let mut char_len = character.len_utf8();
+            let mut char_width = character.width().unwrap_or(1) as u32;
+
             let current_display_column = display_column;
             let is_eol = byte_column + char_len == line_len;
             byte_column += char_len;

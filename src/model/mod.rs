@@ -9,6 +9,7 @@
 mod buffer_state;
 mod buffers;
 
+use onig::Regex;
 use vim_buffer::BufferId;
 
 pub use buffer_state::BufferState;
@@ -21,7 +22,7 @@ pub struct EditorModel {
     commandline_buffer: BufferId,
     pub commandline_mode: char,
     pub search_pattern: Option<String>,
-    pub search_regex: Option<onig::Regex>,
+    pub search_regex: Option<Regex>,
 }
 
 impl EditorModel {

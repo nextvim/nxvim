@@ -1,12 +1,12 @@
 use crate::movement::Motions;
 use crate::search::compile;
 use crate::{BufferError, SelectionId};
-use onig::Regex;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::Arc;
 use sum_tree::Bias;
 use text::{Anchor, Buffer, Point, Selection, SelectionGoal, ToOffset, ToPoint};
+use vim_regex::Regex;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SelectionCellState {

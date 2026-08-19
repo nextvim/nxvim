@@ -1,7 +1,9 @@
-use onig::Regex;
+// use onig::Regex;
+use vim_regex::{CompileOptions, Regex};
 
 pub fn compile(pattern: &str) -> Option<Regex> {
-    Regex::new(pattern).ok()
+    // Regex::new(pattern).ok()
+    Regex::compile(pattern, CompileOptions::default()).ok()
 }
 
 pub trait TextSearch {
@@ -74,13 +76,27 @@ impl TextSearch for str {
         let mut offset = 0;
 
         while offset < self.len() {
-            let Some(caps) = regex.captures(&self[offset..]) else {
+            // let Some(caps) = regex.captures(&self[offset..]) else {
+            let Ok(Some(found)) = regex.find(&self[offset..]) else {
                 break;
             };
 
-            let Some((start, end)) = caps.pos(0) else {
+            let mut start = 0;
+            let mut end = 0;
+            for (index, range) in found.captures.iter().enumerate().skip(1) {
+                match range {
+                    Some(range) => {
+                        start = range.start;
+                        end = range.end;
+                        break;
+                    }
+                    None => break,
+                }
+            }
+
+            if start == 0 && end == 0 {
                 break;
-            };
+            }
 
             let abs_start = offset + start;
             let abs_end = offset + end;

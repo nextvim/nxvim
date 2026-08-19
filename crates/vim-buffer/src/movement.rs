@@ -1,8 +1,8 @@
 use crate::search::{TextSearch, compile};
-use onig::Regex;
 use std::cmp::Ordering;
 use sum_tree::Bias;
 use text::{Anchor, Buffer, Point, Selection, SelectionGoal, ToOffset, ToPoint};
+use vim_regex::Regex;
 
 pub trait BufferText {
     fn row_text(&self, row: u32) -> String;
