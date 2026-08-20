@@ -8,7 +8,7 @@ pub struct RenderGlobals<'a> {
     pub mode: vim_input::Mode,
     pub status_message: Option<&'a str>,
     pub search_pattern: Option<&'a str>,
-    pub search_regex: Option<&'a onig::Regex>,
+    pub search_regex: Option<&'a vim_regex::Regex>,
     pub colorscheme: Option<&'a vim_ui::ColorScheme>,
 }
 
