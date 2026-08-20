@@ -266,6 +266,16 @@ impl Runtime {
             )
             .unwrap_or_else(|| display_map_snapshot.buffer_snapshot().max_point().row);
 
+        let colorscheme = self.app.colorscheme.as_ref();
+        let fallback_colorscheme;
+        let cs_ref = match colorscheme {
+            Some(cs) => cs,
+            None => {
+                fallback_colorscheme = vim_colorscheme::ColorScheme::load_default();
+                &fallback_colorscheme
+            }
+        };
+
         let highlights = &mut self.app.model.buffer_state_mut(buffer_id)?.highlights;
         textmate::highlight_run(
             highlights,
@@ -276,6 +286,8 @@ impl Runtime {
             expand_before,
             expand_after,
             self.app.highlighter.as_ref(),
+            cs_ref,
+            false,
         );
 
         Some(())
