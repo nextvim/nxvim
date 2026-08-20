@@ -775,7 +775,7 @@ mod tests {
 
         // 1. Set some active search state
         app.model.search_pattern = Some("test_pattern".to_string());
-        app.model.search_regex = onig::Regex::new("test_pattern").ok();
+        app.model.search_regex = vim_regex::Regex::compile("test_pattern", vim_regex::CompileOptions::default()).ok();
 
         assert_eq!(app.model.search_pattern.as_deref(), Some("test_pattern"));
         assert!(app.model.search_regex.is_some());
@@ -787,5 +787,53 @@ mod tests {
         assert_eq!(app.model.search_pattern, None);
         assert!(app.model.search_regex.is_none());
         assert!(outcome.redraw);
+    }
+
+    #[test]
+    fn test_show_matches_commandline() {
+        let mut app = app();
+        
+        // Initially show_matches should be true
+        let active_win = app.ui.focus_manager().focused_id();
+        assert!(app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
+
+        // 1. Trigger command line mode (SetToCommand)
+        Dispatcher::dispatch(&mut app, Command::Editor {
+            action: Action::SetToCommand,
+            register: None,
+        });
+        let commandline = app.view_ids.commandline;
+        let _ = app.ui.focus(commandline);
+
+        // 2. Type "show_matches=false"
+        Dispatcher::dispatch(&mut app, Command::Editor {
+            action: Action::InsertText("show_matches=false".to_string()),
+            register: None,
+        });
+
+        // 3. Submit command (InsertNewLine)
+        Dispatcher::dispatch(&mut app, Command::Editor {
+            action: Action::InsertNewLine { count: 1 },
+            register: None,
+        });
+
+        // 4. Verify that show_matches is false on the main/previously active window
+        assert!(!app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
+
+        // 5. Turn it back on via "set show_matches=true"
+        Dispatcher::dispatch(&mut app, Command::Editor {
+            action: Action::SetToCommand,
+            register: None,
+        });
+        let _ = app.ui.focus(commandline);
+        Dispatcher::dispatch(&mut app, Command::Editor {
+            action: Action::InsertText("set show_matches=true".to_string()),
+            register: None,
+        });
+        Dispatcher::dispatch(&mut app, Command::Editor {
+            action: Action::InsertNewLine { count: 1 },
+            register: None,
+        });
+        assert!(app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
     }
 }

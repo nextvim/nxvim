@@ -34,13 +34,20 @@ impl CommandLineView {
         globals: &RenderGlobals,
     ) {
         let content_rect = content_rect(inner_rect);
+        let globals_no_search = RenderGlobals {
+            mode: globals.mode,
+            status_message: globals.status_message,
+            search_pattern: None,
+            search_regex: None,
+            colorscheme: globals.colorscheme,
+        };
         self.inner.refresh(
             buffer,
             window_state,
             buffer_state,
             content_rect,
             active,
-            globals,
+            &globals_no_search,
         );
     }
 }

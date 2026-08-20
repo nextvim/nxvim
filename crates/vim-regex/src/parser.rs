@@ -284,8 +284,20 @@ impl<'a> Parser<'a> {
             TokenKind::Any => Expr::Dot {
                 include_newline: false,
             },
-            TokenKind::StartOfLine => Expr::Anchor(Anchor::StartOfLine),
-            TokenKind::EndOfLine => Expr::Anchor(Anchor::EndOfLine),
+            TokenKind::StartOfLine => {
+                if self.is_start_of_line_anchor() {
+                    Expr::Anchor(Anchor::StartOfLine)
+                } else {
+                    Expr::Literal("^".to_string())
+                }
+            }
+            TokenKind::EndOfLine => {
+                if self.is_end_of_line_anchor() {
+                    Expr::Anchor(Anchor::EndOfLine)
+                } else {
+                    Expr::Literal("$".to_string())
+                }
+            }
             TokenKind::MagicSwitch(mode) => Expr::MagicSwitch(mode),
             TokenKind::GroupOpen => {
                 let index = self.allocate_capture(span.clone())?;
@@ -591,6 +603,37 @@ impl<'a> Parser<'a> {
         let index = self.next_external_capture;
         self.next_external_capture += 1;
         Ok(index)
+    }
+
+    fn is_start_of_line_anchor(&self) -> bool {
+        if self.cursor <= 1 {
+            return true;
+        }
+        let mut idx = self.cursor - 1;
+        while idx > 0 {
+            idx -= 1;
+            match &self.tokens[idx].kind {
+                TokenKind::MagicSwitch(_) => continue,
+                TokenKind::Escaped('c' | 'C' | 'Z') => continue,
+                TokenKind::Alternation | TokenKind::GroupOpen => return true,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn is_end_of_line_anchor(&self) -> bool {
+        let mut idx = self.cursor;
+        while idx < self.tokens.len() {
+            match &self.tokens[idx].kind {
+                TokenKind::MagicSwitch(_) => {}
+                TokenKind::Escaped('c' | 'C' | 'Z') => {}
+                TokenKind::Alternation | TokenKind::GroupClose => return true,
+                _ => return false,
+            }
+            idx += 1;
+        }
+        true
     }
 
     fn at(&self, predicate: impl FnOnce(&TokenKind) -> bool) -> bool {

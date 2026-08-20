@@ -38,6 +38,7 @@ impl App {
             .and_then(vim_ui::Window::window_state_mut)
         {
             window_state.set_show_gutter(false);
+            window_state.show_matches = false;
         }
 
         let mut app = Self {
