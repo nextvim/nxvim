@@ -1,24 +1,5 @@
 use crate::WindowId;
-use crossterm::style::Color as CrossColor;
-
-impl From<Color> for CrossColor {
-    fn from(color: Color) -> Self {
-        match color {
-            Color::Reset => CrossColor::Reset,
-            Color::Black => CrossColor::Black,
-            Color::Red => CrossColor::Red,
-            Color::Green => CrossColor::Green,
-            Color::Yellow => CrossColor::Yellow,
-            Color::Blue => CrossColor::Blue,
-            Color::Magenta => CrossColor::Magenta,
-            Color::Cyan => CrossColor::Cyan,
-            Color::White => CrossColor::White,
-            Color::Grey => CrossColor::Grey,
-            Color::DarkGrey => CrossColor::DarkGrey,
-            Color::Rgb(r, g, b) => CrossColor::Rgb { r, g, b },
-        }
-    }
-}
+pub use vim_colorscheme::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitAxis {
@@ -40,21 +21,6 @@ pub enum SizeConstraint {
     Percentage(f32),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Color {
-    Reset,
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-    Grey,
-    DarkGrey,
-    Rgb(u8, u8, u8),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {

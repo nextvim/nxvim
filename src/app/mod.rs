@@ -17,6 +17,8 @@ pub struct App {
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
     pub command_queue: std::collections::VecDeque<crate::controller::Command>,
+    pub colorscheme: Option<vim_colorscheme::ColorScheme>,
+    pub highlighter: Option<textmate::Highlighter<'static>>,
 }
 
 impl App {
@@ -41,6 +43,9 @@ impl App {
             window_state.show_matches = false;
         }
 
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
+        let highlighter = textmate::load_colorscheme(&colorscheme);
+
         let mut app = Self {
             model,
             controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
@@ -49,8 +54,11 @@ impl App {
             ui,
             view_ids,
             command_queue: std::collections::VecDeque::new(),
+            colorscheme: Some(colorscheme),
+            highlighter: Some(highlighter),
         };
 
+        app.ui.set_colorscheme(app.colorscheme.clone());
         app.init(args.pre_config_cmds, args.post_config_cmds);
         app
     }

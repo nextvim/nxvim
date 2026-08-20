@@ -275,6 +275,7 @@ impl Runtime {
             end_row,
             expand_before,
             expand_after,
+            self.app.highlighter.as_ref(),
         );
 
         Some(())
@@ -456,6 +457,7 @@ impl Runtime {
     /// Rebuilds every window's owned rendering model from window state,
     /// buffer state, and `RenderGlobals`, immediately before the draw pass.
     fn refresh_views(&mut self, layout: &LayoutSnapshot) {
+        self.app.ui.set_colorscheme(self.app.colorscheme.clone());
         let colorscheme = self.app.ui.colorscheme().cloned();
         let globals = RenderGlobals {
             mode: self.app.controller.mode(),

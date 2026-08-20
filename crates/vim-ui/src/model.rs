@@ -1,3 +1,5 @@
+use crate::Style;
+
 /// A position in the already-laid-out viewport grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DisplayPosition {
@@ -19,11 +21,11 @@ pub enum DisplayRowKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextSpan {
     pub text: String,
-    pub style: crate::colorscheme::Style,
+    pub style: Style,
 }
 
 impl TextSpan {
-    pub fn new(text: impl Into<String>, style: crate::colorscheme::Style) -> Self {
+    pub fn new(text: impl Into<String>, style: Style) -> Self {
         Self {
             text: text.into(),
             style,
@@ -35,7 +37,7 @@ impl TextSpan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GutterCell {
     pub text: String,
-    pub style: crate::colorscheme::Style,
+    pub style: Style,
 }
 
 /// One row in the visible, wrapped and folded presentation of a document.
@@ -47,7 +49,7 @@ pub struct DisplayRow {
     pub gutter: Option<GutterCell>,
     pub spans: Vec<TextSpan>,
     /// Style used to clear unused cells through the end of the viewport row.
-    pub fill_style: crate::colorscheme::Style,
+    pub fill_style: Style,
 }
 
 /// A selection in display coordinates. Ranges are half-open and may cross rows.
@@ -55,7 +57,7 @@ pub struct DisplayRow {
 pub struct DisplaySelection {
     pub start: DisplayPosition,
     pub end: DisplayPosition,
-    pub style: crate::colorscheme::Style,
+    pub style: Style,
 }
 
 /// Cursor shape requested by a text view.
@@ -84,9 +86,9 @@ pub struct ScrollbarModel {
     pub first_visible_row: u32,
     pub visible_rows: u32,
     pub cursor_row: Option<u32>,
-    pub track_style: crate::colorscheme::Style,
-    pub thumb_style: crate::colorscheme::Style,
-    pub cursor_style: Option<crate::colorscheme::Style>,
+    pub track_style: Style,
+    pub thumb_style: Style,
+    pub cursor_style: Option<Style>,
 }
 
 /// Complete render snapshot for one editor or command-line window.
@@ -102,7 +104,7 @@ pub struct TextViewModel {
     pub selections: Vec<DisplaySelection>,
     pub cursor: Option<TextCursor>,
     pub scrollbar: Option<ScrollbarModel>,
-    pub default_style: crate::colorscheme::Style,
+    pub default_style: Style,
 }
 
 impl TextViewModel {
@@ -216,26 +218,26 @@ mod text_model_tests {
                     kind: DisplayRowKind::Buffer,
                     gutter: Some(GutterCell {
                         text: " 5 ".into(),
-                        style: crate::colorscheme::Style::default(),
+                        style: Style::default(),
                     }),
                     spans: vec![TextSpan::new(
                         "fn main()",
-                        crate::colorscheme::Style::default(),
+                        Style::default(),
                     )],
-                    fill_style: crate::colorscheme::Style::default(),
+                    fill_style: Style::default(),
                 },
                 DisplayRow {
                     buffer_row: Some(4),
                     kind: DisplayRowKind::WrappedContinuation,
                     gutter: None,
-                    spans: vec![TextSpan::new(" {", crate::colorscheme::Style::default())],
-                    fill_style: crate::colorscheme::Style::default(),
+                    spans: vec![TextSpan::new(" {", Style::default())],
+                    fill_style: Style::default(),
                 },
             ],
             selections: vec![DisplaySelection {
                 start: DisplayPosition { row: 0, column: 3 },
                 end: DisplayPosition { row: 1, column: 1 },
-                style: crate::colorscheme::Style::default(),
+                style: Style::default(),
             }],
             cursor: Some(TextCursor {
                 position: DisplayPosition { row: 1, column: 1 },
@@ -247,11 +249,11 @@ mod text_model_tests {
                 first_visible_row: 4,
                 visible_rows: 2,
                 cursor_row: Some(4),
-                track_style: crate::colorscheme::Style::default(),
-                thumb_style: crate::colorscheme::Style::default(),
+                track_style: Style::default(),
+                thumb_style: Style::default(),
                 cursor_style: None,
             }),
-            default_style: crate::colorscheme::Style::default(),
+            default_style: Style::default(),
         }
     }
 

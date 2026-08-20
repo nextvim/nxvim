@@ -7,6 +7,7 @@ edition = "2024"
 rope = { path = "../zed/crates/rope" }
 text = { path = "../zed/crates/text" }
 syntect = { git = "https://github.com/trishume/syntect" }
+vim-colorscheme = { path = "../vim-colorscheme" }
 
 [dev-dependencies]
 clock = { path = "../zed/crates/clock" }
