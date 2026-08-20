@@ -99,7 +99,7 @@ pub fn build_text(
 
     let mut prev_row = 0;
     for row in start_row..end_row {
-        let line = display_map_snapshot.line_text(row) + " ";
+        let line = display_map_snapshot.line_text(row).clone() + " ";
         let buffer_row = match display_map_snapshot.try_buffer_row_for_display_row(row) {
             Some(r) => r,
             None => continue,
@@ -111,17 +111,20 @@ pub fn build_text(
         let mut highlight_index = 0;
 
         let mut match_ranges = Vec::<(usize, usize)>::new();
-        if let Some(regex) = search_regex {
-            let matches = line.find_pattern(regex);
-            match_ranges = matches
-                .iter()
-                .map(|(byte_start, byte_len, _)| {
-                    let byte_end = *byte_start + *byte_len;
-                    let start_char = line[..*byte_start].chars().count();
-                    let end_char = line[..byte_end].chars().count();
-                    (start_char, end_char)
-                })
-                .collect();
+        if window.show_matches {
+            if let Some(regex) = search_regex {
+                let line_text = line.trim();
+                let matches = line_text.find_pattern(regex);
+                match_ranges = matches
+                    .iter()
+                    .map(|(byte_start, byte_len, _)| {
+                        let byte_end = *byte_start + *byte_len;
+                        let start_char = line_text[..*byte_start].chars().count();
+                        let end_char = line_text[..byte_end].chars().count();
+                        (start_char, end_char)
+                    })
+                    .collect();
+            }
         }
 
         let mut gutter_text = if window.show_gutter {
@@ -215,6 +218,7 @@ pub fn build_text(
                 }
             } else if in_match {
                 style.bg = search_style.bg;
+                style.fg = search_style.fg;
             }
 
             if let Some(line_highlights) = line_highlights {
@@ -428,7 +432,7 @@ mod tests {
         let mut window_state = WindowState::new(&buffer, Viewport::default());
         window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
 
-        let regex = onig::Regex::new("next").unwrap();
+        let regex = vim_regex::Regex::compile("next", vim_regex::CompileOptions::default()).unwrap();
         let model = build_text(
             &buffer,
             &window_state,

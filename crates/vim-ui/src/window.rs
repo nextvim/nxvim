@@ -63,6 +63,7 @@ pub struct WindowState {
     pub viewport: Viewport,
     pub pending_display_map: Option<(display_map::DisplayMapGeneration, Range<u32>)>,
     pub show_gutter: bool,
+    pub show_matches: bool,
     pub folds: Vec<display_map::Fold>,
 }
 
@@ -71,7 +72,7 @@ impl WindowState {
         let snapshot = buffer.snapshot().as_inner().clone();
         let mut selections = vim_buffer::SelectionSet::new();
         selections.add(buffer.as_text_buffer(), 0);
-        Self::from_parts(buffer.id(), snapshot, selections, viewport, true)
+        Self::from_parts(buffer.id(), snapshot, selections, viewport, true, true)
     }
 
     pub fn placeholder(buffer: &vim_buffer::Buffer) -> Self {
@@ -87,6 +88,7 @@ impl WindowState {
             viewport: Viewport::default(),
             pending_display_map: None,
             show_gutter: true,
+            show_matches: true,
             folds: Vec::new(),
         }
     }
@@ -171,6 +173,7 @@ impl WindowState {
         selections: vim_buffer::SelectionSet,
         viewport: Viewport,
         show_gutter: bool,
+        show_matches: bool,
     ) -> Self {
         let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border, show_gutter);
         let cursor_row = selections.primary().head().to_point(&snapshot).row;
@@ -191,6 +194,7 @@ impl WindowState {
             viewport,
             pending_display_map: None,
             show_gutter,
+            show_matches,
             folds: Vec::new(),
         }
     }

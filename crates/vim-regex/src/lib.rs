@@ -113,6 +113,29 @@ mod public_api_tests {
     }
 
     #[test]
+    fn supports_word_boundary_anchors() {
+        let regex = Regex::compile(r"\<word\>", CompileOptions::default()).unwrap();
+        assert_eq!(regex.find("sword word!").unwrap().unwrap().range, 6..10);
+    }
+
+    #[test]
+    fn supports_line_anchors() {
+        let regex = Regex::compile(r"^foo$", CompileOptions::default()).unwrap();
+        assert_eq!(regex.find("foo").unwrap().unwrap().range, 0..3);
+        assert_eq!(regex.find("bar\nfoo\nbaz").unwrap().unwrap().range, 4..7);
+
+        let regex = Regex::compile(r"^---$", CompileOptions::default()).unwrap();
+        assert_eq!(regex.find("---").unwrap().unwrap().range, 0..3);
+
+        let regex = Regex::compile(r"foo$bar", CompileOptions::default()).unwrap();
+        assert_eq!(regex.find("foo$bar").unwrap().unwrap().range, 0..7);
+
+        let regex = Regex::compile(r"^pub$", CompileOptions::default()).unwrap();
+        assert_eq!(regex.find("pub\n").unwrap().unwrap().range, 0..3);
+        assert_eq!(regex.find("pub ... \npub").unwrap().unwrap().range, 9..12);
+    }
+
+    #[test]
     fn adjusts_vim_match_boundaries_through_the_public_api() {
         let regex = Regex::compile(r"abc\zsdd", CompileOptions::default()).unwrap();
         let found = regex.find("ddabcddxyzt").unwrap().unwrap();

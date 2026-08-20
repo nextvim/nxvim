@@ -63,6 +63,9 @@ fn analyze(root: &Spanned<Expr>) -> Analysis {
             Expr::Position(_) | Expr::MatchBoundary(_) => {
                 analysis.needs_match_context = true;
             }
+            Expr::Anchor(ast::Anchor::StartOfWord | ast::Anchor::EndOfWord) => {
+                analysis.needs_match_context = true;
+            }
             Expr::Composing(ast::ComposingAtom::IgnoreFollowing) => {
                 analysis.ignore_composing = true;
             }
@@ -109,11 +112,15 @@ impl Lowerer<'_> {
                 Expr::Collection(collection) => self.with_composing_marks(ir::Expr::CharacterSet(
                     lower_collection(collection, &expression.span)?,
                 )),
-                Expr::Anchor(anchor @ (ast::Anchor::StartOfWord | ast::Anchor::EndOfWord)) => {
-                    return Err(unsupported(
-                        expression,
-                        format!("Vim keyword boundary `{anchor:?}` requires option-aware lowering"),
-                    ));
+                Expr::Anchor(ast::Anchor::StartOfWord) => {
+                    ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(
+                        ir::KeywordBoundary::Start,
+                    ))
+                }
+                Expr::Anchor(ast::Anchor::EndOfWord) => {
+                    ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(
+                        ir::KeywordBoundary::End,
+                    ))
                 }
                 Expr::Anchor(anchor) => ir::Expr::Anchor(*anchor),
                 Expr::Position(position) => {
@@ -530,11 +537,29 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_nodes_during_lowering() {
-        for source in [r"\<word", r"\%#=1"] {
+        for source in [r"\%#=1"] {
             let pattern = parse(source, MagicMode::Magic).unwrap();
             let error = lower(&pattern, &CompileOptions::default()).unwrap_err();
             assert_eq!(error.diagnostics[0].kind, DiagnosticKind::Unsupported);
             assert_eq!(error.diagnostics[0].phase, Phase::Lower);
         }
+    }
+
+    #[test]
+    fn lowers_word_boundary_anchors() {
+        let program = lower_source(r"\<word\>");
+        assert!(program.needs_match_context);
+        let ir::Expr::Concat(parts) = program.expression else {
+            panic!("expected concat")
+        };
+        assert_eq!(parts.len(), 6);
+        assert!(matches!(
+            parts[0],
+            ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(ir::KeywordBoundary::Start))
+        ));
+        assert!(matches!(
+            parts[5],
+            ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(ir::KeywordBoundary::End))
+        ));
     }
 }
