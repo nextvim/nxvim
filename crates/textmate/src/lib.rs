@@ -83,9 +83,194 @@ fn highlight_theme() -> &'static Theme {
 
 pub use syntect::highlighting::Highlighter;
 
+pub const SCOPE_MAPPINGS: &[(&str, &str)] = &[
+    ("comment", "comment"),
+    ("string", "string"),
+    ("constant", "constant"),
+    ("keyword", "keyword"),
+    ("storage", "keyword"),
+    ("entity.name.function", "function"),
+    ("variable", "variable"),
+    ("support.type", "type"),
+];
+
+pub fn map_scope_to_style(
+    scopes: &[syntect::parsing::Scope],
+    colorscheme: &vim_colorscheme::ColorScheme,
+) -> vim_colorscheme::Style {
+    let mut resolved_style = vim_colorscheme::Style {
+        fg: colorscheme.foreground,
+        bg: colorscheme.background,
+        bold: false,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+    };
+
+    'outer: for scope in scopes.iter().rev() {
+        let scope_str = scope.to_string();
+
+        for &(pattern, key) in SCOPE_MAPPINGS {
+            if scope_str.contains(pattern) {
+                if let Some(style) = colorscheme.get_style(key) {
+                    resolved_style = style.clone();
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    resolved_style
+}
+
+fn color_to_rgb_array(color: vim_colorscheme::Color) -> [u8; 3] {
+    match color {
+        vim_colorscheme::Color::Rgb(r, g, b) => [r, g, b],
+        vim_colorscheme::Color::Black => [0, 0, 0],
+        vim_colorscheme::Color::White => [255, 255, 255],
+        vim_colorscheme::Color::Grey => [128, 128, 128],
+        vim_colorscheme::Color::DarkGrey => [64, 64, 64],
+        vim_colorscheme::Color::Red => [255, 0, 0],
+        vim_colorscheme::Color::Green => [0, 255, 0],
+        vim_colorscheme::Color::Blue => [0, 0, 255],
+        vim_colorscheme::Color::Yellow => [255, 255, 0],
+        vim_colorscheme::Color::Magenta => [255, 0, 255],
+        vim_colorscheme::Color::Cyan => [0, 255, 255],
+        vim_colorscheme::Color::Reset => [255, 255, 255],
+    }
+}
+
 pub fn load_colorscheme(colorscheme: &vim_colorscheme::ColorScheme) -> Highlighter<'static> {
     let is_dark = colorscheme.is_dark();
-    Highlighter::new(get_theme(is_dark))
+    let mut theme = get_theme(is_dark).clone();
+
+    let mut colors = Vec::new();
+    let mut add_color = |c: vim_colorscheme::Color| {
+        match c {
+            vim_colorscheme::Color::Rgb(r, g, b) => {
+                colors.push(syntect::highlighting::Color { r, g, b, a: 255 });
+            }
+            vim_colorscheme::Color::Black => {
+                colors.push(syntect::highlighting::Color { r: 0, g: 0, b: 0, a: 255 });
+            }
+            vim_colorscheme::Color::White => {
+                colors.push(syntect::highlighting::Color { r: 255, g: 255, b: 255, a: 255 });
+            }
+            vim_colorscheme::Color::Grey => {
+                colors.push(syntect::highlighting::Color { r: 128, g: 128, b: 128, a: 255 });
+            }
+            vim_colorscheme::Color::DarkGrey => {
+                colors.push(syntect::highlighting::Color { r: 64, g: 64, b: 64, a: 255 });
+            }
+            vim_colorscheme::Color::Red => {
+                colors.push(syntect::highlighting::Color { r: 255, g: 0, b: 0, a: 255 });
+            }
+            vim_colorscheme::Color::Green => {
+                colors.push(syntect::highlighting::Color { r: 0, g: 255, b: 0, a: 255 });
+            }
+            vim_colorscheme::Color::Blue => {
+                colors.push(syntect::highlighting::Color { r: 0, g: 0, b: 255, a: 255 });
+            }
+            vim_colorscheme::Color::Yellow => {
+                colors.push(syntect::highlighting::Color { r: 255, g: 255, b: 0, a: 255 });
+            }
+            vim_colorscheme::Color::Magenta => {
+                colors.push(syntect::highlighting::Color { r: 255, g: 0, b: 255, a: 255 });
+            }
+            vim_colorscheme::Color::Cyan => {
+                colors.push(syntect::highlighting::Color { r: 0, g: 255, b: 255, a: 255 });
+            }
+            vim_colorscheme::Color::Reset => {}
+        }
+    };
+
+    if let Some(c) = colorscheme.foreground { add_color(c); }
+    if let Some(c) = colorscheme.background { add_color(c); }
+    if let Some(c) = colorscheme.cursor { add_color(c); }
+    if let Some(c) = colorscheme.selection { add_color(c); }
+
+    for style in colorscheme.styles.values() {
+        if let Some(c) = style.fg { add_color(c); }
+        if let Some(c) = style.bg { add_color(c); }
+    }
+
+    let find_nearest = |c: syntect::highlighting::Color| -> syntect::highlighting::Color {
+        if colors.is_empty() {
+            return c;
+        }
+        let mut best_color = colors[0];
+        let mut min_distance = f32::MAX;
+        for &candidate in &colors {
+            let dr = c.r as f32 - candidate.r as f32;
+            let dg = c.g as f32 - candidate.g as f32;
+            let db = c.b as f32 - candidate.b as f32;
+            let distance = dr * dr + dg * dg + db * db;
+            if distance < min_distance {
+                min_distance = distance;
+                best_color = candidate;
+            }
+        }
+        best_color
+    };
+
+    let update_color = |opt_color: &mut Option<syntect::highlighting::Color>| {
+        if let Some(c) = opt_color {
+            *c = find_nearest(*c);
+        }
+    };
+
+    let to_syntect_color = |c: vim_colorscheme::Color| -> Option<syntect::highlighting::Color> {
+        match c {
+            vim_colorscheme::Color::Rgb(r, g, b) => Some(syntect::highlighting::Color { r, g, b, a: 255 }),
+            vim_colorscheme::Color::Black => Some(syntect::highlighting::Color { r: 0, g: 0, b: 0, a: 255 }),
+            vim_colorscheme::Color::White => Some(syntect::highlighting::Color { r: 255, g: 255, b: 255, a: 255 }),
+            vim_colorscheme::Color::Grey => Some(syntect::highlighting::Color { r: 128, g: 128, b: 128, a: 255 }),
+            vim_colorscheme::Color::DarkGrey => Some(syntect::highlighting::Color { r: 64, g: 64, b: 64, a: 255 }),
+            vim_colorscheme::Color::Red => Some(syntect::highlighting::Color { r: 255, g: 0, b: 0, a: 255 }),
+            vim_colorscheme::Color::Green => Some(syntect::highlighting::Color { r: 0, g: 255, b: 0, a: 255 }),
+            vim_colorscheme::Color::Blue => Some(syntect::highlighting::Color { r: 0, g: 0, b: 255, a: 255 }),
+            vim_colorscheme::Color::Yellow => Some(syntect::highlighting::Color { r: 255, g: 255, b: 0, a: 255 }),
+            vim_colorscheme::Color::Magenta => Some(syntect::highlighting::Color { r: 255, g: 0, b: 255, a: 255 }),
+            vim_colorscheme::Color::Cyan => Some(syntect::highlighting::Color { r: 0, g: 255, b: 255, a: 255 }),
+            vim_colorscheme::Color::Reset => None,
+        }
+    };
+
+    if let Some(c) = colorscheme.foreground.and_then(to_syntect_color) {
+        theme.settings.foreground = Some(c);
+    } else {
+        update_color(&mut theme.settings.foreground);
+    }
+
+    if let Some(c) = colorscheme.background.and_then(to_syntect_color) {
+        theme.settings.background = Some(c);
+    } else {
+        update_color(&mut theme.settings.background);
+    }
+
+    if let Some(c) = colorscheme.cursor.and_then(to_syntect_color) {
+        theme.settings.caret = Some(c);
+    } else {
+        update_color(&mut theme.settings.caret);
+    }
+
+    if let Some(c) = colorscheme.selection.and_then(to_syntect_color) {
+        theme.settings.selection = Some(c);
+    } else {
+        update_color(&mut theme.settings.selection);
+    }
+
+    update_color(&mut theme.settings.line_highlight);
+    update_color(&mut theme.settings.shadow);
+    update_color(&mut theme.settings.accent);
+
+    for scope in &mut theme.scopes {
+        update_color(&mut scope.style.foreground);
+        update_color(&mut scope.style.background);
+    }
+
+    let static_theme: &'static Theme = Box::leak(Box::new(theme));
+    Highlighter::new(static_theme)
 }
 
 pub fn global_highlighter() -> &'static Highlighter<'static> {
@@ -101,6 +286,8 @@ pub fn parse_scopes_cancellable(
     resume_checkpoint: Option<ParseStateCheckpoint>,
     existing_checkpoints: &[ParseStateCheckpoint],
     highlighter: Option<&Highlighter>,
+    colorscheme: &vim_colorscheme::ColorScheme,
+    map_differently: bool,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Option<(Vec<HighlightedRow>, Vec<ParseStateCheckpoint>)> {
     let syntax_set = syntax_set();
@@ -199,12 +386,18 @@ pub fn parse_scopes_cancellable(
                 let foreground = if let Some(cached) = style_cache.get(stack.as_slice()) {
                     *cached
                 } else {
-                    let scope_style = highlighter.style_for_stack(stack.as_slice());
-                    let foreground = [
-                        scope_style.foreground.r,
-                        scope_style.foreground.g,
-                        scope_style.foreground.b,
-                    ];
+                    let foreground = if map_differently {
+                        let style = map_scope_to_style(stack.as_slice(), colorscheme);
+                        let col = style.fg.unwrap_or(colorscheme.foreground.unwrap_or(vim_colorscheme::Color::White));
+                        color_to_rgb_array(col)
+                    } else {
+                        let scope_style = highlighter.style_for_stack(stack.as_slice());
+                        [
+                            scope_style.foreground.r,
+                            scope_style.foreground.g,
+                            scope_style.foreground.b,
+                        ]
+                    };
                     style_cache.insert(stack.as_slice().to_vec(), foreground);
                     foreground
                 };
@@ -293,6 +486,8 @@ pub fn highlight_run(
     expand_before: u32,
     expand_after: u32,
     highlighter: Option<&Highlighter>,
+    colorscheme: &vim_colorscheme::ColorScheme,
+    map_differently: bool,
 ) {
     let row_start = row_start.saturating_sub(expand_before);
     let row_end = row_end.saturating_add(expand_after);
@@ -330,6 +525,8 @@ pub fn highlight_run(
         checkpoint,
         &existing_checkpoints,
         highlighter,
+        colorscheme,
+        map_differently,
         || false,
     ) {
         state
@@ -358,8 +555,9 @@ mod tests {
         let text = "fn main() {\n    println!(\"hello\");\n}\n".repeat(20);
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
 
-        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0, None);
+        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0, None, &colorscheme, false);
 
         for r in 2..=5 {
             assert!(state.highlight_row(r).is_some());
@@ -375,6 +573,7 @@ mod tests {
         let text = "let x = 42;\n".repeat(2000);
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
 
         highlight_run(
             &mut state,
@@ -385,6 +584,8 @@ mod tests {
             1000,
             500,
             None,
+            &colorscheme,
+            false,
         );
 
         assert!(state.highlight_row(100).is_some());

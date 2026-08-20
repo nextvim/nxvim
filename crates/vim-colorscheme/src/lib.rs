@@ -174,7 +174,7 @@ impl ColorScheme {
     }
 
     pub fn load_default() -> Self {
-        Self::get_by_name("catppuccin").expect("Failed to load default colorscheme")
+        Self::get_by_name("tokyonight").expect("Failed to load default colorscheme")
     }
 
     pub fn get_by_name(name: &str) -> Option<Self> {
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn test_load_default() {
         let scheme = ColorScheme::load_default();
-        assert_eq!(scheme.metadata.name, "catppuccin-mocha");
+        assert_eq!(scheme.metadata.name, "tokyonight-moon");
         assert!(scheme.styles.contains_key("Normal"));
         assert!(scheme.styles.contains_key("keyword"));
 
