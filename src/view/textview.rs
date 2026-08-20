@@ -76,7 +76,7 @@ pub fn build_text(
     mode: vim_input::Mode,
     highlights: Option<&textmate::BufferHighlightState>,
     _search_pattern: Option<&str>,
-    search_regex: Option<&onig::Regex>,
+    search_regex: Option<&vim_regex::Regex>,
     colorscheme: Option<&vim_ui::ColorScheme>,
 ) -> vim_ui::TextViewModel {
     let mut rows = Vec::new();
@@ -112,16 +112,16 @@ pub fn build_text(
 
         let mut match_ranges = Vec::<(usize, usize)>::new();
         if let Some(regex) = search_regex {
-            // let matches = line.find_pattern(regex);
-            // match_ranges = matches
-            //     .iter()
-            //     .map(|(byte_start, byte_len, _)| {
-            //         let byte_end = *byte_start + *byte_len;
-            //         let start_char = line[..*byte_start].chars().count();
-            //         let end_char = line[..byte_end].chars().count();
-            //         (start_char, end_char)
-            //     })
-            //     .collect();
+            let matches = line.find_pattern(regex);
+            match_ranges = matches
+                .iter()
+                .map(|(byte_start, byte_len, _)| {
+                    let byte_end = *byte_start + *byte_len;
+                    let start_char = line[..*byte_start].chars().count();
+                    let end_char = line[..byte_end].chars().count();
+                    (start_char, end_char)
+                })
+                .collect();
         }
 
         let mut gutter_text = if window.show_gutter {

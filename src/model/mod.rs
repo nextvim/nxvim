@@ -9,8 +9,8 @@
 mod buffer_state;
 mod buffers;
 
-use onig::Regex;
 use vim_buffer::BufferId;
+use vim_regex::Regex;
 
 pub use buffer_state::BufferState;
 pub use buffers::Buffers;

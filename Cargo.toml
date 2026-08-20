@@ -40,7 +40,7 @@ unicode-width = "0.2"
 libloading = "0.9.0"
 log = "0.4"
 
-onig = { version = "6.5.2", default-features = false }
+# onig = { version = "6.5.2", default-features = false }
 proptest = { version = "1.9", optional = true }
 rand = "0.8.5"
 rope = { path = "crates/zed/crates/rope" }
@@ -53,12 +53,6 @@ syntect = { git = "https://github.com/trishume/syntect" }
 text = { path = "crates/zed/crates/text" }
 
 toml = "0.8.19"
-tree-sitter = "0.26"
-tree-sitter-asm = "0.24.0"
-tree-sitter-bash = "0.25.1"
-tree-sitter-c = "0.24.1"
-tree-sitter-rust = "0.24"
-tree-sitter-zig = "1.1.2"
 
 unicode-segmentation = "1.12.0"
 util = { path = "crates/zed/crates/util" }
