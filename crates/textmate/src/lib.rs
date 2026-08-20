@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::{path::Path, sync::OnceLock};
 use syntect::{
     easy::ScopeRangeIterator,
-    highlighting::{Highlighter, Theme, ThemeSet},
+    highlighting::{Theme, ThemeSet},
     parsing::{ParseState, Scope, ScopeStack, SyntaxSet},
 };
 use text::{BufferSnapshot, ToOffset, ToPoint};
@@ -53,16 +53,44 @@ fn syntax_set() -> &'static SyntaxSet {
     SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
+pub fn get_theme(dark: bool) -> &'static Theme {
+    static DARK_THEME: OnceLock<Theme> = OnceLock::new();
+    static LIGHT_THEME: OnceLock<Theme> = OnceLock::new();
+    if dark {
+        DARK_THEME.get_or_init(|| {
+            let themes = ThemeSet::load_defaults().themes;
+            themes
+                .get("base16-ocean.dark")
+                .cloned()
+                .or_else(|| themes.into_values().next())
+                .expect("syntect must provide a default highlight theme")
+        })
+    } else {
+        LIGHT_THEME.get_or_init(|| {
+            let themes = ThemeSet::load_defaults().themes;
+            themes
+                .get("base16-ocean.light")
+                .cloned()
+                .or_else(|| themes.into_values().next())
+                .expect("syntect must provide a default highlight theme")
+        })
+    }
+}
+
 fn highlight_theme() -> &'static Theme {
-    static THEME: OnceLock<Theme> = OnceLock::new();
-    THEME.get_or_init(|| {
-        let themes = ThemeSet::load_defaults().themes;
-        themes
-            .get("base16-ocean.dark")
-            .cloned()
-            .or_else(|| themes.into_values().next())
-            .expect("syntect must provide a default highlight theme")
-    })
+    get_theme(true)
+}
+
+pub use syntect::highlighting::Highlighter;
+
+pub fn load_colorscheme(colorscheme: &vim_colorscheme::ColorScheme) -> Highlighter<'static> {
+    let is_dark = colorscheme.is_dark();
+    Highlighter::new(get_theme(is_dark))
+}
+
+pub fn global_highlighter() -> &'static Highlighter<'static> {
+    static HIGHLIGHTER: OnceLock<Highlighter<'static>> = OnceLock::new();
+    HIGHLIGHTER.get_or_init(|| Highlighter::new(highlight_theme()))
 }
 
 pub fn parse_scopes_cancellable(
@@ -72,6 +100,7 @@ pub fn parse_scopes_cancellable(
     end_row: u32,
     resume_checkpoint: Option<ParseStateCheckpoint>,
     existing_checkpoints: &[ParseStateCheckpoint],
+    highlighter: Option<&Highlighter>,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Option<(Vec<HighlightedRow>, Vec<ParseStateCheckpoint>)> {
     let syntax_set = syntax_set();
@@ -96,7 +125,14 @@ pub fn parse_scopes_cancellable(
 
     let mut rows = Vec::new();
     let mut checkpoints = Vec::new();
-    let highlighter = Highlighter::new(highlight_theme());
+    let fallback_highlighter;
+    let highlighter = match highlighter {
+        Some(h) => h,
+        None => {
+            fallback_highlighter = Highlighter::new(highlight_theme());
+            &fallback_highlighter
+        }
+    };
 
     // Style resolution (`style_for_stack`) walks the theme's scope selectors
     // and is far more expensive than a hash lookup. The same scope stack
@@ -256,6 +292,7 @@ pub fn highlight_run(
     row_end: u32,
     expand_before: u32,
     expand_after: u32,
+    highlighter: Option<&Highlighter>,
 ) {
     let row_start = row_start.saturating_sub(expand_before);
     let row_end = row_end.saturating_add(expand_after);
@@ -292,6 +329,7 @@ pub fn highlight_run(
         row_end,
         checkpoint,
         &existing_checkpoints,
+        highlighter,
         || false,
     ) {
         state
@@ -321,7 +359,7 @@ mod tests {
         let buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
         let snapshot = buffer.snapshot().as_inner().clone();
 
-        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0);
+        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0, None);
 
         for r in 2..=5 {
             assert!(state.highlight_row(r).is_some());
@@ -346,6 +384,7 @@ mod tests {
             1200,
             1000,
             500,
+            None,
         );
 
         assert!(state.highlight_row(100).is_some());

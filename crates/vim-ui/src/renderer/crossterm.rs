@@ -1,5 +1,6 @@
 use crate::renderer::Renderer;
 use crate::types::Color;
+use crate::Style;
 use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
     execute,
@@ -59,7 +60,7 @@ impl<W: Write> Renderer for CrosstermRenderer<W> {
         execute!(self.writer, Hide)
     }
 
-    fn set_style(&mut self, style: crate::colorscheme::Style) -> std::io::Result<()> {
+    fn set_style(&mut self, style: Style) -> std::io::Result<()> {
         execute!(
             self.writer,
             SetForegroundColor(style.fg.unwrap_or(Color::Reset).into()),

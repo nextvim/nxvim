@@ -1,4 +1,4 @@
-use crate::colorscheme::ColorScheme;
+use crate::ColorScheme;
 use crate::error::{UiError, UiResult};
 use crate::focus::FocusManager;
 use crate::id::WindowId;
