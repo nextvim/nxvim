@@ -328,6 +328,14 @@ impl ColorScheme {
             });
         }
 
+        let cursor_line = parsed.ui.get("cursor_line").and_then(|v| resolve(v));
+        if let Some(bg) = cursor_line {
+            styles.insert("CursorLine".to_string(), Style {
+                bg: Some(bg),
+                ..Default::default()
+            });
+        }
+
         let border_fg = parsed.ui.get("border_foreground").and_then(|v| resolve(v));
         let border_bg = parsed.ui.get("border_background").and_then(|v| resolve(v));
         if border_fg.is_some() || border_bg.is_some() {

@@ -948,6 +948,22 @@ mod tests {
     }
 
     #[test]
+    fn test_syntax_handling() {
+        let mut app = app();
+        assert!(app.syntax_highlight);
+
+        // Turn syntax off
+        let outcome = Dispatcher::dispatch(&mut app, Command::Syntax { enable: false });
+        assert!(outcome.redraw);
+        assert!(!app.syntax_highlight);
+
+        // Turn syntax on
+        let outcome = Dispatcher::dispatch(&mut app, Command::Syntax { enable: true });
+        assert!(outcome.redraw);
+        assert!(app.syntax_highlight);
+    }
+
+    #[test]
     fn test_commandline_history_cycling() {
         let mut app = app();
         let commandline = app.view_ids.commandline;

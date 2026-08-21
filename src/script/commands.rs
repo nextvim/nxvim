@@ -31,6 +31,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "put" => put(request),
         "colorscheme" => colorscheme(request),
         "set" => set(request),
+        "syntax" => syntax(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -213,4 +214,19 @@ fn set(request: CommandRequest) -> Result<Command, RuntimeError> {
     Ok(Command::Set {
         arguments: request.command.arguments,
     })
+}
+
+fn syntax(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let arg = request.command.arguments.trim();
+    if arg == "on" {
+        Ok(Command::Syntax { enable: true })
+    } else if arg == "off" {
+        Ok(Command::Syntax { enable: false })
+    } else {
+        Err(RuntimeError::coded(
+            "E474",
+            RuntimeErrorKind::InvalidCommand,
+            format!("Invalid argument: {}", arg),
+        ))
+    }
 }

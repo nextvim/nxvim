@@ -104,6 +104,11 @@ impl Dispatcher {
                 }
                 CommandOutcome::redraw()
             }
+            Command::Syntax { enable } => {
+                app.syntax_highlight = enable;
+                app.model.invalidate_all_highlights();
+                CommandOutcome::redraw()
+            }
             Command::RangeOp {
                 operation,
                 bang,

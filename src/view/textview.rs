@@ -89,9 +89,38 @@ pub fn build_text(
         }
     }
 
+    let hl_cursor_line = window.show_cursorline;
+    let cursor_line_bg = colorscheme
+        .and_then(|cs| cs.get_style("CursorLine"))
+        .and_then(|s| s.bg);
+    let cursor_line_nr_fg = colorscheme
+        .and_then(|cs| cs.get_style("CursorLineNr"))
+        .and_then(|s| s.fg);
+
     let mut rows = Vec::new();
     let mut saved_cursor = None;
     let display_map_snapshot = window.display_map.snapshot();
+    let cursor_row = if !window.selections.selections.is_empty() {
+        let cursor_anchor = window.selections.primary().head();
+        let original_buffer = display_map_snapshot.buffer_snapshot();
+        let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
+            display_map_snapshot.try_anchor_to_display_point(cursor_anchor)
+        } else {
+            let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
+            let max_row = original_buffer.row_count().saturating_sub(1);
+            let row = point.row.min(max_row);
+            let column = if row < original_buffer.row_count() {
+                point.column.min(original_buffer.line_len(row))
+            } else {
+                0
+            };
+            display_map_snapshot.try_point_to_display_point(Point { row, column })
+        };
+        display_cursor.map(|dc| dc.row())
+    } else {
+        None
+    };
+
     let row_count = display_map_snapshot.row_count();
     let scroll_y = display_map_snapshot.scroll_y;
     let scroll_x = display_map_snapshot.scroll_x;
@@ -109,6 +138,14 @@ pub fn build_text(
 
     let mut prev_row = 0;
     for row in start_row..end_row {
+        let is_cursor_row = hl_cursor_line && cursor_row == Some(row);
+        let mut row_default_style = default_style.clone();
+        if is_cursor_row {
+            if let Some(bg) = cursor_line_bg {
+                row_default_style.bg = Some(bg);
+            }
+        }
+
         let line = display_map_snapshot.line_text(row).clone() + " ";
         let buffer_row = match display_map_snapshot.try_buffer_row_for_display_row(row) {
             Some(r) => r,
@@ -158,6 +195,14 @@ pub fn build_text(
                 gutter_style.italic = line_nr_style.italic;
                 gutter_style.underline = line_nr_style.underline;
                 gutter_style.strikethrough = line_nr_style.strikethrough;
+            }
+        }
+        if is_cursor_row {
+            if let Some(bg) = cursor_line_bg {
+                gutter_style.bg = Some(bg);
+            }
+            if let Some(fg) = cursor_line_nr_fg {
+                gutter_style.fg = Some(fg);
             }
         }
         let mut search_style = colorscheme
@@ -230,7 +275,7 @@ pub fn build_text(
                 continue;
             }
 
-            let mut style = default_style.clone();
+            let mut style = row_default_style.clone();
             if selection_state.selected_cell || selection_state.at_cursor_head {
                 if !selection_state.at_primary_cursor_head {
                     if let Some(cs) = colorscheme {
@@ -286,7 +331,7 @@ pub fn build_text(
                 None
             },
             spans,
-            fill_style: default_style,
+            fill_style: row_default_style,
         });
     }
 
@@ -296,28 +341,6 @@ pub fn build_text(
 
     let cursor = if active {
         saved_cursor.or_else(|| fallback_cursor(buffer, window, inner_rect, mode))
-    } else {
-        None
-    };
-
-    let cursor_row = if !window.selections.selections.is_empty() {
-        let cursor_anchor = window.selections.primary().head();
-        let display_snapshot = window.display_map.snapshot();
-        let original_buffer = display_snapshot.buffer_snapshot();
-        let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
-            display_snapshot.try_anchor_to_display_point(cursor_anchor)
-        } else {
-            let point = cursor_anchor.to_point(buffer.snapshot().as_inner());
-            let max_row = original_buffer.row_count().saturating_sub(1);
-            let row = point.row.min(max_row);
-            let column = if row < original_buffer.row_count() {
-                point.column.min(original_buffer.line_len(row))
-            } else {
-                0
-            };
-            display_snapshot.try_point_to_display_point(Point { row, column })
-        };
-        display_cursor.map(|dc| dc.row())
     } else {
         None
     };
@@ -493,6 +516,68 @@ mod tests {
         assert_eq!(span_texts.get(1), Some(&"next"));
         assert_eq!(row1.spans[1].style.bg, Some(vim_ui::Color::Yellow));
         assert_eq!(row1.spans[1].style.fg, Some(vim_ui::Color::Black));
+     }
+
+    #[test]
+    fn test_cursor_line_highlighting() {
+        use super::build_text;
+        use vim_buffer::{Buffer, BufferId};
+        use vim_ui::{Rect, Viewport, WindowState};
+
+        let buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "line one\nline two\n",
+        );
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        window_state.show_gutter = true;
+        window_state.show_cursorline = true;
+        window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
+        // Put cursor on the second row (index 1)
+        window_state.selections = vim_buffer::SelectionSet::new();
+        window_state.selections.add(buffer.as_text_buffer(), 9);
+        window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
+
+        let mut cs = vim_ui::ColorScheme::new(vim_ui::Metadata::default());
+        cs.insert_style("CursorLine", vim_ui::Style {
+            bg: Some(vim_ui::Color::Red),
+            ..Default::default()
+        });
+        cs.insert_style("CursorLineNr", vim_ui::Style {
+            fg: Some(vim_ui::Color::Green),
+            ..Default::default()
+        });
+
+        let model = build_text(
+            &buffer,
+            &window_state,
+            Rect::new(0, 0, 80, 24),
+            true,
+            vim_input::Mode::Normal,
+            None,
+            None,
+            None,
+            Some(&cs),
+        );
+
+        // Row 0 should not be highlighted
+        let row0 = &model.rows[0];
+        assert_ne!(row0.fill_style.bg, Some(vim_ui::Color::Red));
+        if let Some(ref gutter) = row0.gutter {
+            assert_ne!(gutter.style.fg, Some(vim_ui::Color::Green));
+        }
+
+        // Row 1 should be highlighted
+        let row1 = &model.rows[1];
+        assert_eq!(row1.fill_style.bg, Some(vim_ui::Color::Red));
+        for span in &row1.spans {
+            // Span backgrounds on the cursor line should use cursor_line
+            assert_eq!(span.style.bg, Some(vim_ui::Color::Red));
+        }
+        if let Some(ref gutter) = row1.gutter {
+            assert_eq!(gutter.style.fg, Some(vim_ui::Color::Green));
+            assert_eq!(gutter.style.bg, Some(vim_ui::Color::Red));
+        }
     }
 }
 
