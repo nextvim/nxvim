@@ -138,7 +138,7 @@ impl Resolver {
     pub fn feed(&mut self, key: Key, keymap: &Keymap) -> ResolveOutcome {
         let key = key.normalized();
 
-        if self.mode == Mode::Insert {
+        if self.mode.is_insert() {
             return self.feed_insert(key, keymap);
         }
 
