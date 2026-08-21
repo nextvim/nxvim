@@ -21,6 +21,7 @@ This is a priority plan, not a claim that every obscure Vim integration belongs 
 | `write`, `save` | Writes focused buffer, optional path and `!` | `:write` is Vim; `:save` is an nxvim alias. Ranges, append/filter forms, and full file-option semantics are missing. |
 | `bnext`, `bprev` | Switch buffer in focused window | Counts are fixed to one; standard full name is `:bprevious`, with aliases such as `:bNext`. |
 | `nexttab`, `previoustab` | Also switch buffers | These names are not Vim Ex commands. Vim tab-page commands are `:tabnext` and `:tabprevious`; buffers and tab pages must not be conflated. |
+| `colorscheme`, abbreviation `colo` | Loads colorscheme by name | None. |
 
 The Ex parser already recognizes a useful foundation: optional leading `:`, alphabetic command names, `!`, `|` chaining, modifiers (`silent`, `keepjumps`, `keepalt`, `keepmarks`, `noautocmd`, `sandbox`, `vertical`, `verbose`, `tab`), and ranges using `.`, `$`, marks, searches, numeric lines, `%`, offsets, `,`, and `;`. However, most registered commands reject ranges/counts/registers, and parsed modifiers are not yet enforced by editor operations.
 

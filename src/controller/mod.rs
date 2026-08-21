@@ -836,4 +836,21 @@ mod tests {
         });
         assert!(app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
     }
+
+    #[test]
+    fn test_colorscheme_handling() {
+        let mut app = app();
+        assert_eq!(app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()), Some("tokyonight-moon"));
+
+        Dispatcher::dispatch(&mut app, Command::Colorscheme { name: None });
+        assert_eq!(app.model.status.as_deref(), Some("tokyonight-moon"));
+
+        let outcome = Dispatcher::dispatch(&mut app, Command::Colorscheme { name: Some("kanagawa".to_string()) });
+        assert!(outcome.redraw);
+        assert_eq!(app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()), Some("kanagawa"));
+        assert_eq!(app.model.status.as_ref(), None);
+
+        Dispatcher::dispatch(&mut app, Command::Colorscheme { name: Some("invalid-name".to_string()) });
+        assert_eq!(app.model.status.as_deref(), Some("E185: Cannot find color scheme 'invalid-name'"));
+    }
 }

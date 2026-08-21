@@ -107,4 +107,34 @@ impl LifecycleHandler {
             }
         }
     }
+
+    pub fn colorscheme(
+        ui: &mut Ui,
+        model: &mut EditorModel,
+        app_colorscheme: &mut Option<vim_colorscheme::ColorScheme>,
+        app_highlighter: &mut Option<textmate::Highlighter<'static>>,
+        name: Option<&str>,
+    ) -> CommandOutcome {
+        if let Some(name) = name {
+            if let Some(cs) = vim_colorscheme::ColorScheme::get_by_name(name) {
+                let highlighter = textmate::load_colorscheme(&cs);
+                *app_colorscheme = Some(cs.clone());
+                *app_highlighter = Some(highlighter);
+                ui.set_colorscheme(Some(cs));
+                model.invalidate_all_highlights();
+                model.status = None;
+                CommandOutcome::redraw()
+            } else {
+                model.status = Some(format!("E185: Cannot find color scheme '{name}'"));
+                CommandOutcome::redraw()
+            }
+        } else {
+            if let Some(cs) = app_colorscheme {
+                model.status = Some(cs.metadata.name.clone());
+            } else {
+                model.status = Some("default".to_string());
+            }
+            CommandOutcome::redraw()
+        }
+    }
 }

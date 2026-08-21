@@ -63,9 +63,9 @@ impl<W: Write> Renderer for CrosstermRenderer<W> {
     fn set_style(&mut self, style: Style) -> std::io::Result<()> {
         execute!(
             self.writer,
+            SetAttribute(Attribute::Reset),
             SetForegroundColor(style.fg.unwrap_or(Color::Reset).into()),
             SetBackgroundColor(style.bg.unwrap_or(Color::Reset).into()),
-            SetAttribute(Attribute::Reset),
             SetAttribute(if style.bold {
                 Attribute::Bold
             } else {

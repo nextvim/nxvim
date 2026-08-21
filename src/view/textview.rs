@@ -79,6 +79,16 @@ pub fn build_text(
     search_regex: Option<&vim_regex::Regex>,
     colorscheme: Option<&vim_ui::ColorScheme>,
 ) -> vim_ui::TextViewModel {
+    let mut default_style = vim_ui::Style::default();
+    if let Some(cs) = colorscheme {
+        if let Some(normal_style) = cs.get_style("Normal") {
+            default_style = *normal_style;
+        } else {
+            default_style.fg = cs.foreground;
+            default_style.bg = cs.background;
+        }
+    }
+
     let mut rows = Vec::new();
     let mut saved_cursor = None;
     let display_map_snapshot = window.display_map.snapshot();
@@ -139,7 +149,6 @@ pub fn build_text(
         let gutter_width = gutter_text.len() as u32;
         let cursor_offset = gutter_width as u32;
 
-        let default_style = vim_ui::Style::default();
         let gutter_style = default_style.clone();
         let mut search_style = colorscheme
             .and_then(|cs| cs.get_style("Search"))
@@ -211,7 +220,7 @@ pub fn build_text(
                 continue;
             }
 
-            let mut style = vim_ui::Style::default();
+            let mut style = default_style.clone();
             if selection_state.selected_cell || selection_state.at_cursor_head {
                 if !selection_state.at_primary_cursor_head {
                     style.bg = search_style.bg;
@@ -246,18 +255,18 @@ pub fn build_text(
             gutter: if window.show_gutter {
                 Some(vim_ui::model::GutterCell {
                     text: gutter_text,
-                    style: vim_ui::Style::default(),
+                    style: gutter_style,
                 })
             } else {
                 None
             },
             spans,
-            fill_style: vim_ui::Style::default(),
+            fill_style: default_style,
         });
     }
 
     if rows.is_empty() {
-        rows.push(empty_row(window.show_gutter));
+        rows.push(empty_row(window.show_gutter, default_style));
     }
 
     let cursor = if active {
@@ -312,7 +321,7 @@ pub fn build_text(
                 ..Default::default()
             }),
         }),
-        default_style: vim_ui::Style::default(),
+        default_style,
     }
 }
 
@@ -465,22 +474,22 @@ fn cursor_shape(mode: vim_input::Mode) -> vim_ui::model::CursorShape {
     }
 }
 
-fn empty_row(show_gutter: bool) -> vim_ui::model::DisplayRow {
+fn empty_row(show_gutter: bool, default_style: vim_ui::Style) -> vim_ui::model::DisplayRow {
     vim_ui::model::DisplayRow {
         buffer_row: Some(0),
         kind: vim_ui::model::DisplayRowKind::Buffer,
         gutter: if show_gutter {
             Some(vim_ui::model::GutterCell {
                 text: "  1 ".to_string(),
-                style: vim_ui::Style::default(),
+                style: default_style,
             })
         } else {
             None
         },
         spans: vec![vim_ui::model::TextSpan::new(
             String::new(),
-            vim_ui::Style::default(),
+            default_style,
         )],
-        fill_style: vim_ui::Style::default(),
+        fill_style: default_style,
     }
 }

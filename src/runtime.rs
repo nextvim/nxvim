@@ -286,8 +286,7 @@ impl Runtime {
             expand_before,
             expand_after,
             self.app.highlighter.as_ref(),
-            cs_ref,
-            false,
+            cs_ref
         );
 
         Some(())

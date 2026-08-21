@@ -104,6 +104,12 @@ impl EditorModel {
         self.get_buffer(id).ok()?;
         Some(self.buffers.state_mut(id))
     }
+
+    pub fn invalidate_all_highlights(&mut self) {
+        for state in self.buffers.states.values_mut() {
+            state.highlights.invalidate();
+        }
+    }
 }
 
 #[cfg(test)]
