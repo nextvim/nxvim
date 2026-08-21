@@ -30,6 +30,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "yank" => yank(request),
         "put" => put(request),
         "colorscheme" => colorscheme(request),
+        "set" => set(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -206,4 +207,10 @@ fn colorscheme(request: CommandRequest) -> Result<Command, RuntimeError> {
         Some(name.to_owned())
     };
     Ok(Command::Colorscheme { name: name_opt })
+}
+
+fn set(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::Set {
+        arguments: request.command.arguments,
+    })
 }

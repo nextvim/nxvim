@@ -35,10 +35,10 @@ impl Runtime {
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut out = stdout();
         let rect = self.app.ui.screen_rect();
-        self.redraw(rect, &mut out)?;
+        // self.redraw(rect, &mut out)?;
         self.schedule_state_updates(None);
 
-        let mut should_redraw = false;
+        let mut should_redraw = true;
         let mut last_command_time = std::time::Instant::now();
         let mut is_idle = false;
         let mut idle_since: Option<std::time::Instant> = None;
@@ -527,6 +527,10 @@ impl Runtime {
                     );
                 }
             } else {
+                let show_number = self.app.config.get("number", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
+                if let Some(state) = window.window_state_mut() {
+                    state.set_show_gutter(show_number);
+                }
                 let (window_state, view) = window.refresh_parts::<TextView>();
                 if let (Some(window_state), Some(view)) = (window_state, view) {
                     view.refresh(

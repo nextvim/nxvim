@@ -368,7 +368,60 @@ impl Editor {
                 return Some(Mode::Normal);
             }
             Action::SelectSimilar => {
-                // No-op for now
+                let text_buffer = buffer.as_text_buffer();
+                if !buffer_display_context.selections.has_selection(text_buffer) {
+                    let cursors = buffer_display_context.selections.selections.clone();
+                    for cursor in cursors.iter() {
+                        let start_sel = cursor.move_to_word(false, text_buffer);
+                        let end_sel = cursor.move_to_word_end(false, text_buffer);
+                        let next = Selection {
+                            id: cursor.id,
+                            start: start_sel.head(),
+                            end: end_sel.head(),
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        };
+                        buffer_display_context
+                            .selections
+                            .update(text_buffer, &next);
+                    }
+                } else {
+                    let cursor = buffer_display_context.selections.primary().clone();
+                    let selected_text = cursor.text(text_buffer);
+                    if let Some(mut next_match) = cursor.clone().move_to_next_match_within(
+                        selected_text.as_str(),
+                        text_buffer,
+                        text_buffer.row_count(),
+                    ) {
+                        for _ in 0..selected_text.len().saturating_sub(1) {
+                            next_match = next_match.move_right_once(true, text_buffer);
+                        }
+
+                        let next_cursor = Selection {
+                            id: cursor.id,
+                            start: next_match.head(),
+                            end: next_match.tail(),
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        };
+                        if buffer_display_context.selections.has_similar_cursor(&next_cursor, text_buffer) {
+                            return None;
+                        }
+
+                        let sel = buffer_display_context.selections.add(text_buffer, 0);
+                        buffer_display_context.selections.update(
+                            text_buffer,
+                            &Selection {
+                                id: sel.id,
+                                start: cursor.head(),
+                                end: cursor.tail(),
+                                reversed: false,
+                                goal: SelectionGoal::None,
+                            },
+                        );
+                        buffer_display_context.selections.update(text_buffer, &next_cursor);
+                    }
+                }
                 return None;
             }
             Action::SetToNormal => {
@@ -2809,6 +2862,73 @@ mod tests {
     use clock::ReplicaId;
     use vim_buffer::BufferId;
     use vim_ui::Viewport;
+
+    #[test]
+    fn test_select_similar() {
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "");
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+        let editor = Editor::new();
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::InsertText("hello hello hello".into()),
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveLeft {
+                    select: false,
+                    count: 11,
+                },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::SelectSimilar,
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        assert_eq!(
+            window_state.selections.primary().start.to_point(buffer.as_text_buffer()).column,
+            6
+        );
+        assert_eq!(
+            window_state.selections.primary().end.to_point(buffer.as_text_buffer()).column,
+            10
+        );
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::SelectSimilar,
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        assert_eq!(window_state.selections.selections.len(), 2);
+    }
 
     #[test]
     fn deleting_text_under_a_fold_removes_the_fold_instead_of_leaving_it_dangling() {
