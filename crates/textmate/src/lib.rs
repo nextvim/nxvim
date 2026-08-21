@@ -99,7 +99,7 @@ pub fn map_scope_to_style(
     colorscheme: &vim_colorscheme::ColorScheme,
 ) -> vim_colorscheme::Style {
     let mut resolved_style = vim_colorscheme::Style {
-        fg: colorscheme.foreground,
+        fg: None,
         bg: colorscheme.background,
         bold: false,
         italic: false,
@@ -395,10 +395,15 @@ pub fn parse_scopes_cancellable(
                 let foreground = if let Some(cached) = style_cache.get(stack.as_slice()) {
                     *cached
                 } else {
-                    let foreground = if map_differently {
+                    let mut foreground_color = None;
+                    if map_differently {
                         let style = map_scope_to_style(stack.as_slice(), colorscheme);
-                        let col = style.fg.unwrap_or(colorscheme.foreground.unwrap_or(vim_colorscheme::Color::White));
-                        color_to_rgb_array(col)
+                        if let Some(col) = style.fg {
+                            foreground_color = Some(color_to_rgb_array(col));
+                        }
+                    }
+                    let foreground = if let Some(fg) = foreground_color {
+                        fg
                     } else {
                         let scope_style = highlighter.style_for_stack(stack.as_slice());
                         [
