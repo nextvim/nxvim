@@ -34,6 +34,7 @@ impl CommandlineHandler {
         view_ids: ViewIds,
         active_window: WindowId,
         action: &Action,
+        mode_before: Mode,
     ) -> CommandOutcome {
         match action {
             Action::SetToCommand
@@ -45,12 +46,33 @@ impl CommandlineHandler {
                     Action::SetToCommandSearchBackward => '?',
                     _ => unreachable!(),
                 };
+
+                let mut selection_text = String::new();
+                if mode_before == Mode::Normal && matches!(action, Action::SetToCommandSearchForward) {
+                    let _ = WindowOps::edit_window(
+                        ui,
+                        model,
+                        active_window,
+                        |buffer, _context, window_state| {
+                            selection_text = window_state.selections.text(buffer.as_text_buffer());
+                        }
+                    );
+                }
+
                 model.commandline_mode = mode_char;
                 model.history_index = None;
                 model.history_temp.clear();
                 if mode_char == '/' || mode_char == '?' {
-                    model.search_pattern = None;
-                    model.search_regex = None;
+                    if !selection_text.is_empty() {
+                        let pattern = format!("\\<{selection_text}\\>");
+                        model.search_pattern = Some(pattern);
+                        if let Some(ref pattern) = model.search_pattern {
+                            model.search_regex = Regex::compile(pattern, vim_regex::CompileOptions::default()).ok();
+                        }
+                    } else {
+                        model.search_pattern = None;
+                        model.search_regex = None;
+                    }
                 }
                 input.set_mode(Mode::Insert);
                 let _ = WindowOps::edit_window(
@@ -65,11 +87,17 @@ impl CommandlineHandler {
                         )
                         .unwrap();
                         let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-                        tx.replace(None, range, "");
+                        
+                        let content = if !selection_text.is_empty() {
+                            format!("\\<{selection_text}\\>")
+                        } else {
+                            "".to_string()
+                        };
+                        tx.replace(None, range, content.as_str());
                         let _ = tx.commit(None);
 
                         window_state.selections.selections.clear();
-                        window_state.selections.add(buffer.as_text_buffer(), 0);
+                        window_state.selections.add(buffer.as_text_buffer(), content.len());
                     },
                 );
                 let mut outcome =

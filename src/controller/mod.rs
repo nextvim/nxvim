@@ -317,6 +317,61 @@ mod tests {
     }
 
     #[test]
+    fn test_script_action() {
+        let mut app = app();
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::Script {
+                    count: 2,
+                    script: "q".to_string(),
+                },
+                register: None,
+            },
+        );
+
+        assert!(matches!(
+            app.script.try_next_command(),
+            Some(Command::Quit { force: false })
+        ));
+        assert!(matches!(
+            app.script.try_next_command(),
+            Some(Command::Quit { force: false })
+        ));
+        assert!(app.script.try_next_command().is_none());
+    }
+
+    #[test]
+    fn test_key_sequence_action() {
+        let mut app = app();
+        assert!(app.command_queue.is_empty());
+
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::KeySequence {
+                    count: 1,
+                    keys: "dw".to_string(),
+                },
+                register: None,
+            },
+        );
+
+        assert_eq!(app.command_queue.len(), 2);
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::PendingInput(_))
+        ));
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Editor {
+                action: Action::DeleteMotion { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn test_repeat_last_change() {
         let mut app = app();
 
@@ -768,6 +823,43 @@ mod tests {
         );
         assert_eq!(app.model.search_pattern, None);
         assert!(app.model.search_regex.is_none());
+    }
+
+    #[test]
+    fn test_search_initializes_from_selection_in_normal_mode() {
+        let mut app = app();
+        
+        let active_window = app.ui.focused_window_id();
+        let _ = crate::app::windows::WindowOps::edit_window(
+            &mut app.ui,
+            &mut app.model,
+            active_window,
+            |buffer, _context, window_state| {
+                let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
+                tx.replace(None, vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(0)).unwrap(), "rust nextvim");
+                let _ = tx.commit(None);
+                
+                window_state.selections.selections.clear();
+                window_state.selections.add(buffer.as_text_buffer(), 3);
+                window_state.selections.selections[0].start = buffer.as_text_buffer().anchor_at(0, sum_tree::Bias::Left);
+                window_state.selections.selections[0].end = buffer.as_text_buffer().anchor_at(3, sum_tree::Bias::Left);
+            }
+        );
+
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommandSearchForward,
+                register: None,
+            },
+        );
+
+        assert_eq!(app.model.search_pattern.as_deref(), Some("\\<rust\\>"));
+        assert!(app.model.search_regex.is_some());
+
+        let commandline_buffer = app.model.get_buffer(app.model.commandline_buffer()).unwrap();
+        let commandline_text: String = commandline_buffer.as_text_buffer().as_rope().chunks().collect();
+        assert_eq!(commandline_text, "\\<rust\\>");
     }
 
     #[test]

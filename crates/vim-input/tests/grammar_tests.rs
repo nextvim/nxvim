@@ -301,6 +301,33 @@ fn test_operator_invalid_cancellation() {
         }
     );
 }
+#[test]
+fn test_action_sequence() {
+    let action = Action::Sequence {
+        count: 2,
+        actions: vec![
+            Box::new(Action::MoveLeft { count: 1, select: false }),
+            Box::new(Action::MoveRight { count: 1, select: false }),
+        ],
+    };
+    assert_eq!(action.count(), 2);
+    
+    let with_cnt = action.clone().with_count(5);
+    assert_eq!(with_cnt.count(), 5);
+
+    let with_sel = action.clone().with_select(true);
+    if let Action::Sequence { actions, .. } = with_sel {
+        assert_eq!(*actions[0], Action::MoveLeft { count: 1, select: true });
+    } else {
+        panic!("expected sequence");
+    }
+
+    assert_eq!(
+        format!("{}", action),
+        "Sequence(count=2, actions=[MoveLeft(1), MoveRight(1)])"
+    );
+}
+
 
 fn any_key() -> impl Strategy<Value = Key> {
     let any_code = prop_oneof![
