@@ -14,13 +14,13 @@ pub enum BindingContext {
 
 #[derive(Clone, Debug, Default)]
 pub struct Keymap {
-    pub(crate) op_actions: HashMap<KeySequence, Action>,
-    pub(crate) motion_actions: HashMap<KeySequence, Action>,
-    pub(crate) normal_actions: HashMap<KeySequence, Action>,
-    pub(crate) mode_actions: HashMap<KeySequence, Action>,
-    pub(crate) insert_actions: HashMap<KeySequence, Action>,
-    pub(crate) visual_actions: HashMap<KeySequence, Action>,
-    pub(crate) text_object_actions: HashMap<KeySequence, Action>,
+    pub op_actions: HashMap<KeySequence, Action>,
+    pub motion_actions: HashMap<KeySequence, Action>,
+    pub normal_actions: HashMap<KeySequence, Action>,
+    pub mode_actions: HashMap<KeySequence, Action>,
+    pub insert_actions: HashMap<KeySequence, Action>,
+    pub visual_actions: HashMap<KeySequence, Action>,
+    pub text_object_actions: HashMap<KeySequence, Action>,
 }
 
 impl Keymap {

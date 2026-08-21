@@ -302,6 +302,22 @@ fn test_operator_invalid_cancellation() {
     );
 }
 #[test]
+fn test_leader_parsing() {
+    let seq = vim_input::KeySequence::parse("<leader>a").unwrap();
+    assert_eq!(seq.items.len(), 2);
+    assert_eq!(seq.items[0], vim_input::KeyPattern::Exact(Key::char('\\')));
+    assert_eq!(seq.items[1], vim_input::KeyPattern::Exact(Key::char('a')));
+
+    vim_input::set_map_leader(",");
+    let seq2 = vim_input::KeySequence::parse("<Leader>x").unwrap();
+    assert_eq!(seq2.items.len(), 2);
+    assert_eq!(seq2.items[0], vim_input::KeyPattern::Exact(Key::char(',')));
+    assert_eq!(seq2.items[1], vim_input::KeyPattern::Exact(Key::char('x')));
+
+    vim_input::set_map_leader("\\");
+}
+
+#[test]
 fn test_action_sequence() {
     let action = Action::Sequence {
         count: 2,
