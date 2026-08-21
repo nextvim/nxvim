@@ -385,4 +385,24 @@ mod tests {
             Some(Command::Set { ref arguments }) if arguments == "ts=4"
         ));
     }
+
+    #[test]
+    fn test_syntax_command_is_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("syntax on").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Syntax { enable: true })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("syn off").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Syntax { enable: false })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        assert!(runtime.execute("syntax invalid").is_err());
+    }
 }

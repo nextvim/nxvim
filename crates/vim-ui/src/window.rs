@@ -64,6 +64,7 @@ pub struct WindowState {
     pub pending_display_map: Option<(display_map::DisplayMapGeneration, Range<u32>)>,
     pub show_gutter: bool,
     pub show_matches: bool,
+    pub show_cursorline: bool,
     pub folds: Vec<display_map::Fold>,
 }
 
@@ -72,7 +73,7 @@ impl WindowState {
         let snapshot = buffer.snapshot().as_inner().clone();
         let mut selections = vim_buffer::SelectionSet::new();
         selections.add(buffer.as_text_buffer(), 0);
-        Self::from_parts(buffer.id(), snapshot, selections, viewport, true, true)
+        Self::from_parts(buffer.id(), snapshot, selections, viewport, true, true, false)
     }
 
     pub fn placeholder(buffer: &vim_buffer::Buffer) -> Self {
@@ -89,6 +90,7 @@ impl WindowState {
             pending_display_map: None,
             show_gutter: true,
             show_matches: true,
+            show_cursorline: false,
             folds: Vec::new(),
         }
     }
@@ -150,6 +152,10 @@ impl WindowState {
         }
     }
 
+    pub fn set_show_cursorline(&mut self, show_cursorline: bool) {
+        self.show_cursorline = show_cursorline;
+    }
+
     pub fn scroll_to_cursor(&mut self) {
         if self.selections.selections.is_empty() {
             return;
@@ -174,6 +180,7 @@ impl WindowState {
         viewport: Viewport,
         show_gutter: bool,
         show_matches: bool,
+        show_cursorline: bool,
     ) -> Self {
         let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border, show_gutter);
         let cursor_row = selections.primary().head().to_point(&snapshot).row;
@@ -195,6 +202,7 @@ impl WindowState {
             pending_display_map: None,
             show_gutter,
             show_matches,
+            show_cursorline,
             folds: Vec::new(),
         }
     }

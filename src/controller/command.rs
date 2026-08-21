@@ -45,6 +45,9 @@ pub enum Command {
     Set {
         arguments: String,
     },
+    Syntax {
+        enable: bool,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -100,6 +103,10 @@ impl std::fmt::Debug for Command {
             Command::Set { arguments } => f
                 .debug_struct("Set")
                 .field("arguments", arguments)
+                .finish(),
+            Command::Syntax { enable } => f
+                .debug_struct("Syntax")
+                .field("enable", enable)
                 .finish(),
         }
     }

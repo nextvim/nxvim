@@ -244,6 +244,9 @@ impl Runtime {
         expand_before: u32,
         expand_after: u32,
     ) -> Option<()> {
+        if !self.app.syntax_highlight {
+            return Some(());
+        }
         let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
         let snapshot = buffer.snapshot().as_inner().clone();
@@ -528,8 +531,10 @@ impl Runtime {
                 }
             } else {
                 let show_number = self.app.config.get("number", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
+                let show_cursorline = self.app.config.get("cursorline", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
                 if let Some(state) = window.window_state_mut() {
                     state.set_show_gutter(show_number);
+                    state.set_show_cursorline(show_cursorline);
                 }
                 let (window_state, view) = window.refresh_parts::<TextView>();
                 if let (Some(window_state), Some(view)) = (window_state, view) {

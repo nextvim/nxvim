@@ -22,6 +22,7 @@ pub struct App {
     pub colorscheme: Option<vim_colorscheme::ColorScheme>,
     pub highlighter: Option<textmate::Highlighter<'static>>,
     pub config: config::ConfigStore,
+    pub syntax_highlight: bool,
 }
 
 impl App {
@@ -60,6 +61,7 @@ impl App {
             colorscheme: Some(colorscheme),
             highlighter: Some(highlighter),
             config: config::ConfigStore::new(),
+            syntax_highlight: true,
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use vim_ui::WindowId;
 use vim_buffer::BufferId;
+use vim_ui::WindowId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigValue {
@@ -72,7 +72,11 @@ impl ConfigRegistry {
     }
 
     pub fn lookup(&self, name_or_alias: &str) -> Option<&OptionSpec> {
-        let canonical_name = self.alias_to_name.get(name_or_alias).map(|s| s.as_str()).unwrap_or(name_or_alias);
+        let canonical_name = self
+            .alias_to_name
+            .get(name_or_alias)
+            .map(|s| s.as_str())
+            .unwrap_or(name_or_alias);
         self.specs.get(canonical_name)
     }
 
@@ -90,6 +94,13 @@ impl ConfigRegistry {
             default_value: ConfigValue::Bool(false),
             scope: OptionScope::WindowLocal,
             description: "Show relative line numbers",
+        });
+        self.register(OptionSpec {
+            name: "cursorline",
+            aliases: &["cul"],
+            default_value: ConfigValue::Bool(false),
+            scope: OptionScope::Global,
+            description: "Show line cursorline",
         });
         self.register(OptionSpec {
             name: "tabstop",
@@ -136,7 +147,12 @@ impl ConfigStore {
         &self.registry
     }
 
-    pub fn get(&self, name_or_alias: &str, buffer_id: Option<BufferId>, window_id: Option<WindowId>) -> Option<ConfigValue> {
+    pub fn get(
+        &self,
+        name_or_alias: &str,
+        buffer_id: Option<BufferId>,
+        window_id: Option<WindowId>,
+    ) -> Option<ConfigValue> {
         let spec = self.registry.lookup(name_or_alias)?;
         let name = spec.name;
 
@@ -165,8 +181,17 @@ impl ConfigStore {
         Some(spec.default_value.clone())
     }
 
-    pub fn set(&mut self, name_or_alias: &str, value: ConfigValue, buffer_id: Option<BufferId>, window_id: Option<WindowId>) -> Result<(), String> {
-        let spec = self.registry.lookup(name_or_alias).ok_or_else(|| format!("Unknown option: {name_or_alias}"))?;
+    pub fn set(
+        &mut self,
+        name_or_alias: &str,
+        value: ConfigValue,
+        buffer_id: Option<BufferId>,
+        window_id: Option<WindowId>,
+    ) -> Result<(), String> {
+        let spec = self
+            .registry
+            .lookup(name_or_alias)
+            .ok_or_else(|| format!("Unknown option: {name_or_alias}"))?;
         let name = spec.name.to_string();
 
         // Validate type
@@ -180,7 +205,10 @@ impl ConfigStore {
         match spec.scope {
             OptionScope::WindowLocal => {
                 if let Some(w_id) = window_id {
-                    self.window_local.entry(w_id).or_default().insert(name, value);
+                    self.window_local
+                        .entry(w_id)
+                        .or_default()
+                        .insert(name, value);
                 } else {
                     self.global.insert(name.clone(), value.clone());
                     // Apply to all windows if it's set globally
@@ -191,7 +219,10 @@ impl ConfigStore {
             }
             OptionScope::BufferLocal => {
                 if let Some(b_id) = buffer_id {
-                    self.buffer_local.entry(b_id).or_default().insert(name, value);
+                    self.buffer_local
+                        .entry(b_id)
+                        .or_default()
+                        .insert(name, value);
                 } else {
                     self.global.insert(name.clone(), value.clone());
                     for b_store in self.buffer_local.values_mut() {
@@ -207,20 +238,33 @@ impl ConfigStore {
         Ok(())
     }
 
-    pub fn execute_set_command(&mut self, arguments: &str, buffer_id: Option<BufferId>, window_id: Option<WindowId>) -> Result<Option<String>, String> {
+    pub fn execute_set_command(
+        &mut self,
+        arguments: &str,
+        buffer_id: Option<BufferId>,
+        window_id: Option<WindowId>,
+    ) -> Result<Option<String>, String> {
         let args_str = arguments.trim();
         if args_str.is_empty() {
-            return Ok(Some("number relativenumber tabstop shiftwidth expandtab".to_string()));
+            return Ok(Some(
+                "number relativenumber tabstop shiftwidth expandtab".to_string(),
+            ));
         }
 
         let mut output = Vec::new();
-        let parts = args_str.split(|c| c == ' ' || c == ',' || c == '\t').filter(|s| !s.is_empty());
+        let parts = args_str
+            .split(|c| c == ' ' || c == ',' || c == '\t')
+            .filter(|s| !s.is_empty());
         for part in parts {
             if part.ends_with('?') {
                 let opt_name = &part[..part.len() - 1];
-                let spec = self.registry.lookup(opt_name).ok_or_else(|| format!("Unknown option: {opt_name}"))?;
+                let spec = self
+                    .registry
+                    .lookup(opt_name)
+                    .ok_or_else(|| format!("Unknown option: {opt_name}"))?;
                 let canonical_name = spec.name;
-                let val = self.get(opt_name, buffer_id, window_id)
+                let val = self
+                    .get(opt_name, buffer_id, window_id)
                     .ok_or_else(|| format!("Unknown option: {opt_name}"))?;
                 match val {
                     ConfigValue::Bool(b) => output.push(format!("{}={}", canonical_name, b)),
@@ -231,14 +275,21 @@ impl ConfigStore {
                 let mut split = part.splitn(2, '=');
                 let opt_name = split.next().unwrap().trim();
                 let val_str = split.next().unwrap().trim();
-                let spec = self.registry.lookup(opt_name).ok_or_else(|| format!("Unknown option: {opt_name}"))?;
+                let spec = self
+                    .registry
+                    .lookup(opt_name)
+                    .ok_or_else(|| format!("Unknown option: {opt_name}"))?;
                 let val = match &spec.default_value {
                     ConfigValue::Bool(_) => {
-                        let b = val_str.parse::<bool>().map_err(|_| format!("Invalid bool value: {val_str}"))?;
+                        let b = val_str
+                            .parse::<bool>()
+                            .map_err(|_| format!("Invalid bool value: {val_str}"))?;
                         ConfigValue::Bool(b)
                     }
                     ConfigValue::Number(_) => {
-                        let n = val_str.parse::<i64>().map_err(|_| format!("Invalid number value: {val_str}"))?;
+                        let n = val_str
+                            .parse::<i64>()
+                            .map_err(|_| format!("Invalid number value: {val_str}"))?;
                         ConfigValue::Number(n)
                     }
                     ConfigValue::String(_) => ConfigValue::String(val_str.to_string()),
@@ -279,25 +330,54 @@ mod tests {
         let b_id = BufferId::new(1).unwrap();
 
         // Default values
-        assert_eq!(store.get("number", Some(b_id), Some(w_id)), Some(ConfigValue::Bool(false)));
-        assert_eq!(store.get("tabstop", Some(b_id), Some(w_id)), Some(ConfigValue::Number(8)));
+        assert_eq!(
+            store.get("number", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Bool(false))
+        );
+        assert_eq!(
+            store.get("tabstop", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Number(8))
+        );
 
         // Set local values
-        store.set("number", ConfigValue::Bool(true), Some(b_id), Some(w_id)).unwrap();
-        assert_eq!(store.get("number", Some(b_id), Some(w_id)), Some(ConfigValue::Bool(true)));
+        store
+            .set("number", ConfigValue::Bool(true), Some(b_id), Some(w_id))
+            .unwrap();
+        assert_eq!(
+            store.get("number", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Bool(true))
+        );
 
         // Set command parsing
-        store.execute_set_command("ts=4 nonumber", Some(b_id), Some(w_id)).unwrap();
-        assert_eq!(store.get("tabstop", Some(b_id), Some(w_id)), Some(ConfigValue::Number(4)));
-        assert_eq!(store.get("number", Some(b_id), Some(w_id)), Some(ConfigValue::Bool(false)));
+        store
+            .execute_set_command("ts=4 nonumber", Some(b_id), Some(w_id))
+            .unwrap();
+        assert_eq!(
+            store.get("tabstop", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Number(4))
+        );
+        assert_eq!(
+            store.get("number", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Bool(false))
+        );
 
         // Querying
-        let query_res = store.execute_set_command("ts?", Some(b_id), Some(w_id)).unwrap();
+        let query_res = store
+            .execute_set_command("ts?", Some(b_id), Some(w_id))
+            .unwrap();
         assert_eq!(query_res, Some("tabstop=4".to_string()));
 
         // Commas separation
-        store.execute_set_command("number, rnu", Some(b_id), Some(w_id)).unwrap();
-        assert_eq!(store.get("number", Some(b_id), Some(w_id)), Some(ConfigValue::Bool(true)));
-        assert_eq!(store.get("relativenumber", Some(b_id), Some(w_id)), Some(ConfigValue::Bool(true)));
+        store
+            .execute_set_command("number, rnu", Some(b_id), Some(w_id))
+            .unwrap();
+        assert_eq!(
+            store.get("number", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Bool(true))
+        );
+        assert_eq!(
+            store.get("relativenumber", Some(b_id), Some(w_id)),
+            Some(ConfigValue::Bool(true))
+        );
     }
 }
