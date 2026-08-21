@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn test_load_default() {
         let scheme = ColorScheme::load_default();
-        assert_eq!(scheme.metadata.name, "tokyonight-moon");
+        assert_eq!(scheme.metadata.name, "kanagawa");
         assert!(scheme.styles.contains_key("Normal"));
         assert!(scheme.styles.contains_key("keyword"));
 

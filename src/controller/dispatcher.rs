@@ -81,6 +81,15 @@ impl Dispatcher {
             Command::ClearSearchHighlight => {
                 LifecycleHandler::clear_search_highlight(&mut app.model)
             }
+            Command::Colorscheme { name } => {
+                LifecycleHandler::colorscheme(
+                    &mut app.ui,
+                    &mut app.model,
+                    &mut app.colorscheme,
+                    &mut app.highlighter,
+                    name.as_deref(),
+                )
+            }
             Command::RangeOp {
                 operation,
                 bang,

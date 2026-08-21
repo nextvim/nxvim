@@ -351,4 +351,21 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn test_colorscheme_command_is_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("colorscheme").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Colorscheme { name: None })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("colo tokyonight").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Colorscheme { name: Some(ref name) }) if name == "tokyonight"
+        ));
+    }
 }

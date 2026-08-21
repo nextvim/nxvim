@@ -287,9 +287,9 @@ pub fn parse_scopes_cancellable(
     existing_checkpoints: &[ParseStateCheckpoint],
     highlighter: Option<&Highlighter>,
     colorscheme: &vim_colorscheme::ColorScheme,
-    map_differently: bool,
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Option<(Vec<HighlightedRow>, Vec<ParseStateCheckpoint>)> {
+    let map_differently = true;
     let syntax_set = syntax_set();
     let syntax = file_path
         .and_then(|path| Path::new(path).extension())
@@ -443,6 +443,12 @@ impl BufferHighlightState {
         self.rows.get(&row).map(|spans| spans.as_slice())
     }
 
+    pub fn invalidate(&mut self) {
+        self.checkpoints.clear();
+        self.rows.clear();
+        self.published_snapshot = None;
+    }
+
     fn nearest_checkpoint(&self, target_row: u32) -> Option<ParseStateCheckpoint> {
         let mut row = target_row - (target_row % CHECKPOINT_INTERVAL);
         loop {
@@ -487,7 +493,6 @@ pub fn highlight_run(
     expand_after: u32,
     highlighter: Option<&Highlighter>,
     colorscheme: &vim_colorscheme::ColorScheme,
-    map_differently: bool,
 ) {
     let row_start = row_start.saturating_sub(expand_before);
     let row_end = row_end.saturating_add(expand_after);
@@ -526,7 +531,6 @@ pub fn highlight_run(
         &existing_checkpoints,
         highlighter,
         colorscheme,
-        map_differently,
         || false,
     ) {
         state
@@ -557,7 +561,7 @@ mod tests {
         let snapshot = buffer.snapshot().as_inner().clone();
         let colorscheme = vim_colorscheme::ColorScheme::load_default();
 
-        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0, None, &colorscheme, false);
+        highlight_run(&mut state, &snapshot, Some("main.rs"), 2, 5, 0, 0, None, &colorscheme);
 
         for r in 2..=5 {
             assert!(state.highlight_row(r).is_some());
@@ -585,7 +589,6 @@ mod tests {
             500,
             None,
             &colorscheme,
-            false,
         );
 
         assert!(state.highlight_row(100).is_some());

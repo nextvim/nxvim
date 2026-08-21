@@ -39,6 +39,9 @@ pub enum Command {
     },
     Task(crate::app::services::TaskResult),
     ClearSearchHighlight,
+    Colorscheme {
+        name: Option<String>,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -87,6 +90,10 @@ impl std::fmt::Debug for Command {
                 .finish(),
             Command::Task(_) => write!(f, "Task(...)"),
             Command::ClearSearchHighlight => write!(f, "ClearSearchHighlight"),
+            Command::Colorscheme { name } => f
+                .debug_struct("Colorscheme")
+                .field("name", name)
+                .finish(),
         }
     }
 }

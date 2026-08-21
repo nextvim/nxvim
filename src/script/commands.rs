@@ -29,6 +29,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "delete" => delete(request),
         "yank" => yank(request),
         "put" => put(request),
+        "colorscheme" => colorscheme(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -195,4 +196,14 @@ fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
         }),
         _ => unreachable!(),
     }
+}
+
+fn colorscheme(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let name = request.command.arguments.trim();
+    let name_opt = if name.is_empty() {
+        None
+    } else {
+        Some(name.to_owned())
+    };
+    Ok(Command::Colorscheme { name: name_opt })
 }
