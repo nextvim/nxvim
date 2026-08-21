@@ -775,8 +775,8 @@ impl Action {
             Action::Yank { .. } => Action::Yank { count },
             Action::UpperCase { .. } => Action::UpperCase { count },
             Action::LowerCase { .. } => Action::LowerCase { count },
-            Action::Fold { .. } => Action::Fold { count },
-            Action::Unfold { .. } => Action::Unfold { count },
+            Action::Fold { .. } => Action::Fold { count: 1 },
+            Action::Unfold { .. } => Action::Unfold { count: 1 },
             Action::MoveToWord { .. } => Action::MoveToWord {
                 count,
                 select: false,

@@ -3,9 +3,11 @@
 //! This module wires model, controller-facing services, UI synchronization,
 //! and scripting. Semantic state remains in `model` and behavior in `controller`.
 pub mod args;
+pub mod config;
 pub mod services;
 pub mod ui;
 pub mod windows;
+
 
 use windows::WindowOps;
 
@@ -19,6 +21,7 @@ pub struct App {
     pub command_queue: std::collections::VecDeque<crate::controller::Command>,
     pub colorscheme: Option<vim_colorscheme::ColorScheme>,
     pub highlighter: Option<textmate::Highlighter<'static>>,
+    pub config: config::ConfigStore,
 }
 
 impl App {
@@ -56,6 +59,7 @@ impl App {
             command_queue: std::collections::VecDeque::new(),
             colorscheme: Some(colorscheme),
             highlighter: Some(highlighter),
+            config: config::ConfigStore::new(),
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());

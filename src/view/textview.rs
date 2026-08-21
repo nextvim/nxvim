@@ -322,6 +322,12 @@ pub fn build_text(
         None
     };
 
+    let gutter_foreground = colorscheme
+        .and_then(|cs| cs.get_style("LineNr"))
+        .and_then(|s| s.fg)
+        .or(default_style.fg)
+        .or(Some(vim_ui::Color::Grey));
+
     vim_ui::TextViewModel {
         viewport_width: inner_rect.width,
         viewport_height: inner_rect.height,
@@ -334,11 +340,11 @@ pub fn build_text(
             visible_rows: inner_rect.height as u32,
             cursor_row,
             track_style: vim_ui::Style {
-                bg: Some(vim_ui::Color::DarkGrey),
+                bg: default_style.bg,
                 ..Default::default()
             },
             thumb_style: vim_ui::Style {
-                bg: Some(vim_ui::Color::Grey),
+                bg: gutter_foreground,
                 ..Default::default()
             },
             cursor_style: Some(vim_ui::Style {

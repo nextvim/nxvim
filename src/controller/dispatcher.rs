@@ -90,6 +90,20 @@ impl Dispatcher {
                     name.as_deref(),
                 )
             }
+            Command::Set { arguments } => {
+                let active_window = app.ui.focused_window_id();
+                let buffer_id = crate::app::windows::WindowOps::window_buffer(&app.ui, active_window);
+                match app.config.execute_set_command(&arguments, buffer_id, Some(active_window)) {
+                    Ok(Some(msg)) => {
+                        app.model.status = Some(msg);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        app.model.status = Some(format!("Error: {}", err));
+                    }
+                }
+                CommandOutcome::redraw()
+            }
             Command::RangeOp {
                 operation,
                 bang,

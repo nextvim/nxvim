@@ -42,6 +42,9 @@ pub enum Command {
     Colorscheme {
         name: Option<String>,
     },
+    Set {
+        arguments: String,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -93,6 +96,10 @@ impl std::fmt::Debug for Command {
             Command::Colorscheme { name } => f
                 .debug_struct("Colorscheme")
                 .field("name", name)
+                .finish(),
+            Command::Set { arguments } => f
+                .debug_struct("Set")
+                .field("arguments", arguments)
                 .finish(),
         }
     }

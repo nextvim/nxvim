@@ -368,4 +368,21 @@ mod tests {
             Some(Command::Colorscheme { name: Some(ref name) }) if name == "tokyonight"
         ));
     }
+
+    #[test]
+    fn test_set_command_is_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("set number").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Set { ref arguments }) if arguments == "number"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("se ts=4").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Set { ref arguments }) if arguments == "ts=4"
+        ));
+    }
 }
