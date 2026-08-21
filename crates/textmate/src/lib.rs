@@ -261,6 +261,15 @@ pub fn load_colorscheme(colorscheme: &vim_colorscheme::ColorScheme) -> Highlight
     }
 
     update_color(&mut theme.settings.line_highlight);
+    update_color(&mut theme.settings.selection_border);
+    update_color(&mut theme.settings.inactive_selection);
+    update_color(&mut theme.settings.find_highlight);
+    update_color(&mut theme.settings.find_highlight_foreground);
+    update_color(&mut theme.settings.guide);
+    update_color(&mut theme.settings.active_guide);
+    update_color(&mut theme.settings.stack_guide);
+    update_color(&mut theme.settings.gutter);
+    update_color(&mut theme.settings.gutter_foreground);
     update_color(&mut theme.settings.shadow);
     update_color(&mut theme.settings.accent);
 
