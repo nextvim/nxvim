@@ -497,11 +497,13 @@ mod tests {
 }
 
 fn cursor_shape(mode: vim_input::Mode) -> vim_ui::model::CursorShape {
-    if mode == vim_input::Mode::Insert {
-        vim_ui::model::CursorShape::BlinkingBar
-        // vim_ui::model::CursorShape::BlinkingBlock
-    } else {
-        vim_ui::model::CursorShape::Block
+    match mode {
+        vim_input::Mode::Replace => vim_ui::model::CursorShape::Underline,
+        vim_input::Mode::Insert => {
+            vim_ui::model::CursorShape::BlinkingBar
+            // vim_ui::model::CursorShape::BlinkingBlock
+        }
+        _ => vim_ui::model::CursorShape::Block,
     }
 }
 

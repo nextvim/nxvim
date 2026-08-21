@@ -238,6 +238,7 @@ impl Dispatcher {
                             | vim_input::Action::SetToOpenLineBelow { .. }
                             | vim_input::Action::SetToOpenLineAbove { .. }
                             | vim_input::Action::SetToInsert
+                            | vim_input::Action::SetToReplace
                             | vim_input::Action::SetToAppend
                             | vim_input::Action::SetToAppendEndOfLine
                             | vim_input::Action::SetToInsertStartOfLineNonSpace
@@ -247,6 +248,7 @@ impl Dispatcher {
                         let is_insert_entering = matches!(
                             action,
                             vim_input::Action::SetToInsert
+                                | vim_input::Action::SetToReplace
                                 | vim_input::Action::SetToAppend
                                 | vim_input::Action::SetToAppendEndOfLine
                                 | vim_input::Action::SetToInsertStartOfLineNonSpace
@@ -264,12 +266,12 @@ impl Dispatcher {
                                 app.services.repeat_actions = Some(vec![action.clone()]);
                                 app.services.recording_repeat = None;
                             }
-                        } else if mode_before == vim_input::Mode::Insert {
+                        } else if mode_before.is_insert() {
                             if let Some(ref mut rec) = app.services.recording_repeat {
                                 rec.push(action.clone());
                             }
                         }
-                    } else if mode_before == vim_input::Mode::Insert {
+                    } else if mode_before.is_insert() {
                         if let Some(ref mut rec) = app.services.recording_repeat {
                             rec.push(action.clone());
                         }

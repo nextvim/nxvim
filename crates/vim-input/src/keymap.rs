@@ -791,6 +791,9 @@ impl Keymap {
             .bind("A", Action::SetToAppendEndOfLine)
             .expect("Valid binding");
         mode_actions
+            .bind("R", Action::SetToReplace)
+            .expect("Valid binding");
+        mode_actions
             .bind("o", Action::SetToOpenLineBelow { count: 1 })
             .expect("Valid binding");
         mode_actions
@@ -922,6 +925,9 @@ impl Keymap {
             .expect("Valid binding");
         visual_actions
             .bind("I", Action::SetToInsert)
+            .expect("Valid binding");
+        visual_actions
+            .bind("R", Action::SetToReplace)
             .expect("Valid binding");
         visual_actions
             .bind("~", Action::ChangeCase { count: 1 })
