@@ -445,6 +445,9 @@ impl Editor {
             Action::SetToInsert => {
                 return Some(Mode::Insert);
             }
+            Action::SetToReplace => {
+                return Some(Mode::Replace);
+            }
             Action::SetToAppend => {
                 let cursors = buffer_display_context.selections.selections.clone();
                 for cursor in cursors.iter() {
@@ -498,6 +501,7 @@ impl Editor {
                         &mut buffer_display_context.selections,
                         &mut buffer_display_context.folds,
                         &self.new_line(buffer),
+                        false,
                     );
                 }
                 let target_point = Point {
@@ -549,6 +553,7 @@ impl Editor {
                         &mut buffer_display_context.selections,
                         &mut buffer_display_context.folds,
                         &self.new_line(buffer),
+                        false,
                     );
                 }
                 let target_point = Point {
@@ -1398,6 +1403,7 @@ impl Editor {
                     &mut buffer_display_context.selections,
                     &mut buffer_display_context.folds,
                     text,
+                    mode == Mode::Replace,
                 );
             }
             Action::DeleteChar { count } | Action::Delete { count } => {
@@ -2062,6 +2068,7 @@ impl Editor {
                         &mut buffer_display_context.selections,
                         &mut buffer_display_context.folds,
                         &self.new_line(buffer),
+                        mode == Mode::Replace,
                     );
                 }
             }
@@ -2081,6 +2088,7 @@ impl Editor {
                         &mut buffer_display_context.selections,
                         &mut buffer_display_context.folds,
                         &self.new_line(buffer),
+                        mode == Mode::Replace,
                     );
                     motion = Action::NoOp;
                 }
@@ -2095,6 +2103,7 @@ impl Editor {
                         &mut buffer_display_context.selections,
                         &mut buffer_display_context.folds,
                         " ",
+                        mode == Mode::Replace,
                     );
                 }
             }
@@ -2488,7 +2497,7 @@ impl Editor {
             vim_clipboard::ClipboardKind::Character | vim_clipboard::ClipboardKind::Block => {
                 // selections.move_right(false, 1, buffer.as_text_buffer());
                 for _ in 0..count {
-                    self.insert_text(buffer, selections, folds, &text);
+                    self.insert_text(buffer, selections, folds, &text, false);
                 }
             }
             vim_clipboard::ClipboardKind::Line => {
@@ -2503,10 +2512,10 @@ impl Editor {
                     selections.move_to_start_of_next_line(false, buffer.as_text_buffer());
                 } else {
                     selections.move_to_end_of_line(false, buffer.as_text_buffer());
-                    self.insert_text(buffer, selections, folds, &self.new_line(buffer));
+                    self.insert_text(buffer, selections, folds, &self.new_line(buffer), false);
                 }
                 for _ in 0..count {
-                    self.insert_text(buffer, selections, folds, &text);
+                    self.insert_text(buffer, selections, folds, &text, false);
                 }
             }
         }
@@ -2518,26 +2527,41 @@ impl Editor {
         selections: &mut SelectionSet,
         folds: &mut Vec<display_map::Fold>,
         text: &str,
+        replace: bool,
     ) {
+        if replace {
+            let count = text.chars().count() as u32;
+            selections.move_right(true, count, buffer.as_text_buffer());
+            selections.collapse_overlapping_cursors(buffer.as_text_buffer());
+        }
+
         let mut edits = Vec::new();
         let cursors = selections.selections.clone();
         for cursor in cursors.iter() {
-            let start = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
-            edits.push((start, text.to_string()));
+            let start = buffer.as_text_buffer().offset_for_anchor(&cursor.tail());
+            let end = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+            edits.push((start, end, text.to_string()));
         }
 
-        for &(start, _) in &edits {
-            remove_overlapping_folds(folds, buffer.as_text_buffer(), start, start);
+        for &(start, end, _) in &edits {
+            remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
         }
 
         let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-        for &(start, ref text_val) in &edits {
-            tx.insert(None, vim_buffer::ByteOffset(start), text_val.clone());
+        for &(start, end, ref text_val) in &edits {
+            tx.replace(
+                None,
+                vim_buffer::TextRange {
+                    start: vim_buffer::ByteOffset(start),
+                    end: vim_buffer::ByteOffset(end),
+                },
+                text_val.clone(),
+            );
         }
         let _ = tx.commit(Some(selections.clone()));
 
         for cursor in cursors.iter() {
-            let start = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+            let start = buffer.as_text_buffer().offset_for_anchor(&cursor.tail());
             let new_offset = buffer
                 .as_text_buffer()
                 .clip_offset(start + text.len(), Bias::Left);
@@ -3698,5 +3722,47 @@ mod tests {
             .chunks_in_range(0..buffer.as_text_buffer().len())
             .collect();
         assert_eq!(buffer_text, "Hello WORLD Again");
+    }
+
+    #[test]
+    fn test_replace_mode_insert_text() {
+        let text = "Hello World".to_string();
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+
+        // Put cursor at the start of "World" (index 6).
+        window_state.selections.selections.clear();
+        window_state.selections.add(buffer.as_text_buffer(), 6);
+
+        let editor = Editor::new();
+
+        // In Replace mode, inserting "X" should replace "W".
+        editor
+            .execute(
+                Mode::Replace,
+                &Action::InsertText("X".to_string()),
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let buffer_text: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(0..buffer.as_text_buffer().len())
+            .collect();
+        assert_eq!(buffer_text, "Hello Xorld");
+
+        // Cursor should move to index 7 (after 'X', at 'o').
+        let point = window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.as_text_buffer());
+        assert_eq!(point.column, 7);
     }
 }

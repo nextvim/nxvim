@@ -251,6 +251,33 @@ fn test_insert_mode() {
 }
 
 #[test]
+fn test_replace_mode() {
+    let keymap = Keymap::vim_defaults();
+    let mut resolver = Resolver::new(Mode::Normal);
+
+    // Enter replace mode
+    let _outcomes = run_keys(&mut resolver, &keymap, "R");
+    assert_eq!(resolver.mode(), Mode::Replace);
+
+    // Type text in Replace mode (functionally identical to Insert mode for now)
+    let outcomes = run_keys(&mut resolver, &keymap, "H");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::InsertText("H".to_string())
+    );
+
+    let outcomes = run_keys(&mut resolver, &keymap, "<CR>");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::InsertNewLine { count: 1 }
+    );
+
+    // Exit replace mode
+    let _outcomes = run_keys(&mut resolver, &keymap, "<Esc>");
+    assert_eq!(resolver.mode(), Mode::Normal);
+}
+
+#[test]
 fn test_registers() {
     let keymap = Keymap::vim_defaults();
     let mut resolver = Resolver::new(Mode::Normal);
