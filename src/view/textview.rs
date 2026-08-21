@@ -149,7 +149,17 @@ pub fn build_text(
         let gutter_width = gutter_text.len() as u32;
         let cursor_offset = gutter_width as u32;
 
-        let gutter_style = default_style.clone();
+        let mut gutter_style = default_style.clone();
+        if let Some(cs) = colorscheme {
+            if let Some(line_nr_style) = cs.get_style("LineNr") {
+                gutter_style.fg = line_nr_style.fg.or(default_style.fg);
+                gutter_style.bg = line_nr_style.bg.or(default_style.bg);
+                gutter_style.bold = line_nr_style.bold;
+                gutter_style.italic = line_nr_style.italic;
+                gutter_style.underline = line_nr_style.underline;
+                gutter_style.strikethrough = line_nr_style.strikethrough;
+            }
+        }
         let mut search_style = colorscheme
             .and_then(|cs| cs.get_style("Search"))
             .cloned()
@@ -223,7 +233,22 @@ pub fn build_text(
             let mut style = default_style.clone();
             if selection_state.selected_cell || selection_state.at_cursor_head {
                 if !selection_state.at_primary_cursor_head {
-                    style.bg = search_style.bg;
+                    if let Some(cs) = colorscheme {
+                        if let Some(sel_color) = cs.selection {
+                            style.bg = Some(sel_color);
+                        } else if let Some(visual_style) = cs.get_style("Visual") {
+                            if let Some(bg) = visual_style.bg {
+                                style.bg = Some(bg);
+                            }
+                            if let Some(fg) = visual_style.fg {
+                                style.fg = Some(fg);
+                            }
+                        } else {
+                            style.bg = search_style.bg;
+                        }
+                    } else {
+                        style.bg = search_style.bg;
+                    }
                 }
             } else if in_match {
                 style.bg = search_style.bg;

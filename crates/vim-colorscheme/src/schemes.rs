@@ -1,0 +1,26 @@
+pub fn get_scheme_content(name: &str) -> Option<&'static str> {
+    match name.to_lowercase().as_str() {
+        "carbonfox" => Some(include_str!("./schemes/carbonfox.toml")),
+        "catppuccin-frappe" => Some(include_str!("./schemes/catppuccin-frappe.toml")),
+        "catppuccin-latte" => Some(include_str!("./schemes/catppuccin-latte.toml")),
+        "catppuccin-macchiato" => Some(include_str!("./schemes/catppuccin-macchiato.toml")),
+        "catppuccin" | "catppuccin-mocha" => Some(include_str!("./schemes/catppuccin.toml")),
+        "dawnfox" => Some(include_str!("./schemes/dawnfox.toml")),
+        "dayfox" => Some(include_str!("./schemes/dayfox.toml")),
+        "duskfox" => Some(include_str!("./schemes/duskfox.toml")),
+        "gruvbox-material" => Some(include_str!("./schemes/gruvbox-material.toml")),
+        "kanagawa" => Some(include_str!("./schemes/kanagawa.toml")),
+        "nightfox" => Some(include_str!("./schemes/nightfox.toml")),
+        "nordfox" => Some(include_str!("./schemes/nordfox.toml")),
+        "onedark" => Some(include_str!("./schemes/onedark.toml")),
+        "rose-pine-dawn" => Some(include_str!("./schemes/rose-pine-dawn.toml")),
+        "rose-pine-moon" => Some(include_str!("./schemes/rose-pine-moon.toml")),
+        "rose-pine" => Some(include_str!("./schemes/rose-pine.toml")),
+        "terafox" => Some(include_str!("./schemes/terafox.toml")),
+        "tokyonight-day" => Some(include_str!("./schemes/tokyonight-day.toml")),
+        "tokyonight-night" => Some(include_str!("./schemes/tokyonight-night.toml")),
+        "tokyonight-storm" => Some(include_str!("./schemes/tokyonight-storm.toml")),
+        "tokyonight" => Some(include_str!("./schemes/tokyonight.toml")),
+        _ => None,
+    }
+}

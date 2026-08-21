@@ -4,6 +4,8 @@ use std::path::Path;
 use serde::Deserialize;
 use crossterm::style::Color as CrossColor;
 
+mod schemes;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     Reset,
@@ -178,12 +180,7 @@ impl ColorScheme {
     }
 
     pub fn get_by_name(name: &str) -> Option<Self> {
-        let contents = match name.to_lowercase().as_str() {
-            "catppuccin" | "catppuccin-mocha" => Some(include_str!("./schemes/catppuccin.toml")),
-            "tokyonight" => Some(include_str!("./schemes/tokyonight.toml")),
-            "kanagawa" => Some(include_str!("./schemes/kanagawa.toml")),
-            _ => None,
-        };
+        let contents = schemes::get_scheme_content(name);
         contents.and_then(|c| Self::load_from_str(c).ok())
     }
 
@@ -439,7 +436,7 @@ mod tests {
     #[test]
     fn test_load_default() {
         let scheme = ColorScheme::load_default();
-        assert_eq!(scheme.metadata.name, "kanagawa");
+        assert_eq!(scheme.metadata.name, "tokyonight-moon");
         assert!(scheme.styles.contains_key("Normal"));
         assert!(scheme.styles.contains_key("keyword"));
 
