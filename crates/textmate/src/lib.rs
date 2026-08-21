@@ -110,6 +110,17 @@ pub fn map_scope_to_style(
     'outer: for scope in scopes.iter().rev() {
         let scope_str = scope.to_string();
 
+        if let Some(last_scope) = scope_str.split('.').last() {
+            for &(pattern, key) in SCOPE_MAPPINGS {
+                if last_scope.contains(pattern) {
+                    if let Some(style) = colorscheme.get_style(key) {
+                        resolved_style = style.clone();
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
         for &(pattern, key) in SCOPE_MAPPINGS {
             if scope_str.contains(pattern) {
                 if let Some(style) = colorscheme.get_style(key) {
@@ -566,6 +577,33 @@ mod tests {
     use super::*;
     use clock::ReplicaId;
     use vim_buffer::{Buffer, BufferId};
+
+    #[test]
+    fn test_map_scope_to_style_last_segment() {
+        let mut colorscheme = vim_colorscheme::ColorScheme::new(vim_colorscheme::Metadata {
+            name: "test".to_string(),
+            r#type: Some("dark".to_string()),
+            author: None,
+            description: None,
+            github: None,
+        });
+        
+        let mut keyword_style = vim_colorscheme::Style::default();
+        keyword_style.bold = true;
+        colorscheme.insert_style("keyword", keyword_style);
+
+        let mut comment_style = vim_colorscheme::Style::default();
+        comment_style.italic = true;
+        colorscheme.insert_style("comment", comment_style);
+
+        // A scope string where the last part is 'keyword' but 'comment' is in the full scope string
+        let scope = syntect::parsing::Scope::new("comment.line.keyword").unwrap();
+        let style = map_scope_to_style(&[scope], &colorscheme);
+        
+        // Since 'keyword' is the last segment, it should match first, so bold should be true
+        assert!(style.bold);
+        assert!(!style.italic);
+    }
 
     #[test]
     fn test_highlight_run_non_expanded() {

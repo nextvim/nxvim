@@ -42,6 +42,7 @@ impl Runtime {
         let mut is_idle = false;
         let mut idle_since: Option<std::time::Instant> = None;
 
+
         'main_loop: loop {
             let current_rect = self.app.ui.screen_rect();
             if let Ok(new_rect) = self.terminal.size() {
