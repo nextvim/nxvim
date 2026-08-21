@@ -486,7 +486,7 @@ fn build_single_row_transforms(
                 transforms.push(Transform::wrap(), ());
                 visual_column = 0;
             }
-            if display_width == 1 {
+            if display_width == input_width {
                 push_isomorphic(transforms, Point::new(0, input_width));
             } else {
                 record_transform();

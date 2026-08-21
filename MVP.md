@@ -257,7 +257,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 ## 18. Configuration
 *All editor options are hardcoded; Ex `:set` is unimplemented.*
 
-[ ] `:set number` / `:set nonumber`
+[x] `:set number` / `:set nonumber`
 [ ] `:set relativenumber`
 [ ] `:set tabstop` / `shiftwidth` / `expandtab`
 [ ] `:set ignorecase` / `smartcase`

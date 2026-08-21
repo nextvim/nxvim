@@ -174,7 +174,7 @@ pub fn build_text(
         let mut display_column = 0u32;
         for (char_index, mut character) in line.chars().enumerate() {
             let mut char_len = character.len_utf8();
-            let mut char_width = character.width().unwrap_or(1) as u32;
+            let mut char_width = character.width().unwrap_or(0) as u32;
 
             let current_display_column = display_column;
             let is_eol = byte_column + char_len == line_len;
