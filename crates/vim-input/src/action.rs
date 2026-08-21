@@ -2,6 +2,7 @@
 pub enum Mode {
     Normal,
     Insert,
+    Replace,
     Visual,
     VisualLine,
     VisualBlock,
@@ -12,6 +13,10 @@ impl Mode {
     pub fn is_visual(&self) -> bool {
         matches!(self, Mode::Visual | Mode::VisualLine | Mode::VisualBlock)
     }
+
+    pub fn is_insert(&self) -> bool {
+        matches!(self, Mode::Insert | Mode::Replace)
+    }
 }
 
 impl std::fmt::Display for Mode {
@@ -19,6 +24,7 @@ impl std::fmt::Display for Mode {
         let name = match self {
             Mode::Normal => "Normal",
             Mode::Insert => "Insert",
+            Mode::Replace => "Replace",
             Mode::Visual => "Visual",
             Mode::VisualLine => "V-Line",
             Mode::VisualBlock => "V-Block",

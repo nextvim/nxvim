@@ -320,6 +320,14 @@ impl Editor {
         buffer_display_context: &mut WindowState,
         services: &mut crate::app::services::Services,
     ) -> Option<Mode> {
+        let mut previous_heads = std::collections::HashMap::new();
+        for selection in &buffer_display_context.selections.selections {
+            previous_heads.insert(
+                selection.id,
+                selection.head().to_point(buffer.as_text_buffer()),
+            );
+        }
+
         let mut action_owned = action.clone();
         if mode.is_visual() {
             action_owned = action_owned.with_select(true);
@@ -488,6 +496,7 @@ impl Editor {
                     self.insert_text(
                         buffer,
                         &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
                         &self.new_line(buffer),
                     );
                 }
@@ -538,6 +547,7 @@ impl Editor {
                     self.insert_text(
                         buffer,
                         &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
                         &self.new_line(buffer),
                     );
                 }
@@ -1383,7 +1393,12 @@ impl Editor {
                     &mut buffer_display_context.folds,
                     0,
                 );
-                self.insert_text(buffer, &mut buffer_display_context.selections, text);
+                self.insert_text(
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    text,
+                );
             }
             Action::DeleteChar { count } | Action::Delete { count } => {
                 if *count > 1
@@ -1573,6 +1588,14 @@ impl Editor {
                 }
 
                 if !edits.is_empty() {
+                    for &(start, end, _) in &edits {
+                        remove_overlapping_folds(
+                            &mut buffer_display_context.folds,
+                            buffer.as_text_buffer(),
+                            start,
+                            end,
+                        );
+                    }
                     let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
                     for &(start, end, ref toggled) in &edits {
                         tx.replace(
@@ -1620,6 +1643,7 @@ impl Editor {
                 self.change_case_lines(
                     buffer,
                     &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
                     *count,
                     change,
                 );
@@ -1650,6 +1674,13 @@ impl Editor {
                     .chunks_in_range(start_offset..end_offset)
                     .collect();
                 services.clipboard.set_lines(text);
+
+                remove_overlapping_folds(
+                    &mut buffer_display_context.folds,
+                    buffer.as_text_buffer(),
+                    start_offset,
+                    end_offset,
+                );
 
                 let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
                 tx.delete(
@@ -1703,6 +1734,12 @@ impl Editor {
                     if !insert_text.ends_with('\n') {
                         insert_text.push('\n');
                     }
+                    remove_overlapping_folds(
+                        &mut buffer_display_context.folds,
+                        buffer.as_text_buffer(),
+                        0,
+                        0,
+                    );
                     let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
                     tx.insert(None, vim_buffer::ByteOffset(0), insert_text);
                     let _ = tx.commit(Some(buffer_display_context.selections.clone()));
@@ -1722,7 +1759,13 @@ impl Editor {
                     buffer_display_context
                         .selections
                         .add(buffer.as_text_buffer(), anchor_offset);
-                    self.paste(buffer, &mut buffer_display_context.selections, 1, services);
+                    self.paste(
+                        buffer,
+                        &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
+                        1,
+                        services,
+                    );
                 }
             }
             Action::DeleteLine { count } | Action::ChangeLine { count } => {
@@ -1803,6 +1846,13 @@ impl Editor {
 
                     let delete_start = end_of_current;
                     let delete_end = end_of_current + 1 + leading_whitespace_len;
+
+                    remove_overlapping_folds(
+                        &mut buffer_display_context.folds,
+                        buffer.as_text_buffer(),
+                        delete_start,
+                        delete_end,
+                    );
 
                     let current_line_text = Self::row_text(buffer, current_row);
                     let ends_with_space = current_line_text.as_str().ends_with(char::is_whitespace);
@@ -1938,6 +1988,7 @@ impl Editor {
                             self.change_case_text_object(
                                 buffer,
                                 &mut buffer_display_context.selections,
+                                &mut buffer_display_context.folds,
                                 inclusive,
                                 change,
                             );
@@ -1964,6 +2015,7 @@ impl Editor {
                             self.change_case_text(
                                 buffer,
                                 &mut buffer_display_context.selections,
+                                &mut buffer_display_context.folds,
                                 change,
                             );
                         } else {
@@ -2008,6 +2060,7 @@ impl Editor {
                     self.insert_text(
                         buffer,
                         &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
                         &self.new_line(buffer),
                     );
                 }
@@ -2026,6 +2079,7 @@ impl Editor {
                     self.insert_text(
                         buffer,
                         &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
                         &self.new_line(buffer),
                     );
                     motion = Action::NoOp;
@@ -2036,7 +2090,12 @@ impl Editor {
             }
             Action::InsertTab => {
                 for _ in 0..4 {
-                    self.insert_text(buffer, &mut buffer_display_context.selections, " ");
+                    self.insert_text(
+                        buffer,
+                        &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
+                        " ",
+                    );
                 }
             }
             Action::YankMotion { count, motion } => {
@@ -2062,6 +2121,7 @@ impl Editor {
                 self.paste(
                     buffer,
                     &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
                     *count,
                     services,
                 );
@@ -2106,7 +2166,7 @@ impl Editor {
             _ => {}
         }
 
-        self.snap_selections_to_folds(buffer, buffer_display_context, action);
+        self.snap_selections_to_folds(buffer, buffer_display_context, action, &previous_heads);
         self.sync(mode, buffer, buffer_context, buffer_display_context);
 
         let mut recursive_mode = None;
@@ -2254,23 +2314,12 @@ impl Editor {
         buffer: &Buffer,
         buffer_display_context: &mut WindowState,
         action: &Action,
+        previous_heads: &std::collections::HashMap<usize, Point>,
     ) {
         if buffer_display_context.folds.is_empty() {
             return;
         }
         let text_buffer = buffer.as_text_buffer();
-
-        let moving_right = matches!(
-            action,
-            Action::MoveRight { .. }
-                | Action::MoveDown { .. }
-                | Action::MoveToWord { .. }
-                | Action::MoveToWordEnd { .. }
-                | Action::MoveToBigWord { .. }
-                | Action::MoveToEndOfLine { .. }
-                | Action::MoveToEndOfDocument { .. }
-                | Action::MoveToEndOfNextLine { .. }
-        );
 
         let is_move_right = matches!(action, Action::MoveRight { .. });
 
@@ -2280,6 +2329,22 @@ impl Editor {
             let mut new_head = head;
             for fold in &buffer_display_context.folds {
                 if head >= fold.start && head < fold.end {
+                    let moving_right = if let Some(&prev_head) = previous_heads.get(&selection.id) {
+                        head >= prev_head
+                    } else {
+                        matches!(
+                            action,
+                            Action::MoveRight { .. }
+                                | Action::MoveDown { .. }
+                                | Action::MoveToWord { .. }
+                                | Action::MoveToWordEnd { .. }
+                                | Action::MoveToBigWord { .. }
+                                | Action::MoveToEndOfLine { .. }
+                                | Action::MoveToEndOfDocument { .. }
+                                | Action::MoveToEndOfNextLine { .. }
+                        )
+                    };
+
                     new_head = if moving_right {
                         if is_move_right && head == fold.start {
                             fold.start
@@ -2410,6 +2475,7 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         count: u32,
         services: &mut crate::app::services::Services,
     ) {
@@ -2422,7 +2488,7 @@ impl Editor {
             vim_clipboard::ClipboardKind::Character | vim_clipboard::ClipboardKind::Block => {
                 // selections.move_right(false, 1, buffer.as_text_buffer());
                 for _ in 0..count {
-                    self.insert_text(buffer, selections, &text);
+                    self.insert_text(buffer, selections, folds, &text);
                 }
             }
             vim_clipboard::ClipboardKind::Line => {
@@ -2437,21 +2503,31 @@ impl Editor {
                     selections.move_to_start_of_next_line(false, buffer.as_text_buffer());
                 } else {
                     selections.move_to_end_of_line(false, buffer.as_text_buffer());
-                    self.insert_text(buffer, selections, &self.new_line(buffer));
+                    self.insert_text(buffer, selections, folds, &self.new_line(buffer));
                 }
                 for _ in 0..count {
-                    self.insert_text(buffer, selections, &text);
+                    self.insert_text(buffer, selections, folds, &text);
                 }
             }
         }
     }
 
-    fn insert_text(&self, buffer: &mut Buffer, selections: &mut SelectionSet, text: &str) {
+    fn insert_text(
+        &self,
+        buffer: &mut Buffer,
+        selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
+        text: &str,
+    ) {
         let mut edits = Vec::new();
         let cursors = selections.selections.clone();
         for cursor in cursors.iter() {
             let start = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
             edits.push((start, text.to_string()));
+        }
+
+        for &(start, _) in &edits {
+            remove_overlapping_folds(folds, buffer.as_text_buffer(), start, start);
         }
 
         let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
@@ -2621,9 +2697,10 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         change: CaseChange,
     ) -> bool {
-        self.change_case_ranges(buffer, selections, true, change)
+        self.change_case_ranges(buffer, selections, folds, true, change)
     }
 
     /// Changes the case of the text spanned by each cursor's selection, mirroring the range
@@ -2633,16 +2710,18 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         inclusive: bool,
         change: CaseChange,
     ) -> bool {
-        self.change_case_ranges(buffer, selections, inclusive, change)
+        self.change_case_ranges(buffer, selections, folds, inclusive, change)
     }
 
     fn change_case_ranges(
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         inclusive: bool,
         change: CaseChange,
     ) -> bool {
@@ -2686,6 +2765,15 @@ impl Editor {
             return false;
         }
 
+        for &(start, end, _) in &edits {
+            remove_overlapping_folds(
+                folds,
+                buffer.as_text_buffer(),
+                start,
+                end,
+            );
+        }
+
         let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
         for (start, end, changed) in &edits {
             tx.replace(
@@ -2724,6 +2812,7 @@ impl Editor {
         &self,
         buffer: &mut Buffer,
         selections: &mut SelectionSet,
+        folds: &mut Vec<display_map::Fold>,
         count: u32,
         change: CaseChange,
     ) {
@@ -2753,6 +2842,15 @@ impl Editor {
 
         if edits.is_empty() {
             return;
+        }
+
+        for &(start, end, _) in &edits {
+            remove_overlapping_folds(
+                folds,
+                buffer.as_text_buffer(),
+                start,
+                end,
+            );
         }
 
         let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
@@ -2958,6 +3056,92 @@ mod tests {
 
         assert!(window_state.folds.is_empty());
         assert_eq!(buffer.as_text_buffer().text(), "bcdef");
+    }
+
+    #[test]
+    fn fold_hardening_removes_folds_on_inserts_pastes_and_case_changes() {
+        let editor = Editor::new();
+
+        // 1. Insert text test
+        {
+            let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "abcdef");
+            let mut buffer_context = BufferState::unloaded();
+            let mut window_state = WindowState::new(&buffer, Viewport::default());
+            let mut services = Services::new();
+            window_state.folds.push(display_map::Fold {
+                start: Point::new(0, 1),
+                end: Point::new(0, 4),
+            });
+            // Place cursor at offset 2 (inside fold 1..4)
+            let anchor = buffer.as_text_buffer().anchor_at(2, Bias::Left);
+            window_state.selections.selections[0].start = anchor.clone();
+            window_state.selections.selections[0].end = anchor;
+            editor
+                .execute(
+                    Mode::Normal,
+                    &Action::InsertText("XYZ".into()),
+                    &mut buffer,
+                    &mut buffer_context,
+                    &mut window_state,
+                    &mut services,
+                )
+                .unwrap();
+            assert!(window_state.folds.is_empty());
+        }
+
+        // 2. Paste text test
+        {
+            let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "abcdef");
+            let mut buffer_context = BufferState::unloaded();
+            let mut window_state = WindowState::new(&buffer, Viewport::default());
+            let mut services = Services::new();
+            services.clipboard.set_text("XYZ");
+            window_state.folds.push(display_map::Fold {
+                start: Point::new(0, 1),
+                end: Point::new(0, 4),
+            });
+            // Place cursor at offset 2 (inside fold 1..4)
+            let anchor = buffer.as_text_buffer().anchor_at(2, Bias::Left);
+            window_state.selections.selections[0].start = anchor.clone();
+            window_state.selections.selections[0].end = anchor;
+            editor
+                .execute(
+                    Mode::Normal,
+                    &Action::Put { count: 1 },
+                    &mut buffer,
+                    &mut buffer_context,
+                    &mut window_state,
+                    &mut services,
+                )
+                .unwrap();
+            assert!(window_state.folds.is_empty());
+        }
+
+        // 3. Case change test
+        {
+            let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, "abcdef");
+            let mut buffer_context = BufferState::unloaded();
+            let mut window_state = WindowState::new(&buffer, Viewport::default());
+            let mut services = Services::new();
+            window_state.folds.push(display_map::Fold {
+                start: Point::new(0, 1),
+                end: Point::new(0, 4),
+            });
+            // Select bcd
+            window_state.selections.selections[0].start = buffer.as_text_buffer().anchor_at(1, Bias::Left);
+            window_state.selections.selections[0].end = buffer.as_text_buffer().anchor_at(4, Bias::Left);
+            editor
+                .execute(
+                    Mode::Visual,
+                    &Action::ChangeCase { count: 1 },
+                    &mut buffer,
+                    &mut buffer_context,
+                    &mut window_state,
+                    &mut services,
+                )
+                .unwrap();
+            assert!(window_state.folds.is_empty());
+        }
     }
 
     #[test]
