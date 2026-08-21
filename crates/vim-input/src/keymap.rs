@@ -754,10 +754,24 @@ impl Keymap {
             .expect("Valid binding");
 
         normal_actions
-            .bind("*", Action::SearchWordUnderForward { count: 1 })
+            .bind("*", Action::Sequence {
+                count: 1,
+                actions: vec![
+                    Box::new(Action::SelectSimilar {
+                    }),
+                    Box::new(Action::SetToCommandSearchForward)
+                ],
+            })
             .expect("Valid binding");
         normal_actions
-            .bind("#", Action::SearchWordUnderBackward { count: 1 })
+            .bind("#", Action::Sequence {
+                count: 1,
+                actions: vec![
+                    Box::new(Action::SelectSimilar {
+                    }),
+                    Box::new(Action::SetToCommandSearchBackward)
+                ],
+            })
             .expect("Valid binding");
 
         // Mode Change

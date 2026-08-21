@@ -35,24 +35,7 @@ impl InputController {
             Event::Key(key_event) => {
                 if key_event.kind != KeyEventKind::Release {
                     let vim_key = translate_key(key_event)?;
-                    match self.resolver.feed(vim_key, &self.keymap) {
-                        ResolveOutcome::Resolved(resolved) => {
-                            self.pending_display.clear();
-                            Some(Command::Editor {
-                                action: resolved.action,
-                                register: resolved.register,
-                            })
-                        }
-                        ResolveOutcome::Pending => {
-                            self.pending_display = self.resolver.pending().to_string();
-                            Some(Command::PendingInput(self.pending_display.clone()))
-                        }
-                        ResolveOutcome::Invalid(_) => {
-                            self.pending_display.clear();
-                            Some(Command::InvalidInput)
-                        }
-                        ResolveOutcome::Ignored => None,
-                    }
+                    self.feed_key(vim_key)
                 } else {
                     None
                 }
@@ -62,6 +45,27 @@ impl InputController {
                 register: None,
             }),
             _ => None,
+        }
+    }
+
+    pub fn feed_key(&mut self, key: Key) -> Option<Command> {
+        match self.resolver.feed(key, &self.keymap) {
+            ResolveOutcome::Resolved(resolved) => {
+                self.pending_display.clear();
+                Some(Command::Editor {
+                    action: resolved.action,
+                    register: resolved.register,
+                })
+            }
+            ResolveOutcome::Pending => {
+                self.pending_display = self.resolver.pending().to_string();
+                Some(Command::PendingInput(self.pending_display.clone()))
+            }
+            ResolveOutcome::Invalid(_) => {
+                self.pending_display.clear();
+                Some(Command::InvalidInput)
+            }
+            ResolveOutcome::Ignored => None,
         }
     }
 

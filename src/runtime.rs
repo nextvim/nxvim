@@ -35,7 +35,6 @@ impl Runtime {
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut out = stdout();
         let rect = self.app.ui.screen_rect();
-        // self.redraw(rect, &mut out)?;
         self.schedule_state_updates(None);
 
         let mut should_redraw = true;

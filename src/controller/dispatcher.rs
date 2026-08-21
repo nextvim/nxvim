@@ -143,6 +143,45 @@ impl Dispatcher {
                         }
                         return CommandOutcome::redraw();
                     }
+                    vim_input::Action::Script { count, script } => {
+                        for _ in 0..*count {
+                            if let Err(err) = app.script.execute(script) {
+                                app.model.status = Some(format!("Script error: {err}"));
+                                break;
+                            }
+                        }
+                        return CommandOutcome::redraw();
+                    }
+                    vim_input::Action::KeySequence { count, keys } => {
+                        let seq = match vim_input::KeySequence::parse(keys) {
+                            Ok(s) => s,
+                            Err(err) => {
+                                app.model.status = Some(format!("Key sequence error: {err}"));
+                                return CommandOutcome::redraw();
+                            }
+                        };
+                        for _ in 0..*count {
+                            for item in &seq.items {
+                                if let vim_input::KeyPattern::Exact(key) = item {
+                                    if let Some(cmd) = app.controller.feed_key(*key) {
+                                        app.command_queue.push_back(cmd);
+                                    }
+                                }
+                            }
+                        }
+                        return CommandOutcome::redraw();
+                    }
+                    vim_input::Action::Sequence { count, actions } => {
+                        for _ in 0..*count {
+                            for act in actions {
+                                app.command_queue.push_back(Command::Editor {
+                                    action: (**act).clone(),
+                                    register,
+                                });
+                            }
+                        }
+                        return CommandOutcome::redraw();
+                    }
                     vim_input::Action::Repeat { count } => {
                         if let Some(ref actions) = app.services.repeat_actions {
                             for _ in 0..*count {
@@ -263,6 +302,7 @@ impl Dispatcher {
                         app.view_ids,
                         active_window,
                         &action,
+                        mode_before,
                     ));
                 }
                 if LifecycleHandler::handles(&action) {

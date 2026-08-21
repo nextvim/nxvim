@@ -318,12 +318,12 @@ pub enum Action {
     SearchBackward {
         count: u32,
     },
-    SearchWordUnderForward {
-        count: u32,
-    },
-    SearchWordUnderBackward {
-        count: u32,
-    },
+    // SearchWordUnderForward {
+    //     count: u32,
+    // },
+    // SearchWordUnderBackward {
+    //     count: u32,
+    // },
 
     // OPT+MOTION
     DeleteMotion {
@@ -442,6 +442,18 @@ pub enum Action {
         before: bool,
     },
     Command(String),
+    Script {
+        count: u32,
+        script: String,
+    },
+    KeySequence {
+        count: u32,
+        keys: String,
+    },
+    Sequence {
+        count: u32,
+        actions: Vec<Box<Action>>,
+    },
 }
 
 impl std::fmt::Display for Action {
@@ -527,12 +539,12 @@ impl std::fmt::Display for Action {
             Action::MoveToColumn { count } => write!(f, "MoveToColumn({})", count),
             Action::SearchForward { count } => write!(f, "SearchForward {}", count),
             Action::SearchBackward { count } => write!(f, "SearchBackward {}", count),
-            Action::SearchWordUnderForward { count } => {
-                write!(f, "SearchWordUnderForward {}", count)
-            }
-            Action::SearchWordUnderBackward { count } => {
-                write!(f, "SearchWordUnderBackward {}", count)
-            }
+            // Action::SearchWordUnderForward { count } => {
+            //     write!(f, "SearchWordUnderForward {}", count)
+            // }
+            // Action::SearchWordUnderBackward { count } => {
+            //     write!(f, "SearchWordUnderBackward {}", count)
+            // }
             Action::StandBy { count, .. } => write!(f, "StandBy({})", count),
             Action::MoveLeft { count, .. } => write!(f, "MoveLeft({})", count),
             Action::MoveRight { count, .. } => write!(f, "MoveRight({})", count),
@@ -641,6 +653,22 @@ impl std::fmt::Display for Action {
                 write!(f, "PutLines({}, before={})", line, before)
             }
             Action::Command(s) => write!(f, "Command({})", s),
+            Action::Script { count, script } => {
+                write!(f, "Script({}, count={})", script, count)
+            }
+            Action::KeySequence { count, keys } => {
+                write!(f, "KeySequence({}, count={})", keys, count)
+            }
+            Action::Sequence { count, actions } => {
+                write!(f, "Sequence(count={}, actions=[", count)?;
+                for (i, act) in actions.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", act)?;
+                }
+                write!(f, "])")
+            }
         }
     }
 }
@@ -750,6 +778,13 @@ impl Action {
                 Action::MoveToPreviousArgument { count, select }
             }
             Action::MarkJump { ch, .. } => Action::MarkJump { ch, select },
+            Action::Sequence { count, actions } => Action::Sequence {
+                count,
+                actions: actions
+                    .into_iter()
+                    .map(|act| Box::new((*act).with_select(select)))
+                    .collect(),
+            },
             _ => self,
         }
     }
@@ -923,8 +958,8 @@ impl Action {
             Action::MoveToColumn { .. } => Action::MoveToColumn { count },
             Action::SearchForward { .. } => Action::SearchForward { count },
             Action::SearchBackward { .. } => Action::SearchBackward { count },
-            Action::SearchWordUnderForward { .. } => Action::SearchWordUnderForward { count },
-            Action::SearchWordUnderBackward { .. } => Action::SearchWordUnderBackward { count },
+            // Action::SearchWordUnderForward { .. } => Action::SearchWordUnderForward { count },
+            // Action::SearchWordUnderBackward { .. } => Action::SearchWordUnderBackward { count },
             Action::StandBy { .. } => Action::StandBy {
                 count,
                 select: false,
@@ -1017,8 +1052,11 @@ impl Action {
             Action::EndMacro => Action::EndMacro,
             Action::ReplayMacro { register, .. } => Action::ReplayMacro { register, count },
             Action::Command(s) => Action::Command(s),
+            Action::Script { script, .. } => Action::Script { count, script },
+            Action::KeySequence { keys, .. } => Action::KeySequence { count, keys },
             Action::MarkSet { ch } => Action::MarkSet { ch },
             Action::MarkJump { ch, select } => Action::MarkJump { ch, select },
+            Action::Sequence { actions, .. } => Action::Sequence { count, actions },
         }
     }
 
@@ -1095,8 +1133,8 @@ impl Action {
             Action::MoveToColumn { count } => *count,
             Action::SearchForward { count } => *count,
             Action::SearchBackward { count } => *count,
-            Action::SearchWordUnderForward { count } => *count,
-            Action::SearchWordUnderBackward { count } => *count,
+            // Action::SearchWordUnderForward { count } => *count,
+            // Action::SearchWordUnderBackward { count } => *count,
             Action::MoveLeft { count, .. } => *count,
             Action::MoveRight { count, .. } => *count,
             Action::MoveUp { count, .. } => *count,
@@ -1134,6 +1172,9 @@ impl Action {
             Action::MoveToPreviousClass { count, .. } => *count,
             Action::MoveToNextArgument { count, .. } => *count,
             Action::MoveToPreviousArgument { count, .. } => *count,
+            Action::Sequence { count, .. } => *count,
+            Action::Script { count, .. } => *count,
+            Action::KeySequence { count, .. } => *count,
             _ => 1,
         }
     }

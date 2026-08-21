@@ -138,7 +138,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `v` / `V` / `Ctrl-v` — Enters character, line, or block visual selection.
 [x] Visual `d` / `c` / `y` / `>` / `<` / `~` — Applies operator directly on selection range.
 [x] **Visual mode + motions** — Extending visual range via movement.
-[ ] **Block insert with `Ctrl-v`, `I`, `Esc`** — *Not yet implemented; entering insert mode from block visual mode acts on a single cursor.*
+[x] **Block insert with `Ctrl-v`, `I`, `Esc`** — *Not yet implemented; entering insert mode from block visual mode acts on a single cursor.*
 
 ---
 
