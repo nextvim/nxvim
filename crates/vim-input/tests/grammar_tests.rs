@@ -314,6 +314,15 @@ fn test_leader_parsing() {
     assert_eq!(seq2.items[0], vim_input::KeyPattern::Exact(Key::char(',')));
     assert_eq!(seq2.items[1], vim_input::KeyPattern::Exact(Key::char('x')));
 
+    vim_input::set_map_leader("<C-s>");
+    let seq3 = vim_input::KeySequence::parse("<leader>b").unwrap();
+    assert_eq!(seq3.items.len(), 2);
+    assert_eq!(
+        seq3.items[0],
+        vim_input::KeyPattern::Exact(Key::new(KeyCode::Char('s'), Modifiers::CONTROL))
+    );
+    assert_eq!(seq3.items[1], vim_input::KeyPattern::Exact(Key::char('b')));
+
     vim_input::set_map_leader("\\");
 }
 
