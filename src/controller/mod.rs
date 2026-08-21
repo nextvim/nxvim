@@ -34,6 +34,7 @@ mod tests {
     use super::*;
     use vim_input::Action;
     use vim_ui::{NavigationDirection, Rect, SplitAxis};
+    use crate::controller::commandline_handler::CommandlineHandler;
 
     fn app() -> crate::app::App {
         crate::app::App::new(Rect::new(0, 0, 80, 24), crate::app::args::Args::default())
@@ -852,5 +853,137 @@ mod tests {
 
         Dispatcher::dispatch(&mut app, Command::Colorscheme { name: Some("invalid-name".to_string()) });
         assert_eq!(app.model.status.as_deref(), Some("E185: Cannot find color scheme 'invalid-name'"));
+    }
+
+    #[test]
+    fn test_commandline_history_cycling() {
+        let mut app = app();
+        let commandline = app.view_ids.commandline;
+
+        // 1. Enter command mode ':'
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommand,
+                register: None,
+            },
+        );
+        let _ = app.ui.focus(commandline);
+        // Type "help" and press enter
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("help".to_string()),
+                register: None,
+            },
+        );
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertNewLine { count: 1 },
+                register: None,
+            },
+        );
+
+        // 2. Enter command mode ':' again
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommand,
+                register: None,
+            },
+        );
+        let _ = app.ui.focus(commandline);
+        // Type "quit" and press enter
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("quit".to_string()),
+                register: None,
+            },
+        );
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertNewLine { count: 1 },
+                register: None,
+            },
+        );
+
+        // Check history contents
+        assert_eq!(app.model.command_history, vec!["help".to_string(), "quit".to_string()]);
+
+        // 3. Enter command mode ':' to test cycling
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommand,
+                register: None,
+            },
+        );
+        let _ = app.ui.focus(commandline);
+
+        // Type "something"
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("something".to_string()),
+                register: None,
+            },
+        );
+
+        // Press Up (MoveUp)
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::MoveUp { count: 1, select: false },
+                register: None,
+            },
+        );
+        // Should show "quit"
+        assert_eq!(app.model.history_index, Some(1));
+        assert_eq!(app.model.history_temp, "something");
+        // Verify current buffer text is "quit"
+        let buf_text = CommandlineHandler::get_commandline_text(&app.model).unwrap();
+        assert_eq!(buf_text, "quit");
+
+        // Press Up (MoveUp) again
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::MoveUp { count: 1, select: false },
+                register: None,
+            },
+        );
+        // Should show "help"
+        assert_eq!(app.model.history_index, Some(0));
+        let buf_text = CommandlineHandler::get_commandline_text(&app.model).unwrap();
+        assert_eq!(buf_text, "help");
+
+        // Press Down (MoveDown)
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::MoveDown { count: 1, select: false },
+                register: None,
+            },
+        );
+        // Should show "quit"
+        assert_eq!(app.model.history_index, Some(1));
+        let buf_text = CommandlineHandler::get_commandline_text(&app.model).unwrap();
+        assert_eq!(buf_text, "quit");
+
+        // Press Down (MoveDown) again
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::MoveDown { count: 1, select: false },
+                register: None,
+            },
+        );
+        // Should show "something" again
+        assert_eq!(app.model.history_index, None);
+        let buf_text = CommandlineHandler::get_commandline_text(&app.model).unwrap();
+        assert_eq!(buf_text, "something");
     }
 }

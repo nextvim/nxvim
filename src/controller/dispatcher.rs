@@ -240,7 +240,7 @@ impl Dispatcher {
                 if WindowHandler::handles(&action) {
                     outcome.merge(WindowHandler::execute(active_window, &action));
                 }
-                if CommandlineHandler::handles(&action) {
+                if CommandlineHandler::handles(active_window, app.view_ids.commandline, &action) {
                     outcome.merge(CommandlineHandler::execute(
                         &mut app.ui,
                         &mut app.model,
