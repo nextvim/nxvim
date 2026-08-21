@@ -201,6 +201,20 @@ impl KeyPattern {
     }
 }
 
+thread_local! {
+    static MAP_LEADER: std::cell::RefCell<String> = std::cell::RefCell::new(String::from("\\"));
+}
+
+pub fn set_map_leader(leader: &str) {
+    MAP_LEADER.with(|l| {
+        *l.borrow_mut() = leader.to_string();
+    });
+}
+
+pub fn map_leader() -> String {
+    MAP_LEADER.with(|l| l.borrow().clone())
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct KeySequence {
     pub items: SmallVec<[KeyPattern; 4]>,
@@ -226,7 +240,13 @@ impl KeySequence {
                     .map(|offset| index + 1 + offset)
                     .ok_or(KeyParseError::UnclosedSpecialKey)?;
                 let name: String = chars[index + 1..close].iter().collect();
-                items.push(KeyPattern::Exact(Key::parse(&name)?));
+                if name.to_ascii_lowercase() == "leader" {
+                    let leader_str = map_leader();
+                    let leader_seq = KeySequence::parse(&leader_str)?;
+                    items.extend(leader_seq.items);
+                } else {
+                    items.push(KeyPattern::Exact(Key::parse(&name)?));
+                }
                 index = close + 1;
             } else if chars[index..].starts_with(&['{', 'c', '}'])
                 || chars[index..].starts_with(&['{', 'c', 'h', 'a', 'r', '}'])
