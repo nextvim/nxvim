@@ -121,6 +121,15 @@ impl Runtime {
             }
         }
 
+        while self.app.services.has_pending_saves() {
+            if self.app.services.poll() {
+                for task_res in self.app.services.drain_results() {
+                    let _ = Dispatcher::dispatch(&mut self.app, Command::Task(task_res));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
         self.terminal.restore()?;
         Ok(())
     }
@@ -296,6 +305,9 @@ impl Runtime {
     }
 
     fn schedule_window_treesitter(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
+        if !self.app.treesitter_enabled {
+            return Some(());
+        }
         let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
@@ -368,6 +380,9 @@ impl Runtime {
     }
 
     fn schedule_window_indexer(&mut self, window_id: vim_ui::WindowId) -> Option<()> {
+        if !self.app.indexer_enabled {
+            return Some(());
+        }
         let buffer_id = WindowOps::window_buffer(&self.app.ui, window_id)?;
         let revision = self.app.model.buffer_state_mut(buffer_id)?.revision;
         let buffer = self.app.model.get_buffer(buffer_id).ok()?;
@@ -532,9 +547,11 @@ impl Runtime {
             } else {
                 let show_number = self.app.config.get("number", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
                 let show_cursorline = self.app.config.get("cursorline", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
+                let wrap_text = self.app.config.get("wrap", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
                 if let Some(state) = window.window_state_mut() {
                     state.set_show_gutter(show_number);
                     state.set_show_cursorline(show_cursorline);
+                    state.set_wrap_text(wrap_text);
                 }
                 let (window_state, view) = window.refresh_parts::<TextView>();
                 if let (Some(window_state), Some(view)) = (window_state, view) {

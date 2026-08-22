@@ -32,6 +32,8 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "colorscheme" => colorscheme(request),
         "set" => set(request),
         "syntax" => syntax(request),
+        "treesitter" => treesitter(request),
+        "indexer" => indexer(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -222,6 +224,36 @@ fn syntax(request: CommandRequest) -> Result<Command, RuntimeError> {
         Ok(Command::Syntax { enable: true })
     } else if arg == "off" {
         Ok(Command::Syntax { enable: false })
+    } else {
+        Err(RuntimeError::coded(
+            "E474",
+            RuntimeErrorKind::InvalidCommand,
+            format!("Invalid argument: {}", arg),
+        ))
+    }
+}
+
+fn treesitter(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let arg = request.command.arguments.trim();
+    if arg == "on" {
+        Ok(Command::Treesitter { enable: true })
+    } else if arg == "off" {
+        Ok(Command::Treesitter { enable: false })
+    } else {
+        Err(RuntimeError::coded(
+            "E474",
+            RuntimeErrorKind::InvalidCommand,
+            format!("Invalid argument: {}", arg),
+        ))
+    }
+}
+
+fn indexer(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let arg = request.command.arguments.trim();
+    if arg == "on" {
+        Ok(Command::Indexer { enable: true })
+    } else if arg == "off" {
+        Ok(Command::Indexer { enable: false })
     } else {
         Err(RuntimeError::coded(
             "E474",

@@ -34,7 +34,7 @@ pub use callback::{Callback, CallbackContext, CallbackRegistry, VimEvent};
 pub use edit::{Edit, EditOrigin, EditSummary, PlannedEdit};
 pub use error::BufferError;
 pub use history::{ChangeEntry, ChangeList};
-pub use io::{DecodedFile, ExternalFileStatus, FileMetadata, LoadSource, decode_utf8, encode_utf8};
+pub use io::{DecodedFile, ExternalFileStatus, FileMetadata, LoadSource, decode_utf8, encode_utf8, atomic_write};
 pub use manager::BufferManager;
 pub use marks::MarkSet;
 pub use movement::Motions;

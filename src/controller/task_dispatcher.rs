@@ -11,7 +11,7 @@ impl TaskDispatcher {
     pub fn dispatch(
         ui: &mut Ui,
         model: &mut EditorModel,
-        treesitter_service: &mut vim_treesitter::TreeSitterService,
+        services: &mut crate::app::services::Services,
         result: TaskResult,
     ) -> CommandOutcome {
         let accepted = match result {
@@ -25,7 +25,7 @@ impl TaskDispatcher {
                     return CommandOutcome::default();
                 };
                 state.treesitter = completed.result.clone();
-                treesitter_service.apply_task_result(task_id, completed);
+                services.treesitter.apply_task_result(task_id, completed);
                 true
             }
             TaskResult::Index {
@@ -74,6 +74,44 @@ impl TaskDispatcher {
                     window.scroll_to_cursor();
                 }
                 affects_viewport
+            }
+            TaskResult::SaveFile {
+                task_id,
+                buffer_id,
+                revision: _,
+                result,
+            } => {
+                if !services.files.apply_task_result(task_id, &result) {
+                    return CommandOutcome::default();
+                }
+                match result.result {
+                    Ok(outcome) => {
+                        if let Ok(buffer) = model.get_buffer_mut(buffer_id) {
+                            if buffer.options().fixeol && !buffer.options().binary && !buffer.options().endofline {
+                                let mut options = buffer.options().clone();
+                                options.endofline = true;
+                                let _ = buffer.set_options(options);
+                            }
+                            let metadata = std::fs::metadata(&outcome.path);
+                            buffer.set_file_metadata(vim_buffer::FileMetadata {
+                                path: Some(outcome.path.clone()),
+                                source: vim_buffer::LoadSource::File,
+                                modified: metadata.as_ref().ok().and_then(|m| m.modified().ok()),
+                                size: metadata.as_ref().ok().map(|m| m.len()),
+                            });
+                            buffer.mark_saved();
+                            model.status = Some(format!(
+                                "\"{}\" {} bytes written (background)",
+                                outcome.path.display(),
+                                outcome.bytes_written
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        model.status = Some(format!("Save failed in background: {}", err));
+                    }
+                }
+                true
             }
         };
 
@@ -173,11 +211,11 @@ mod tests {
         .unwrap();
         window.pending_display_map = Some((window.display_map.generation(), requested));
 
-        let mut treesitter_service = vim_treesitter::TreeSitterService::new();
+        let mut services = crate::app::services::Services::new();
         let outcome = TaskDispatcher::dispatch(
             &mut ui,
             &mut model,
-            &mut treesitter_service,
+            &mut services,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
@@ -200,11 +238,11 @@ mod tests {
         .unwrap();
         window.display_map.set_wrap_width(Some(10));
 
-        let mut treesitter_service = vim_treesitter::TreeSitterService::new();
+        let mut services = crate::app::services::Services::new();
         let outcome = TaskDispatcher::dispatch(
             &mut ui,
             &mut model,
-            &mut treesitter_service,
+            &mut services,
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 

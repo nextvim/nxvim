@@ -16,6 +16,7 @@ members = [
     "crates/vim-treesitter",
     "crates/vim-scanner",
     "crates/vim-colorscheme",
+    "crates/files",
 ]
 exclude = ["crates/zed"]
 
@@ -70,4 +71,5 @@ textmate = { path = "crates/textmate" }
 vim-treesitter = { path = "crates/vim-treesitter" }
 vim-scanner = { path = "crates/vim-scanner" }
 vim-colorscheme = { path = "crates/vim-colorscheme" }
+files = { path = "crates/files" }
 

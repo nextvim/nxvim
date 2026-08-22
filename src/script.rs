@@ -405,4 +405,44 @@ mod tests {
         let mut runtime = ScriptRuntime::new();
         assert!(runtime.execute("syntax invalid").is_err());
     }
+
+    #[test]
+    fn test_treesitter_command_is_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("treesitter on").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Treesitter { enable: true })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("tre off").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Treesitter { enable: false })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        assert!(runtime.execute("treesitter invalid").is_err());
+    }
+
+    #[test]
+    fn test_indexer_command_is_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("indexer on").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Indexer { enable: true })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("ind off").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Indexer { enable: false })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        assert!(runtime.execute("indexer invalid").is_err());
+    }
 }

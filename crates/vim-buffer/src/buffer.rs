@@ -142,7 +142,7 @@ impl Buffer {
         self.listed = listed;
     }
 
-    pub(crate) fn set_file_metadata(&mut self, file: FileMetadata) {
+    pub fn set_file_metadata(&mut self, file: FileMetadata) {
         self.file = file;
     }
 

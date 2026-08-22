@@ -23,6 +23,8 @@ pub struct App {
     pub highlighter: Option<textmate::Highlighter<'static>>,
     pub config: config::ConfigStore,
     pub syntax_highlight: bool,
+    pub treesitter_enabled: bool,
+    pub indexer_enabled: bool,
 }
 
 impl App {
@@ -62,6 +64,8 @@ impl App {
             highlighter: Some(highlighter),
             config: config::ConfigStore::new(),
             syntax_highlight: true,
+            treesitter_enabled: false,
+            indexer_enabled: false,
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());

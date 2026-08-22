@@ -6,7 +6,6 @@ use super::commandline_handler::CommandlineHandler;
 use super::editor_handler::EditorHandler;
 use super::lifecycle_handler::LifecycleHandler;
 use super::range::RangeCommandHandler;
-use super::shared_operations::SharedOperations;
 use super::task_dispatcher::TaskDispatcher;
 use super::window_handler::WindowHandler;
 
@@ -31,13 +30,49 @@ impl Dispatcher {
             }
             Command::Save { path, force } => {
                 let active_window = app.ui.focused_window_id();
-                SharedOperations::write(
-                    &mut app.ui,
-                    &mut app.model,
-                    active_window,
-                    path.as_deref(),
-                    force,
-                )
+                if let Some(buffer_id) = crate::app::windows::WindowOps::window_buffer(&app.ui, active_window) {
+                    if let Ok(buffer) = app.model.get_buffer(buffer_id) {
+                        if buffer.options().readonly && !force {
+                            app.model.status = Some(format!("Save failed: ReadOnly (buffer {})", buffer_id.get()));
+                            return CommandOutcome::redraw();
+                        }
+                        let path_buf = match path {
+                            Some(p) => p,
+                            None => match buffer.path() {
+                                Some(p) => p.to_path_buf(),
+                                None => {
+                                    app.model.status = Some(format!("Save failed: No file name (buffer {})", buffer_id.get()));
+                                    return CommandOutcome::redraw();
+                                }
+                            }
+                        };
+                        let snapshot = buffer.snapshot();
+                        let options = buffer.options().clone();
+                        let revision = app.model.buffer_state(buffer_id).map(|s| s.revision).unwrap_or(0);
+                        let sequence = app.services.files.begin_save(buffer_id, snapshot.changedtick());
+                        
+                        let owner = crate::app::services::TaskOwner {
+                            buffer_id: Some(buffer_id),
+                            window_id: Some(active_window),
+                            revision,
+                        };
+                        
+                        let task_id = app.services.spawn_cancellable_task(
+                            "files",
+                            sequence,
+                            owner,
+                            crate::app::services::TaskType::Files,
+                            move |token| {
+                                Some(files::save_file_cancellable(snapshot, path_buf, options, move || token.is_cancelled())?)
+                            },
+                        );
+                        if let Some(tid) = task_id {
+                            app.services.files.set_pending_task(buffer_id, tid);
+                            app.model.status = Some("Saving file in background...".to_string());
+                        }
+                    }
+                }
+                CommandOutcome::redraw()
             }
             Command::Quit { force } => {
                 let active_window = app.ui.focused_window_id();
@@ -75,7 +110,7 @@ impl Dispatcher {
             Command::Task(result) => TaskDispatcher::dispatch(
                 &mut app.ui,
                 &mut app.model,
-                &mut app.services.treesitter,
+                &mut app.services,
                 result,
             ),
             Command::ClearSearchHighlight => {
@@ -107,6 +142,14 @@ impl Dispatcher {
             Command::Syntax { enable } => {
                 app.syntax_highlight = enable;
                 app.model.invalidate_all_highlights();
+                CommandOutcome::redraw()
+            }
+            Command::Treesitter { enable } => {
+                app.treesitter_enabled = enable;
+                CommandOutcome::redraw()
+            }
+            Command::Indexer { enable } => {
+                app.indexer_enabled = enable;
                 CommandOutcome::redraw()
             }
             Command::RangeOp {

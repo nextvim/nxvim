@@ -5,6 +5,7 @@ pub use vim_clipboard as clipboard;
 pub use vim_indexer as indexer;
 pub use vim_macros as macros;
 pub use vim_treesitter as treesitter;
+pub use files;
 
 use vim_buffer::BufferId;
 use vim_ui::WindowId;
@@ -16,6 +17,7 @@ pub enum TaskType {
     DisplayMap,
     Indexer,
     Treesitter,
+    Files,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +46,12 @@ pub enum TaskResult {
         revision: u64,
         expansion: display_map::DisplayMapExpansion,
     },
+    SaveFile {
+        task_id: TaskId,
+        buffer_id: BufferId,
+        revision: u64,
+        result: files::SaveTaskResult,
+    },
 }
 
 pub(super) struct TaskMetadata {
@@ -55,6 +63,7 @@ pub struct Services {
     background_workers: background_worker::WorkerManager,
     pub clipboard: clipboard::Clipboard,
     pub indexer: indexer::Indexer,
+    pub files: files::FilesService,
     pub macros: macros::MacroRecorder,
     pub treesitter: treesitter::TreeSitterService,
     raw_results: Vec<background_worker::BackgroundResult>,
@@ -70,6 +79,7 @@ impl Services {
         background_workers.add_worker("highlight");
         background_workers.add_worker("treesitter");
         background_workers.add_worker("indexer");
+        background_workers.add_worker("files");
 
         let mut macros = macros::MacroRecorder::new();
         macros.begin("*");
@@ -93,6 +103,7 @@ impl Services {
             background_workers,
             clipboard: clipboard::Clipboard::new(),
             indexer: indexer::Indexer::new(),
+            files: files::FilesService::new(),
             macros,
             treesitter: treesitter::TreeSitterService::new(),
             raw_results: Vec::new(),
@@ -209,7 +220,18 @@ impl Services {
                 revision: owner.revision,
                 expansion: result.downcast::<display_map::DisplayMapExpansion>().ok()?,
             }),
+            TaskType::Files => Some(TaskResult::SaveFile {
+                task_id,
+                buffer_id: owner.buffer_id?,
+                revision: owner.revision,
+                result: result.downcast::<files::SaveTaskResult>().ok()?,
+            }),
         }
+    }
+
+    pub fn has_pending_saves(&self) -> bool {
+        let metadata = self.task_metadata.lock().unwrap();
+        metadata.values().any(|meta| meta.task_type == TaskType::Files)
     }
 }
 

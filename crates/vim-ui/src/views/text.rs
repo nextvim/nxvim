@@ -1,6 +1,6 @@
 use crate::model::{ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
-use crate::renderer::Renderer;
+use crate::renderer::{Renderer, Cell};
 use crate::window::View;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
@@ -136,7 +136,9 @@ fn draw_scrollbar(
     } else {
         scrollbar.track_style
     };
-    renderer.move_to(area.x + area.width - 1, area.y + viewport_row)?;
-    renderer.set_style(style)?;
-    renderer.print(" ")
+    let x = area.x + area.width - 1;
+    let y = area.y + viewport_row;
+    let mut cell = renderer.get_cell(x, y).unwrap_or_default();
+    cell.bg = style.bg.unwrap_or(crate::types::Color::Reset);
+    renderer.set_cell(x, y, cell)
 }
