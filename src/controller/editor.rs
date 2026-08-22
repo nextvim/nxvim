@@ -382,6 +382,7 @@ impl Editor {
                     for cursor in cursors.iter() {
                         let start_sel = cursor.move_to_word(false, text_buffer);
                         let end_sel = cursor.move_to_word_end(false, text_buffer);
+                            // .move_right_once(true, text_buffer);
                         let next = Selection {
                             id: cursor.id,
                             start: start_sel.head(),
@@ -3038,7 +3039,7 @@ mod tests {
                 .end
                 .to_point(buffer.as_text_buffer())
                 .column,
-            10
+            11
         );
 
         editor
@@ -3053,6 +3054,67 @@ mod tests {
             .unwrap();
 
         assert_eq!(window_state.selections.selections.len(), 2);
+
+        // Test function(
+        let mut buffer2 = Buffer::new(BufferId::new(2).unwrap(), ReplicaId::LOCAL, "");
+        let mut buffer_context2 = BufferState::unloaded();
+        let mut window_state2 = WindowState::new(&buffer2, Viewport::default());
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::InsertText("function(".into()),
+                &mut buffer2,
+                &mut buffer_context2,
+                &mut window_state2,
+                &mut services,
+            )
+            .unwrap();
+
+        // Move cursor back to 'f' of function (which is index 0)
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::MoveLeft {
+                    select: false,
+                    count: 9,
+                },
+                &mut buffer2,
+                &mut buffer_context2,
+                &mut window_state2,
+                &mut services,
+            )
+            .unwrap();
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::SelectSimilar,
+                &mut buffer2,
+                &mut buffer_context2,
+                &mut window_state2,
+                &mut services,
+            )
+            .unwrap();
+
+        // Should select only "function" (length 8, indices 0..8)
+        assert_eq!(
+            window_state2
+                .selections
+                .primary()
+                .start
+                .to_point(buffer2.as_text_buffer())
+                .column,
+            0
+        );
+        assert_eq!(
+            window_state2
+                .selections
+                .primary()
+                .end
+                .to_point(buffer2.as_text_buffer())
+                .column,
+            8
+        );
     }
 
     #[test]

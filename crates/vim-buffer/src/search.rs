@@ -136,7 +136,7 @@ impl TextSearch for str {
     fn find_word(&self, position: usize) -> Option<(usize, usize, &str)> {
         self.find_words()
             .into_iter()
-            .find(|(start, len, _)| *start <= position && position < *start + *len)
+            .find(|(start, end, _)| *start <= position && position < *end)
     }
 
     fn find_next_word(&self, position: usize) -> Option<(usize, usize, &str)> {
@@ -394,5 +394,35 @@ mod tests {
             Some((0, 4, "foo1"))
         );
         assert_eq!(text.find_previous_pattern_match(&re, 0), None);
+    }
+
+    #[test]
+    fn test_find_words_vim_definition() {
+        let text = "} )( typeof window !== \"undefined\" ? window : this, function( window, noGlobal ) {";
+        let words = text.find_words();
+        let word_slices: Vec<&str> = words.iter().map(|(_, _, slice)| *slice).collect();
+        let expected = vec![
+            "}",
+            ")(",
+            "typeof",
+            "window",
+            "!==",
+            "\"",
+            "undefined",
+            "\"",
+            "?",
+            "window",
+            ":",
+            "this",
+            ",",
+            "function",
+            "(",
+            "window",
+            ",",
+            "noGlobal",
+            ")",
+            "{",
+        ];
+        assert_eq!(word_slices, expected);
     }
 }

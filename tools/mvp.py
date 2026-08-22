@@ -5,7 +5,7 @@ import re
 def main():
     # Resolve the path to MVP.md relative to the script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    mvp_path = os.path.join(script_dir, "..", "MVP.md")
+    mvp_path = os.path.join(script_dir, "..", "docs/MVP.md")
 
     if not os.path.exists(mvp_path):
         print(f"Error: MVP.md not found at {mvp_path}")
