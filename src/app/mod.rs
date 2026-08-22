@@ -15,6 +15,7 @@ pub enum InspectKind {
     None,
     TreeSitter,
     Textmate,
+    Indexer,
 }
 
 pub struct App {

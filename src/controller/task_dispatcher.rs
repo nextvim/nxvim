@@ -29,15 +29,18 @@ impl TaskDispatcher {
                 true
             }
             TaskResult::Index {
+                task_id,
                 buffer_id,
                 revision,
                 result,
-                ..
             } => {
                 let Some(state) = Self::current_buffer_state(model, buffer_id, revision) else {
                     return CommandOutcome::default();
                 };
-                state.index = result;
+                state.index = result.clone();
+                if let Ok(completed) = result {
+                    services.indexer.apply_task_result(task_id, completed);
+                }
                 true
             }
 

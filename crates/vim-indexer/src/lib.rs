@@ -107,7 +107,7 @@ impl Trie {
 
 use vim_buffer::{BufferId, ChangedTick};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndexTaskResult {
     pub buffer_id: BufferId,
     pub changedtick: ChangedTick,
