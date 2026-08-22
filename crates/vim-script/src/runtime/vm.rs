@@ -487,12 +487,29 @@ impl Vm {
                     return Ok(StepOutcome::HostCall(request));
                 }
             }
-            Instruction::CallNamed { name, .. } => {
+            Instruction::CallNamed { name, argc } => {
                 let name = self.constant_string(&module, function_id, name)?;
-                return Err(self.error(
-                    RuntimeErrorKind::NameError,
-                    format!("native function {name} is not registered in the synchronous core"),
-                ));
+                let arguments = self.pop_many(argc as usize)?;
+                if self.builtins.contains(&name) || name == "exists" {
+                    let result = if name == "exists" {
+                        self.builtin_exists(&arguments)
+                    } else {
+                        self.builtins.call(&name, &arguments)
+                    }
+                    .map_err(|mut error| {
+                        error.span = self.current_span();
+                        error.stack_trace = self.stack_trace().into_boxed_slice();
+                        error
+                    })?;
+                    self.push(result)?;
+                } else {
+                    return Ok(StepOutcome::HostCall(HostRequest {
+                        target: HostTarget::Global,
+                        function: name.to_string(),
+                        arguments,
+                        context: self.host_context.clone(),
+                    }));
+                }
             }
             Instruction::Return => {
                 let value = self.pop().unwrap_or(Value::Null);
@@ -1274,5 +1291,12 @@ mod tests {
         assert!(matches!(error.kind, RuntimeErrorKind::TypeError));
         assert!(!error.stack_trace.is_empty());
         assert!(error.span.is_some());
+    }
+
+    #[test]
+    fn echo_requires_scheduler_at_runtime() {
+        let error = run("echo 'hello'\n").unwrap_err();
+        assert!(matches!(error.kind, RuntimeErrorKind::HostError));
+        assert!(error.message.contains("requires a scheduler and host runtime"));
     }
 }

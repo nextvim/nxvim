@@ -57,6 +57,7 @@ pub enum Command {
     Echo {
         message: String,
     },
+    ExecuteScript(String),
 }
 
 impl std::fmt::Debug for Command {
@@ -105,30 +106,22 @@ impl std::fmt::Debug for Command {
                 .finish(),
             Command::Task(_) => write!(f, "Task(...)"),
             Command::ClearSearchHighlight => write!(f, "ClearSearchHighlight"),
-            Command::Colorscheme { name } => f
-                .debug_struct("Colorscheme")
-                .field("name", name)
-                .finish(),
-            Command::Set { arguments } => f
-                .debug_struct("Set")
-                .field("arguments", arguments)
-                .finish(),
-            Command::Syntax { enable } => f
-                .debug_struct("Syntax")
-                .field("enable", enable)
-                .finish(),
+            Command::Colorscheme { name } => {
+                f.debug_struct("Colorscheme").field("name", name).finish()
+            }
+            Command::Set { arguments } => {
+                f.debug_struct("Set").field("arguments", arguments).finish()
+            }
+            Command::Syntax { enable } => f.debug_struct("Syntax").field("enable", enable).finish(),
             Command::Treesitter { enable } => f
                 .debug_struct("Treesitter")
                 .field("enable", enable)
                 .finish(),
-            Command::Indexer { enable } => f
-                .debug_struct("Indexer")
-                .field("enable", enable)
-                .finish(),
-            Command::Echo { message } => f
-                .debug_struct("Echo")
-                .field("message", message)
-                .finish(),
+            Command::Indexer { enable } => {
+                f.debug_struct("Indexer").field("enable", enable).finish()
+            }
+            Command::Echo { message } => f.debug_struct("Echo").field("message", message).finish(),
+            Command::ExecuteScript(script) => f.debug_tuple("ExecuteScript").field(script).finish(),
         }
     }
 }

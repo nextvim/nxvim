@@ -30,7 +30,7 @@ impl CommandlineHandler {
         ui: &mut Ui,
         model: &mut EditorModel,
         input: &mut InputController,
-        script: &mut ScriptRuntime,
+        command_queue: &mut std::collections::VecDeque<crate::controller::Command>,
         view_ids: ViewIds,
         active_window: WindowId,
         action: &Action,
@@ -48,14 +48,16 @@ impl CommandlineHandler {
                 };
 
                 let mut selection_text = String::new();
-                if mode_before == Mode::Normal && matches!(action, Action::SetToCommandSearchForward) {
+                if mode_before == Mode::Normal
+                    && matches!(action, Action::SetToCommandSearchForward)
+                {
                     let _ = WindowOps::edit_window(
                         ui,
                         model,
                         active_window,
                         |buffer, _context, window_state| {
                             selection_text = window_state.selections.text(buffer.as_text_buffer());
-                        }
+                        },
                     );
                 }
 
@@ -67,7 +69,8 @@ impl CommandlineHandler {
                         let pattern = format!("\\<{selection_text}\\>");
                         model.search_pattern = Some(pattern);
                         if let Some(ref pattern) = model.search_pattern {
-                            model.search_regex = Regex::compile(pattern, vim_regex::CompileOptions::default()).ok();
+                            model.search_regex =
+                                Regex::compile(pattern, vim_regex::CompileOptions::default()).ok();
                         }
                     } else {
                         model.search_pattern = None;
@@ -87,7 +90,7 @@ impl CommandlineHandler {
                         )
                         .unwrap();
                         let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-                        
+
                         let content = if !selection_text.is_empty() {
                             format!("\\<{selection_text}\\>")
                         } else {
@@ -97,7 +100,9 @@ impl CommandlineHandler {
                         let _ = tx.commit(None);
 
                         window_state.selections.selections.clear();
-                        window_state.selections.add(buffer.as_text_buffer(), content.len());
+                        window_state
+                            .selections
+                            .add(buffer.as_text_buffer(), content.len());
                     },
                 );
                 let mut outcome =
@@ -138,19 +143,8 @@ impl CommandlineHandler {
                             Regex::compile(&command, vim_regex::CompileOptions::default()).ok();
                         model.search_pattern = Some(command.clone());
                     }
-                    
-                    let cmd_to_execute = if command.starts_with(':')
-                        || command.starts_with('/')
-                        || command.starts_with('?')
-                    {
-                        command.chars().skip(1).collect::<String>()
-                    } else {
-                        format!("{}{}", model.commandline_mode, command)
-                    };
 
-                    if let Err(error) = script.execute(&cmd_to_execute) {
-                        model.status = Some(error);
-                    }
+                    command_queue.push_back(crate::controller::Command::ExecuteScript(command));
                 }
                 CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }
@@ -182,7 +176,8 @@ impl CommandlineHandler {
                         Self::set_commandline_text(ui, model, view_ids.commandline, &text);
                         if model.commandline_mode == '/' || model.commandline_mode == '?' {
                             model.search_pattern = Some(text.clone());
-                            model.search_regex = Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
+                            model.search_regex =
+                                Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
                         }
                     }
                 }
@@ -201,7 +196,8 @@ impl CommandlineHandler {
                         Self::set_commandline_text(ui, model, view_ids.commandline, &text);
                         if model.commandline_mode == '/' || model.commandline_mode == '?' {
                             model.search_pattern = Some(text.clone());
-                            model.search_regex = Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
+                            model.search_regex =
+                                Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
                         }
                     } else {
                         model.history_index = None;
@@ -213,7 +209,9 @@ impl CommandlineHandler {
                                 model.search_regex = None;
                             } else {
                                 model.search_pattern = Some(text.clone());
-                                model.search_regex = Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
+                                model.search_regex =
+                                    Regex::compile(&text, vim_regex::CompileOptions::default())
+                                        .ok();
                             }
                         }
                     }
@@ -288,7 +286,9 @@ impl CommandlineHandler {
 
                 let text_len = buffer.as_text_buffer().len();
                 window_state.selections.selections.clear();
-                window_state.selections.add(buffer.as_text_buffer(), text_len);
+                window_state
+                    .selections
+                    .add(buffer.as_text_buffer(), text_len);
             },
         );
     }

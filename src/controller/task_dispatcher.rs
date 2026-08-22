@@ -87,7 +87,10 @@ impl TaskDispatcher {
                 match result.result {
                     Ok(outcome) => {
                         if let Ok(buffer) = model.get_buffer_mut(buffer_id) {
-                            if buffer.options().fixeol && !buffer.options().binary && !buffer.options().endofline {
+                            if buffer.options().fixeol
+                                && !buffer.options().binary
+                                && !buffer.options().endofline
+                            {
                                 let mut options = buffer.options().clone();
                                 options.endofline = true;
                                 let _ = buffer.set_options(options);

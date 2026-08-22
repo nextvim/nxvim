@@ -8,23 +8,31 @@ pub mod services;
 pub mod ui;
 pub mod windows;
 
-
 use windows::WindowOps;
 
 pub struct App {
     pub model: crate::model::EditorModel,
     pub controller: crate::controller::input::InputController,
     pub services: services::Services,
-    pub script: crate::script::ScriptRuntime,
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
     pub command_queue: std::collections::VecDeque<crate::controller::Command>,
     pub colorscheme: Option<vim_colorscheme::ColorScheme>,
     pub highlighter: Option<textmate::Highlighter<'static>>,
+
+    // App State
+    // set number, cursorline, etc
     pub config: config::ConfigStore,
+    // syn on/off
     pub syntax_highlight: bool,
+    // tree on/off
     pub treesitter_enabled: bool,
+    // index on/off
     pub indexer_enabled: bool,
+    // echo
+    pub message: String,
+    // echomessage
+    pub messages: Vec<String>,
 }
 
 impl App {
@@ -56,7 +64,6 @@ impl App {
             model,
             controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
             services: services::Services::new(),
-            script: crate::script::ScriptRuntime::new(),
             ui,
             view_ids,
             command_queue: std::collections::VecDeque::new(),
@@ -66,15 +73,17 @@ impl App {
             syntax_highlight: true,
             treesitter_enabled: false,
             indexer_enabled: false,
+            message: "".to_string(),
+            messages: Vec::new(),
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());
-        app.init(args.pre_config_cmds, args.post_config_cmds, args.scripts);
         app
     }
 
     pub fn init(
         &mut self,
+        script: &mut crate::script::ScriptRuntime,
         pre_config_cmds: Vec<String>,
         post_config_cmds: Vec<String>,
         scripts: Vec<std::path::PathBuf>,
@@ -84,7 +93,7 @@ impl App {
         }
 
         for cmd in pre_config_cmds {
-            if let Err(err) = self.script.execute(&cmd) {
+            if let Err(err) = script.execute(&cmd) {
                 log::error!("Error executing pre-config command {}: {}", cmd, err);
             }
         }
@@ -101,7 +110,7 @@ impl App {
             for path in &paths {
                 if path.exists() {
                     if let Ok(content) = std::fs::read_to_string(path) {
-                        if let Err(err) = self.script.execute(&content) {
+                        if let Err(err) = script.execute(&content) {
                             log::error!("Error executing init file {:?}: {}", path, err);
                         }
                     }
@@ -111,7 +120,7 @@ impl App {
         }
 
         for cmd in post_config_cmds {
-            if let Err(err) = self.script.execute(&cmd) {
+            if let Err(err) = script.execute(&cmd) {
                 log::error!("Error executing post-config command {}: {}", cmd, err);
             }
         }
@@ -119,7 +128,7 @@ impl App {
         for path in scripts {
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
-                    if let Err(err) = self.script.execute(&content) {
+                    if let Err(err) = script.execute(&content) {
                         log::error!("Error executing script file {:?}: {}", path, err);
                     }
                 }

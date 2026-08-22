@@ -34,7 +34,6 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "syntax" => syntax(request),
         "treesitter" => treesitter(request),
         "indexer" => indexer(request),
-        "echo" => echo(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -262,10 +261,4 @@ fn indexer(request: CommandRequest) -> Result<Command, RuntimeError> {
             format!("Invalid argument: {}", arg),
         ))
     }
-}
-
-fn echo(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::Echo {
-        message: request.command.arguments,
-    })
 }

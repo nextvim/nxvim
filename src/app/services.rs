@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+pub use files;
 pub use vim_clipboard as clipboard;
 pub use vim_indexer as indexer;
 pub use vim_macros as macros;
 pub use vim_treesitter as treesitter;
-pub use files;
 
 use vim_buffer::BufferId;
 use vim_ui::WindowId;
@@ -231,7 +231,9 @@ impl Services {
 
     pub fn has_pending_saves(&self) -> bool {
         let metadata = self.task_metadata.lock().unwrap();
-        metadata.values().any(|meta| meta.task_type == TaskType::Files)
+        metadata
+            .values()
+            .any(|meta| meta.task_type == TaskType::Files)
     }
 }
 

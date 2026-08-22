@@ -504,7 +504,8 @@ mod tests {
         let mut window_state = WindowState::new(&buffer, Viewport::default());
         window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
 
-        let regex = vim_regex::Regex::compile("next", vim_regex::CompileOptions::default()).unwrap();
+        let regex =
+            vim_regex::Regex::compile("next", vim_regex::CompileOptions::default()).unwrap();
         let model = build_text(
             &buffer,
             &window_state,
@@ -525,7 +526,7 @@ mod tests {
         assert_eq!(span_texts.get(1), Some(&"next"));
         assert_eq!(row1.spans[1].style.bg, Some(vim_ui::Color::Yellow));
         assert_eq!(row1.spans[1].style.fg, Some(vim_ui::Color::Black));
-     }
+    }
 
     #[test]
     fn test_cursor_line_highlighting() {
@@ -548,14 +549,20 @@ mod tests {
         window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
 
         let mut cs = vim_ui::ColorScheme::new(vim_ui::Metadata::default());
-        cs.insert_style("CursorLine", vim_ui::Style {
-            bg: Some(vim_ui::Color::Red),
-            ..Default::default()
-        });
-        cs.insert_style("CursorLineNr", vim_ui::Style {
-            fg: Some(vim_ui::Color::Green),
-            ..Default::default()
-        });
+        cs.insert_style(
+            "CursorLine",
+            vim_ui::Style {
+                bg: Some(vim_ui::Color::Red),
+                ..Default::default()
+            },
+        );
+        cs.insert_style(
+            "CursorLineNr",
+            vim_ui::Style {
+                fg: Some(vim_ui::Color::Green),
+                ..Default::default()
+            },
+        );
 
         let model = build_text(
             &buffer,
@@ -601,7 +608,11 @@ fn cursor_shape(mode: vim_input::Mode) -> vim_ui::model::CursorShape {
     }
 }
 
-fn empty_row(show_gutter: bool, gutter_digits: usize, default_style: vim_ui::Style) -> vim_ui::model::DisplayRow {
+fn empty_row(
+    show_gutter: bool,
+    gutter_digits: usize,
+    default_style: vim_ui::Style,
+) -> vim_ui::model::DisplayRow {
     vim_ui::model::DisplayRow {
         buffer_row: Some(0),
         kind: vim_ui::model::DisplayRowKind::Buffer,
@@ -613,10 +624,7 @@ fn empty_row(show_gutter: bool, gutter_digits: usize, default_style: vim_ui::Sty
         } else {
             None
         },
-        spans: vec![vim_ui::model::TextSpan::new(
-            String::new(),
-            default_style,
-        )],
+        spans: vec![vim_ui::model::TextSpan::new(String::new(), default_style)],
         fill_style: default_style,
     }
 }

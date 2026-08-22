@@ -32,9 +32,9 @@ pub use range::RangeOperation;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::controller::commandline_handler::CommandlineHandler;
     use vim_input::Action;
     use vim_ui::{NavigationDirection, Rect, SplitAxis};
-    use crate::controller::commandline_handler::CommandlineHandler;
 
     fn app() -> crate::app::App {
         crate::app::App::new(Rect::new(0, 0, 80, 24), crate::app::args::Args::default())
@@ -345,15 +345,13 @@ mod tests {
             },
         );
 
-        assert!(matches!(
-            app.script.try_next_command(),
-            Some(Command::Quit { force: false })
-        ));
-        assert!(matches!(
-            app.script.try_next_command(),
-            Some(Command::Quit { force: false })
-        ));
-        assert!(app.script.try_next_command().is_none());
+        assert_eq!(app.command_queue.len(), 2);
+        assert!(
+            matches!(app.command_queue.pop_front(), Some(Command::ExecuteScript(ref s)) if s == "q")
+        );
+        assert!(
+            matches!(app.command_queue.pop_front(), Some(Command::ExecuteScript(ref s)) if s == "q")
+        );
     }
 
     #[test]
@@ -697,8 +695,9 @@ mod tests {
         }
 
         // execute `:1,2x`
-        app.script.execute(":1,2x").unwrap();
-        let cmd = app.script.try_next_command().unwrap();
+        let mut script = crate::script::ScriptRuntime::new();
+        script.execute(":1,2x").unwrap();
+        let cmd = script.try_next_command().unwrap();
         println!("Ranged x command: {:?}", cmd);
         let outcome = Dispatcher::dispatch(&mut app, cmd);
         println!("Outcome: {:?}", outcome);
@@ -843,7 +842,7 @@ mod tests {
     #[test]
     fn test_search_initializes_from_selection_in_normal_mode() {
         let mut app = app();
-        
+
         let active_window = app.ui.focused_window_id();
         let _ = crate::app::windows::WindowOps::edit_window(
             &mut app.ui,
@@ -851,14 +850,24 @@ mod tests {
             active_window,
             |buffer, _context, window_state| {
                 let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-                tx.replace(None, vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(0)).unwrap(), "rust nextvim");
+                tx.replace(
+                    None,
+                    vim_buffer::TextRange::new(
+                        vim_buffer::ByteOffset(0),
+                        vim_buffer::ByteOffset(0),
+                    )
+                    .unwrap(),
+                    "rust nextvim",
+                );
                 let _ = tx.commit(None);
-                
+
                 window_state.selections.selections.clear();
                 window_state.selections.add(buffer.as_text_buffer(), 3);
-                window_state.selections.selections[0].start = buffer.as_text_buffer().anchor_at(0, sum_tree::Bias::Left);
-                window_state.selections.selections[0].end = buffer.as_text_buffer().anchor_at(3, sum_tree::Bias::Left);
-            }
+                window_state.selections.selections[0].start =
+                    buffer.as_text_buffer().anchor_at(0, sum_tree::Bias::Left);
+                window_state.selections.selections[0].end =
+                    buffer.as_text_buffer().anchor_at(3, sum_tree::Bias::Left);
+            },
         );
 
         Dispatcher::dispatch(
@@ -872,8 +881,15 @@ mod tests {
         assert_eq!(app.model.search_pattern.as_deref(), Some("\\<rust\\>"));
         assert!(app.model.search_regex.is_some());
 
-        let commandline_buffer = app.model.get_buffer(app.model.commandline_buffer()).unwrap();
-        let commandline_text: String = commandline_buffer.as_text_buffer().as_rope().chunks().collect();
+        let commandline_buffer = app
+            .model
+            .get_buffer(app.model.commandline_buffer())
+            .unwrap();
+        let commandline_text: String = commandline_buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks()
+            .collect();
         assert_eq!(commandline_text, "\\<rust\\>");
     }
 
@@ -883,7 +899,8 @@ mod tests {
 
         // 1. Set some active search state
         app.model.search_pattern = Some("test_pattern".to_string());
-        app.model.search_regex = vim_regex::Regex::compile("test_pattern", vim_regex::CompileOptions::default()).ok();
+        app.model.search_regex =
+            vim_regex::Regex::compile("test_pattern", vim_regex::CompileOptions::default()).ok();
 
         assert_eq!(app.model.search_pattern.as_deref(), Some("test_pattern"));
         assert!(app.model.search_regex.is_some());
@@ -900,66 +917,124 @@ mod tests {
     #[test]
     fn test_show_matches_commandline() {
         let mut app = app();
-        
+
         // Initially show_matches should be true
         let active_win = app.ui.focus_manager().focused_id();
-        assert!(app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
+        assert!(
+            app.ui
+                .window(active_win)
+                .unwrap()
+                .window_state()
+                .unwrap()
+                .show_matches
+        );
 
         // 1. Trigger command line mode (SetToCommand)
-        Dispatcher::dispatch(&mut app, Command::Editor {
-            action: Action::SetToCommand,
-            register: None,
-        });
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommand,
+                register: None,
+            },
+        );
         let commandline = app.view_ids.commandline;
         let _ = app.ui.focus(commandline);
 
         // 2. Type "show_matches=false"
-        Dispatcher::dispatch(&mut app, Command::Editor {
-            action: Action::InsertText("show_matches=false".to_string()),
-            register: None,
-        });
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("show_matches=false".to_string()),
+                register: None,
+            },
+        );
 
         // 3. Submit command (InsertNewLine)
-        Dispatcher::dispatch(&mut app, Command::Editor {
-            action: Action::InsertNewLine { count: 1 },
-            register: None,
-        });
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertNewLine { count: 1 },
+                register: None,
+            },
+        );
 
         // 4. Verify that show_matches is false on the main/previously active window
-        assert!(!app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
+        assert!(
+            !app.ui
+                .window(active_win)
+                .unwrap()
+                .window_state()
+                .unwrap()
+                .show_matches
+        );
 
         // 5. Turn it back on via "set show_matches=true"
-        Dispatcher::dispatch(&mut app, Command::Editor {
-            action: Action::SetToCommand,
-            register: None,
-        });
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommand,
+                register: None,
+            },
+        );
         let _ = app.ui.focus(commandline);
-        Dispatcher::dispatch(&mut app, Command::Editor {
-            action: Action::InsertText("set show_matches=true".to_string()),
-            register: None,
-        });
-        Dispatcher::dispatch(&mut app, Command::Editor {
-            action: Action::InsertNewLine { count: 1 },
-            register: None,
-        });
-        assert!(app.ui.window(active_win).unwrap().window_state().unwrap().show_matches);
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertText("set show_matches=true".to_string()),
+                register: None,
+            },
+        );
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::InsertNewLine { count: 1 },
+                register: None,
+            },
+        );
+        assert!(
+            app.ui
+                .window(active_win)
+                .unwrap()
+                .window_state()
+                .unwrap()
+                .show_matches
+        );
     }
 
     #[test]
     fn test_colorscheme_handling() {
         let mut app = app();
-        assert_eq!(app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()), Some("tokyonight-moon"));
+        assert_eq!(
+            app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()),
+            Some("tokyonight-moon")
+        );
 
         Dispatcher::dispatch(&mut app, Command::Colorscheme { name: None });
         assert_eq!(app.model.status.as_deref(), Some("tokyonight-moon"));
 
-        let outcome = Dispatcher::dispatch(&mut app, Command::Colorscheme { name: Some("kanagawa".to_string()) });
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::Colorscheme {
+                name: Some("kanagawa".to_string()),
+            },
+        );
         assert!(outcome.redraw);
-        assert_eq!(app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()), Some("kanagawa"));
+        assert_eq!(
+            app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()),
+            Some("kanagawa")
+        );
         assert_eq!(app.model.status.as_ref(), None);
 
-        Dispatcher::dispatch(&mut app, Command::Colorscheme { name: Some("invalid-name".to_string()) });
-        assert_eq!(app.model.status.as_deref(), Some("E185: Cannot find color scheme 'invalid-name'"));
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Colorscheme {
+                name: Some("invalid-name".to_string()),
+            },
+        );
+        assert_eq!(
+            app.model.status.as_deref(),
+            Some("E185: Cannot find color scheme 'invalid-name'")
+        );
     }
 
     #[test]
@@ -1066,7 +1141,10 @@ mod tests {
         );
 
         // Check history contents
-        assert_eq!(app.model.command_history, vec!["help".to_string(), "quit".to_string()]);
+        assert_eq!(
+            app.model.command_history,
+            vec!["help".to_string(), "quit".to_string()]
+        );
 
         // 3. Enter command mode ':' to test cycling
         Dispatcher::dispatch(
@@ -1091,7 +1169,10 @@ mod tests {
         Dispatcher::dispatch(
             &mut app,
             Command::Editor {
-                action: Action::MoveUp { count: 1, select: false },
+                action: Action::MoveUp {
+                    count: 1,
+                    select: false,
+                },
                 register: None,
             },
         );
@@ -1106,7 +1187,10 @@ mod tests {
         Dispatcher::dispatch(
             &mut app,
             Command::Editor {
-                action: Action::MoveUp { count: 1, select: false },
+                action: Action::MoveUp {
+                    count: 1,
+                    select: false,
+                },
                 register: None,
             },
         );
@@ -1119,7 +1203,10 @@ mod tests {
         Dispatcher::dispatch(
             &mut app,
             Command::Editor {
-                action: Action::MoveDown { count: 1, select: false },
+                action: Action::MoveDown {
+                    count: 1,
+                    select: false,
+                },
                 register: None,
             },
         );
@@ -1132,7 +1219,10 @@ mod tests {
         Dispatcher::dispatch(
             &mut app,
             Command::Editor {
-                action: Action::MoveDown { count: 1, select: false },
+                action: Action::MoveDown {
+                    count: 1,
+                    select: false,
+                },
                 register: None,
             },
         );

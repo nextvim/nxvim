@@ -127,7 +127,21 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(expr);
                 self.emit(Instruction::Pop, stmt.span);
             }
-            StmtKind::Echo(values) | StmtKind::Execute(values) => {
+            StmtKind::Echo(values) => {
+                for value in values {
+                    self.compile_expr(value);
+                    let name = self.constant(Constant::String("echo".to_owned()));
+                    self.emit(
+                        Instruction::CallNamed {
+                            name,
+                            argc: 1,
+                        },
+                        value.span,
+                    );
+                    self.emit(Instruction::Pop, value.span);
+                }
+            }
+            StmtKind::Execute(values) => {
                 for value in values {
                     self.compile_expr(value);
                     self.emit(Instruction::Pop, value.span);

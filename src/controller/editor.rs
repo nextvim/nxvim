@@ -389,9 +389,7 @@ impl Editor {
                             reversed: false,
                             goal: SelectionGoal::None,
                         };
-                        buffer_display_context
-                            .selections
-                            .update(text_buffer, &next);
+                        buffer_display_context.selections.update(text_buffer, &next);
                     }
                 } else {
                     let cursor = buffer_display_context.selections.primary().clone();
@@ -412,7 +410,10 @@ impl Editor {
                             reversed: false,
                             goal: SelectionGoal::None,
                         };
-                        if buffer_display_context.selections.has_similar_cursor(&next_cursor, text_buffer) {
+                        if buffer_display_context
+                            .selections
+                            .has_similar_cursor(&next_cursor, text_buffer)
+                        {
                             return None;
                         }
 
@@ -427,7 +428,9 @@ impl Editor {
                                 goal: SelectionGoal::None,
                             },
                         );
-                        buffer_display_context.selections.update(text_buffer, &next_cursor);
+                        buffer_display_context
+                            .selections
+                            .update(text_buffer, &next_cursor);
                     }
                 }
                 return None;
@@ -2790,12 +2793,7 @@ impl Editor {
         }
 
         for &(start, end, _) in &edits {
-            remove_overlapping_folds(
-                folds,
-                buffer.as_text_buffer(),
-                start,
-                end,
-            );
+            remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
         }
 
         let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
@@ -2869,12 +2867,7 @@ impl Editor {
         }
 
         for &(start, end, _) in &edits {
-            remove_overlapping_folds(
-                folds,
-                buffer.as_text_buffer(),
-                start,
-                end,
-            );
+            remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
         }
 
         let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
@@ -3030,11 +3023,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            window_state.selections.primary().start.to_point(buffer.as_text_buffer()).column,
+            window_state
+                .selections
+                .primary()
+                .start
+                .to_point(buffer.as_text_buffer())
+                .column,
             6
         );
         assert_eq!(
-            window_state.selections.primary().end.to_point(buffer.as_text_buffer()).column,
+            window_state
+                .selections
+                .primary()
+                .end
+                .to_point(buffer.as_text_buffer())
+                .column,
             10
         );
 
@@ -3152,8 +3155,10 @@ mod tests {
                 end: Point::new(0, 4),
             });
             // Select bcd
-            window_state.selections.selections[0].start = buffer.as_text_buffer().anchor_at(1, Bias::Left);
-            window_state.selections.selections[0].end = buffer.as_text_buffer().anchor_at(4, Bias::Left);
+            window_state.selections.selections[0].start =
+                buffer.as_text_buffer().anchor_at(1, Bias::Left);
+            window_state.selections.selections[0].end =
+                buffer.as_text_buffer().anchor_at(4, Bias::Left);
             editor
                 .execute(
                     Mode::Visual,
