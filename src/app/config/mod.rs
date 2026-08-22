@@ -103,6 +103,13 @@ impl ConfigRegistry {
             description: "Show line cursorline",
         });
         self.register(OptionSpec {
+            name: "wrap",
+            aliases: &["wrap"],
+            default_value: ConfigValue::Bool(false),
+            scope: OptionScope::Global,
+            description: "Wrap text on overflow",
+        });
+        self.register(OptionSpec {
             name: "tabstop",
             aliases: &["ts"],
             default_value: ConfigValue::Number(8),

@@ -136,6 +136,10 @@ pub fn build_text(
         ))
     };
 
+    let total_rows = display_map_snapshot.buffer_snapshot().row_count();
+    let digit_count = total_rows.max(1).to_string().len();
+    let gutter_digits = digit_count.max(2);
+
     let mut prev_row = 0;
     for row in start_row..end_row {
         let is_cursor_row = hl_cursor_line && cursor_row == Some(row);
@@ -175,7 +179,7 @@ pub fn build_text(
         }
 
         let mut gutter_text = if window.show_gutter {
-            format!(" {:2} ", buffer_row + 1)
+            format!(" {:width$} ", buffer_row + 1, width = gutter_digits)
         } else {
             String::new()
         };
@@ -183,8 +187,12 @@ pub fn build_text(
             gutter_text = " ".repeat(gutter_text.len());
         }
         prev_row = buffer_row + 1;
-        let gutter_width = gutter_text.len() as u32;
-        let cursor_offset = gutter_width as u32;
+        let gutter_width = if window.show_gutter {
+            (gutter_digits + 2) as u32
+        } else {
+            0
+        };
+        let cursor_offset = gutter_width;
 
         let mut gutter_style = default_style.clone();
         if let Some(cs) = colorscheme {
@@ -336,7 +344,7 @@ pub fn build_text(
     }
 
     if rows.is_empty() {
-        rows.push(empty_row(window.show_gutter, default_style));
+        rows.push(empty_row(window.show_gutter, gutter_digits, default_style));
     }
 
     let cursor = if active {
@@ -398,13 +406,20 @@ fn fallback_cursor(
     inner_rect: Rect,
     mode: vim_input::Mode,
 ) -> Option<vim_ui::model::TextCursor> {
+    let display_snapshot = window.display_map.snapshot();
+    let offset = if window.show_gutter {
+        let total_rows = display_snapshot.buffer_snapshot().row_count();
+        let digit_count = total_rows.max(1).to_string().len();
+        (digit_count.max(2) + 2) as u32
+    } else {
+        0
+    };
+
     if window.selections.selections.is_empty() {
-        let offset = if window.show_gutter { 4 } else { 0 };
         return Some(text_cursor(0, offset, mode));
     }
 
     let cursor_anchor = window.selections.primary().head();
-    let display_snapshot = window.display_map.snapshot();
     let original_buffer = display_snapshot.buffer_snapshot();
     let display_cursor = if original_buffer.version == buffer.snapshot().as_inner().version {
         display_snapshot.try_anchor_to_display_point(cursor_anchor)?
@@ -426,12 +441,6 @@ fn fallback_cursor(
     {
         return None;
     }
-    let offset = if window.show_gutter {
-        let buffer_row = display_snapshot.try_buffer_row_for_display_row(display_cursor.row())?;
-        format!(" {:2} ", buffer_row + 1).len() as u32
-    } else {
-        0
-    };
     Some(text_cursor(
         display_cursor.row() - scroll_y,
         display_cursor.column().saturating_sub(scroll_x) + offset,
@@ -592,13 +601,13 @@ fn cursor_shape(mode: vim_input::Mode) -> vim_ui::model::CursorShape {
     }
 }
 
-fn empty_row(show_gutter: bool, default_style: vim_ui::Style) -> vim_ui::model::DisplayRow {
+fn empty_row(show_gutter: bool, gutter_digits: usize, default_style: vim_ui::Style) -> vim_ui::model::DisplayRow {
     vim_ui::model::DisplayRow {
         buffer_row: Some(0),
         kind: vim_ui::model::DisplayRowKind::Buffer,
         gutter: if show_gutter {
             Some(vim_ui::model::GutterCell {
-                text: "  1 ".to_string(),
+                text: format!(" {:width$} ", 1, width = gutter_digits),
                 style: default_style,
             })
         } else {

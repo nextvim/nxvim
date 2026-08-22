@@ -136,6 +136,21 @@ mod tests {
         );
 
         assert!(outcome.redraw);
+
+        // Wait and poll the background task to complete
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if app.services.poll() {
+                for task_res in app.services.drain_results() {
+                    Dispatcher::dispatch(&mut app, Command::Task(task_res));
+                }
+            }
+            if path.is_file() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
         assert!(path.is_file());
         assert!(
             app.model
@@ -961,6 +976,38 @@ mod tests {
         let outcome = Dispatcher::dispatch(&mut app, Command::Syntax { enable: true });
         assert!(outcome.redraw);
         assert!(app.syntax_highlight);
+    }
+
+    #[test]
+    fn test_treesitter_handling() {
+        let mut app = app();
+        assert!(!app.treesitter_enabled); // default false
+
+        // Turn treesitter on
+        let outcome = Dispatcher::dispatch(&mut app, Command::Treesitter { enable: true });
+        assert!(outcome.redraw);
+        assert!(app.treesitter_enabled);
+
+        // Turn treesitter off
+        let outcome = Dispatcher::dispatch(&mut app, Command::Treesitter { enable: false });
+        assert!(outcome.redraw);
+        assert!(!app.treesitter_enabled);
+    }
+
+    #[test]
+    fn test_indexer_handling() {
+        let mut app = app();
+        assert!(!app.indexer_enabled); // default false
+
+        // Turn indexer on
+        let outcome = Dispatcher::dispatch(&mut app, Command::Indexer { enable: true });
+        assert!(outcome.redraw);
+        assert!(app.indexer_enabled);
+
+        // Turn indexer off
+        let outcome = Dispatcher::dispatch(&mut app, Command::Indexer { enable: false });
+        assert!(outcome.redraw);
+        assert!(!app.indexer_enabled);
     }
 
     #[test]

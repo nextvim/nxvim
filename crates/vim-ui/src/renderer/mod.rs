@@ -15,6 +15,14 @@ pub trait Renderer {
     fn set_bg(&mut self, color: Color) -> std::io::Result<()>;
     fn reset_colors(&mut self) -> std::io::Result<()>;
 
+    fn get_cell(&self, _x: u16, _y: u16) -> Option<Cell> {
+        None
+    }
+
+    fn set_cell(&mut self, _x: u16, _y: u16, _cell: Cell) -> std::io::Result<()> {
+        Ok(())
+    }
+
     fn set_style(&mut self, style: crate::Style) -> std::io::Result<()> {
         self.set_fg(style.fg.unwrap_or(Color::Reset))?;
         self.set_bg(style.bg.unwrap_or(Color::Reset))
@@ -273,6 +281,15 @@ impl Renderer for BufferedRenderer {
     fn reset_colors(&mut self) -> std::io::Result<()> {
         self.current_fg = Color::Reset;
         self.current_bg = Color::Reset;
+        Ok(())
+    }
+
+    fn get_cell(&self, x: u16, y: u16) -> Option<Cell> {
+        self.current.get_cell(x, y).copied()
+    }
+
+    fn set_cell(&mut self, x: u16, y: u16, cell: Cell) -> std::io::Result<()> {
+        self.current.set_cell(x, y, cell);
         Ok(())
     }
 }

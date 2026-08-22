@@ -65,6 +65,7 @@ pub struct WindowState {
     pub show_gutter: bool,
     pub show_matches: bool,
     pub show_cursorline: bool,
+    pub wrap_text: bool,
     pub folds: Vec<display_map::Fold>,
 }
 
@@ -73,7 +74,7 @@ impl WindowState {
         let snapshot = buffer.snapshot().as_inner().clone();
         let mut selections = vim_buffer::SelectionSet::new();
         selections.add(buffer.as_text_buffer(), 0);
-        Self::from_parts(buffer.id(), snapshot, selections, viewport, true, true, false)
+        Self::from_parts(buffer.id(), snapshot, selections, viewport, true, true, false, true)
     }
 
     pub fn placeholder(buffer: &vim_buffer::Buffer) -> Self {
@@ -91,6 +92,7 @@ impl WindowState {
             show_gutter: true,
             show_matches: true,
             show_cursorline: false,
+            wrap_text: false,
             folds: Vec::new(),
         }
     }
@@ -130,10 +132,10 @@ impl WindowState {
         self.last_version = Some(snapshot.version.clone());
         self.viewport = viewport;
 
-        let wrap_width = wrap_width(&snapshot, width, has_border, self.show_gutter);
+        let wrap_width = wrap_width(&snapshot, width, has_border, self.show_gutter, self.wrap_text);
 
         self.display_map.sync_hot_window(snapshot, buffer_window);
-        self.display_map.set_wrap_width(Some(wrap_width));
+        self.display_map.set_wrap_width(wrap_width);
         self.scroll_to_cursor();
     }
 
@@ -146,14 +148,32 @@ impl WindowState {
                 self.viewport.width,
                 self.viewport.has_border,
                 show_gutter,
+                self.wrap_text,
             );
-            self.display_map.set_wrap_width(Some(wrap_width));
+            self.display_map.set_wrap_width(wrap_width);
             self.scroll_to_cursor();
         }
     }
 
     pub fn set_show_cursorline(&mut self, show_cursorline: bool) {
         self.show_cursorline = show_cursorline;
+    }
+
+
+    pub fn set_wrap_text(&mut self, wrap_text: bool) {
+        if self.wrap_text != wrap_text {
+            self.wrap_text = wrap_text;
+            let snapshot = self.display_map.snapshot().buffer_snapshot().clone();
+            let wrap_width = wrap_width(
+                &snapshot,
+                self.viewport.width,
+                self.viewport.has_border,
+                self.show_gutter,
+                wrap_text,
+            );
+            self.display_map.set_wrap_width(wrap_width);
+            self.scroll_to_cursor();
+        }
     }
 
     pub fn scroll_to_cursor(&mut self) {
@@ -165,11 +185,16 @@ impl WindowState {
             .display_map
             .snapshot()
             .anchor_to_display_point(self.selections.primary().head());
-        let wrap_width = self.display_map.wrap_width.unwrap_or(self.viewport.width);
+        let text_width = text_width(
+            &self.display_map.snapshot().buffer_snapshot(),
+            self.viewport.width,
+            self.viewport.has_border,
+            self.show_gutter,
+        );
         self.display_map.scroll_to_cursor(
             display_cursor,
             self.viewport.height as i32,
-            wrap_width as i32,
+            text_width as i32,
         );
     }
 
@@ -181,16 +206,18 @@ impl WindowState {
         show_gutter: bool,
         show_matches: bool,
         show_cursorline: bool,
+        wrap_text: bool
     ) -> Self {
-        let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border, show_gutter);
+        let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border, show_gutter, wrap_text);
+        let text_width = text_width(&snapshot, viewport.width, viewport.has_border, show_gutter);
         let cursor_row = selections.primary().head().to_point(&snapshot).row;
         let buffer_window = hot_window(cursor_row, viewport.height, snapshot.row_count());
         let mut display_map =
-            display_map::DisplayMap::new_windowed(snapshot, Some(wrap_width), buffer_window);
+            display_map::DisplayMap::new_windowed(snapshot, wrap_width, buffer_window);
         let display_cursor = display_map
             .snapshot()
             .anchor_to_display_point(selections.primary().head());
-        display_map.scroll_to_cursor(display_cursor, viewport.height as i32, wrap_width as i32);
+        display_map.scroll_to_cursor(display_cursor, viewport.height as i32, text_width as i32);
 
         Self {
             buffer_id,
@@ -203,6 +230,7 @@ impl WindowState {
             show_gutter,
             show_matches,
             show_cursorline,
+            wrap_text,
             folds: Vec::new(),
         }
     }
@@ -222,10 +250,23 @@ fn wrap_width(
     width: u32,
     has_border: bool,
     show_gutter: bool,
+    wrap_text: bool,
+) -> Option<u32> {
+    if !wrap_text {
+        return None;
+    }
+    Some(text_width(snapshot, width, has_border, show_gutter))
+}
+
+fn text_width(
+    snapshot: &text::BufferSnapshot,
+    width: u32,
+    has_border: bool,
+    show_gutter: bool,
 ) -> u32 {
     let gutter_width = if show_gutter {
         let digit_count = snapshot.row_count().max(1).to_string().len();
-        (digit_count.max(2) + 2) as u32
+        (digit_count.max(2) + 1) as u32
     } else {
         0
     };

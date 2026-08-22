@@ -91,7 +91,7 @@ pub fn encode_utf8(text: &str, options: &BufferOptions) -> Result<Vec<u8>, Buffe
     })
 }
 
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BufferError> {
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BufferError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path.file_name().ok_or_else(|| {
         BufferError::Io(std::io::Error::new(

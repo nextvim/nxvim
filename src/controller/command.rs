@@ -48,6 +48,12 @@ pub enum Command {
     Syntax {
         enable: bool,
     },
+    Treesitter {
+        enable: bool,
+    },
+    Indexer {
+        enable: bool,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -106,6 +112,14 @@ impl std::fmt::Debug for Command {
                 .finish(),
             Command::Syntax { enable } => f
                 .debug_struct("Syntax")
+                .field("enable", enable)
+                .finish(),
+            Command::Treesitter { enable } => f
+                .debug_struct("Treesitter")
+                .field("enable", enable)
+                .finish(),
+            Command::Indexer { enable } => f
+                .debug_struct("Indexer")
                 .field("enable", enable)
                 .finish(),
         }
