@@ -27,6 +27,34 @@ edition = "2024"
 license = "Vim"
 publish = false
 
+[package.metadata.deb]
+name = "nxvim"
+maintainer = "Maintainer <maintainer@example.com>"
+description = "A Vim-inspired terminal text editor written in Rust"
+extended-description = """
+nxvim is a Vim-inspired terminal text editor written in Rust, powered by Zed's ultra-high-performance Rope + SumTree-backed text buffers and concurrent snapshot technologies.
+"""
+depends = "$dependency, libc6"
+section = "editors"
+priority = "optional"
+assets = [
+    ["target/release/nxvim", "usr/bin/nxvim", "755"],
+    ["LICENSE", "usr/share/doc/nxvim/copyright", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "nxvim"
+summary = "A Vim-inspired terminal text editor written in Rust"
+description = """
+nxvim is a Vim-inspired terminal text editor written in Rust, powered by Zed's ultra-high-performance Rope + SumTree-backed text buffers and concurrent snapshot technologies.
+"""
+license = "Vim"
+assets = [
+    { source = "target/release/nxvim", dest = "/usr/bin/nxvim", mode = "755" },
+    { source = "LICENSE", dest = "/usr/share/licenses/nxvim/LICENSE", mode = "644" }
+]
+
+
 [profile.dev]
 debug = 1
 

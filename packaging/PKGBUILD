@@ -1,0 +1,31 @@
+# PKGBUILD for nxvim (Arch Linux)
+# Maintainer: Maintainer <maintainer@example.com>
+
+pkgname=nxvim
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A Vim-inspired terminal text editor written in Rust, powered by Zed's Rope engine"
+arch=('x86_64' 'aarch64')
+url="https://github.com/user/nxvim"
+license=('GPL-3.0-or-later' 'Apache-2.0')
+depends=('gcc-libs')
+makedepends=('cargo')
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/user/${pkgname}/archive/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "${pkgname}-${pkgver}"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's|host: ||p')"
+}
+
+build() {
+  cd "${pkgname}-${pkgver}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo build --frozen --release
+}
+
+package() {
+  cd "${pkgname}-${pkgver}"
+  install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
