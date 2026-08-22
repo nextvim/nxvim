@@ -31,8 +31,6 @@ impl Dispatcher {
             Command::ExecuteScript(_) => CommandOutcome::redraw(),
             Command::SearchForward { pattern } => {
 
-                log!("dispatch SearchForward {}", pattern);
-
                 let active_window = app.ui.focused_window_id();
                 app.model.search_pattern = Some(pattern.clone());
                 app.model.search_regex =

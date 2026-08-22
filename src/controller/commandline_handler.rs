@@ -1,7 +1,8 @@
-use text::{Point, ToOffset, ToPoint};
+use text::{Point, ToOffset};
 use vim_input::{Action, Mode};
 use vim_regex::Regex;
 use vim_ui::{Ui, WindowId};
+use nxvim_log::log;
 
 use crate::app::ui::ViewIds;
 use crate::app::windows::WindowOps;
@@ -236,23 +237,13 @@ impl CommandlineHandler {
             .unwrap_or(view_ids.main)
     }
 
-    fn current_command(ui: &Ui, model: &EditorModel, commandline_id: WindowId) -> Option<String> {
+    fn current_command(_ui: &Ui, model: &EditorModel, _commandline_id: WindowId) -> Option<String> {
         let buffer_id = model.commandline_buffer();
-        let window = ui
-            .window(commandline_id)
-            .and_then(vim_ui::Window::window_state)?;
         let buffer = model.get_buffer(buffer_id).ok()?;
-        let current_row = window
-            .selections
-            .first()?
-            .head()
-            .to_point(buffer.as_text_buffer())
-            .row;
-        let target_row = current_row.checked_sub(1)?;
         let text_buffer = buffer.as_text_buffer();
-        let start = Point::new(target_row, 0).to_offset(text_buffer);
-        let end = Point::new(target_row, text_buffer.line_len(target_row)).to_offset(text_buffer);
-        Some(text_buffer.as_rope().chunks_in_range(start..end).collect())
+        let rope = text_buffer.as_rope();
+        let text: String = rope.chunks_in_range(0..rope.len()).collect();
+        Some(text.replace('\n', ""))
     }
 
     pub fn get_commandline_text(model: &EditorModel) -> Option<String> {
