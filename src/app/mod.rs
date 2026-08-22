@@ -46,7 +46,7 @@ impl App {
             .and_then(vim_ui::Window::window_state_mut)
         {
             window_state.set_show_gutter(false);
-            window_state.show_matches = false;
+            window_state.set_show_matches(false);
         }
 
         let colorscheme = vim_colorscheme::ColorScheme::load_default();
@@ -69,11 +69,16 @@ impl App {
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());
-        app.init(args.pre_config_cmds, args.post_config_cmds);
+        app.init(args.pre_config_cmds, args.post_config_cmds, args.scripts);
         app
     }
 
-    pub fn init(&mut self, pre_config_cmds: Vec<String>, post_config_cmds: Vec<String>) {
+    pub fn init(
+        &mut self,
+        pre_config_cmds: Vec<String>,
+        post_config_cmds: Vec<String>,
+        scripts: Vec<std::path::PathBuf>,
+    ) {
         if cfg!(test) {
             return;
         }
@@ -108,6 +113,19 @@ impl App {
         for cmd in post_config_cmds {
             if let Err(err) = self.script.execute(&cmd) {
                 log::error!("Error executing post-config command {}: {}", cmd, err);
+            }
+        }
+
+        for path in scripts {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    if let Err(err) = self.script.execute(&content) {
+                        log::error!("Error executing script file {:?}: {}", path, err);
+                    }
+                }
+                Err(err) => {
+                    log::error!("Error reading script file {:?}: {}", path, err);
+                }
             }
         }
     }

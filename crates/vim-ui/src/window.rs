@@ -159,6 +159,9 @@ impl WindowState {
         self.show_cursorline = show_cursorline;
     }
 
+    pub fn set_show_matches(&mut self, show_matches: bool) {
+        self.show_matches = show_matches;
+    }
 
     pub fn set_wrap_text(&mut self, wrap_text: bool) {
         if self.wrap_text != wrap_text {

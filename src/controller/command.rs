@@ -54,6 +54,9 @@ pub enum Command {
     Indexer {
         enable: bool,
     },
+    Echo {
+        message: String,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -121,6 +124,10 @@ impl std::fmt::Debug for Command {
             Command::Indexer { enable } => f
                 .debug_struct("Indexer")
                 .field("enable", enable)
+                .finish(),
+            Command::Echo { message } => f
+                .debug_struct("Echo")
+                .field("message", message)
                 .finish(),
         }
     }

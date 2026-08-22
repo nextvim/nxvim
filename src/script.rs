@@ -46,6 +46,17 @@ impl ScriptRuntime {
     }
 
     pub fn execute(&mut self, source: &str) -> Result<Value, String> {
+        let mut source = source;
+        if let Some(stripped) = source.strip_prefix(':') {
+            if stripped
+                .trim_start()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                source = stripped;
+            }
+        }
         let source_id = self.sources.add("command_line", source);
         let lexed = Lexer::new(source_id, source).lex();
         self.check_diagnostics(&lexed.diagnostics)?;
@@ -366,6 +377,23 @@ mod tests {
         assert!(matches!(
             runtime.try_next_command(),
             Some(Command::Colorscheme { name: Some(ref name) }) if name == "tokyonight"
+        ));
+    }
+
+    #[test]
+    fn test_echo_command_is_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("echo hello world").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Echo { ref message }) if message == "hello world"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("ec message").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Echo { ref message }) if message == "message"
         ));
     }
 

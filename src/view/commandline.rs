@@ -8,6 +8,8 @@ use crate::view::textview::TextView;
 pub struct CommandLineView {
     inner: TextView,
     mode: char,
+    active: bool,
+    status_message: Option<String>,
 }
 
 impl Default for CommandLineView {
@@ -21,6 +23,8 @@ impl CommandLineView {
         Self {
             inner: TextView::new(),
             mode: ':',
+            active: false,
+            status_message: None,
         }
     }
 
@@ -33,6 +37,9 @@ impl CommandLineView {
         active: bool,
         globals: &RenderGlobals,
     ) {
+        self.active = active;
+        self.status_message = globals.status_message.map(|s| s.to_string());
+
         let content_rect = content_rect(inner_rect);
         let globals_no_search = RenderGlobals {
             mode: globals.mode,
@@ -62,13 +69,28 @@ impl View for CommandLineView {
         if let Some(model) = self.inner.model() {
             renderer.set_style(model.default_style)?;
         }
-        renderer.print(&self.mode.to_string())?;
 
-        self.inner.draw(content_rect(area), renderer)
+        if self.active {
+            renderer.print(&self.mode.to_string())?;
+            self.inner.draw(content_rect(area), renderer)
+        } else {
+            let msg = self.status_message.as_deref().unwrap_or("");
+            let msg_width = msg.chars().count();
+            renderer.print(msg)?;
+            if (msg_width as u16) < area.width {
+                let padding = " ".repeat((area.width - msg_width as u16) as usize);
+                renderer.print(&padding)?;
+            }
+            Ok(())
+        }
     }
 
     fn cursor_screen_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        self.inner.cursor_screen_pos(content_rect(area))
+        if self.active {
+            self.inner.cursor_screen_pos(content_rect(area))
+        } else {
+            None
+        }
     }
 
     fn cursor_shape(&self) -> vim_ui::CursorShape {

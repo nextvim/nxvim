@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub struct Args {
     pub pre_config_cmds: Vec<String>,
     pub post_config_cmds: Vec<String>,
+    pub scripts: Vec<PathBuf>,
     pub paths: Vec<PathBuf>,
 }
 
@@ -19,6 +20,7 @@ impl Args {
     {
         let mut pre_config_cmds = Vec::new();
         let mut post_config_cmds = Vec::new();
+        let mut scripts = Vec::new();
         let mut paths = Vec::new();
 
         let mut args_iter = iter.into_iter().peekable();
@@ -41,6 +43,12 @@ impl Args {
                 }
             } else if arg.starts_with("-c") {
                 post_config_cmds.push(arg["-c".len()..].to_string());
+            } else if arg == "-S" {
+                if let Some(script_os) = args_iter.next() {
+                    scripts.push(PathBuf::from(script_os.as_ref()));
+                }
+            } else if arg.starts_with("-S") {
+                scripts.push(PathBuf::from(&arg["-S".len()..]));
             } else if arg.starts_with('+') {
                 let cmd = if arg.len() > 1 { &arg[1..] } else { "$" };
                 post_config_cmds.push(cmd.to_string());
@@ -52,6 +60,7 @@ impl Args {
         Self {
             pre_config_cmds,
             post_config_cmds,
+            scripts,
             paths,
         }
     }
@@ -73,6 +82,9 @@ mod tests {
             "-cqa",
             "+set nu",
             "+",
+            "-S",
+            "script1.vim",
+            "-Sscript2.vim",
             "--",
             "--cmd",
             "file2.rs",
@@ -92,6 +104,14 @@ mod tests {
                 "qa".to_string(),
                 "set nu".to_string(),
                 "$".to_string()
+            ]
+        );
+
+        assert_eq!(
+            parsed.scripts,
+            vec![
+                PathBuf::from("script1.vim"),
+                PathBuf::from("script2.vim")
             ]
         );
 

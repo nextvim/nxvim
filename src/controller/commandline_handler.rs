@@ -132,34 +132,23 @@ impl CommandlineHandler {
                         let pattern = command[1..].to_string();
                         model.search_regex =
                             Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
-                        // model.search_regex = Regex::new(&pattern).ok();
                         model.search_pattern = Some(pattern);
                     } else if model.commandline_mode == '/' || model.commandline_mode == '?' {
                         model.search_regex =
                             Regex::compile(&command, vim_regex::CompileOptions::default()).ok();
-                        // model.search_regex = Regex::new(&command).ok();
                         model.search_pattern = Some(command.clone());
                     }
+                    
                     let cmd_to_execute = if command.starts_with(':')
                         || command.starts_with('/')
                         || command.starts_with('?')
                     {
-                        command
+                        command.chars().skip(1).collect::<String>()
                     } else {
                         format!("{}{}", model.commandline_mode, command)
                     };
-                    let trimmed = cmd_to_execute.trim_start_matches(':').trim();
-                    if trimmed == "show_matches=false" || trimmed == "set show_matches=false" {
-                        let target_window = Self::editor_focus(ui, view_ids);
-                        if let Some(window_state) = ui.window_mut(target_window).and_then(vim_ui::Window::window_state_mut) {
-                            window_state.show_matches = false;
-                        }
-                    } else if trimmed == "show_matches=true" || trimmed == "set show_matches=true" {
-                        let target_window = Self::editor_focus(ui, view_ids);
-                        if let Some(window_state) = ui.window_mut(target_window).and_then(vim_ui::Window::window_state_mut) {
-                            window_state.show_matches = true;
-                        }
-                    } else if let Err(error) = script.execute(&cmd_to_execute) {
+
+                    if let Err(error) = script.execute(&cmd_to_execute) {
                         model.status = Some(error);
                     }
                 }
