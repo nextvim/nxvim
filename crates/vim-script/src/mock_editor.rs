@@ -129,9 +129,9 @@ impl Host for MockEditor {
                     state.cursor = (line, column);
                     Ok(Value::Integer(0))
                 }
-                "message" | "echomsg" => {
+                "echo" | "message" | "echomsg" => {
                     expect_arity(&request, 1)?;
-                    let message = string_argument(&request, 0)?;
+                    let message = request.arguments[0].to_string();
                     state
                         .lock()
                         .map_err(|_| lock_error())?

@@ -109,10 +109,7 @@ mod tests {
 
         assert_eq!(
             parsed.scripts,
-            vec![
-                PathBuf::from("script1.vim"),
-                PathBuf::from("script2.vim")
-            ]
+            vec![PathBuf::from("script1.vim"), PathBuf::from("script2.vim")]
         );
 
         assert_eq!(

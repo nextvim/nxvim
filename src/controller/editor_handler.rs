@@ -32,12 +32,17 @@ impl EditorHandler {
 
         let search_pattern = model.search_pattern.clone();
         let mut next_mode = None;
-        let is_commandline = WindowOps::window_buffer(ui, active_window) == Some(model.commandline_buffer());
-        let is_history_move = is_commandline && matches!(action, Action::MoveUp { .. } | Action::MoveDown { .. });
+        let is_commandline =
+            WindowOps::window_buffer(ui, active_window) == Some(model.commandline_buffer());
+        let is_history_move =
+            is_commandline && matches!(action, Action::MoveUp { .. } | Action::MoveDown { .. });
 
         if !is_history_move {
-            let _ =
-                WindowOps::edit_window(ui, model, active_window, |buffer, context, window_state| {
+            let _ = WindowOps::edit_window(
+                ui,
+                model,
+                active_window,
+                |buffer, context, window_state| {
                     let search_str = search_pattern.clone().unwrap_or_default();
                     if search_str != window_state.selections.search {
                         window_state.selections.search = search_str.clone();
@@ -55,7 +60,8 @@ impl EditorHandler {
                     ) {
                         next_mode = mode;
                     }
-                });
+                },
+            );
         }
         // Reset the register selection regardless of whether the action
         // consumed it, so it never leaks into an unrelated follow-up action.

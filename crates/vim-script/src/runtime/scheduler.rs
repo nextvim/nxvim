@@ -838,4 +838,29 @@ mod tests {
             TaskState::Cancelled
         ));
     }
+
+    #[test]
+    fn executes_echo_statements_via_host_call() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let host = Arc::new(MockHost {
+            requests: requests.clone(),
+        });
+        let mut runtime = HostRuntime::new(host);
+        runtime.capabilities.grant(Capability::Editor);
+        runtime.register_function(
+            "echo",
+            Arity::Exact(1),
+            vec![Capability::Editor],
+        );
+        let mut scheduler = Scheduler::new(10);
+        scheduler.set_host(runtime);
+        let task = scheduler
+            .spawn(vm("echo 'hello world'\n", HashMap::new()))
+            .unwrap();
+        assert_eq!(scheduler.run_until_complete(task).unwrap(), Value::Null);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].function, "echo");
+        assert_eq!(requests[0].arguments[0], Value::String(Arc::from("hello world")));
+    }
 }

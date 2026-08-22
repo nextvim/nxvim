@@ -17,6 +17,7 @@ pub struct Runtime {
     terminal: TerminalSession,
     app: App,
     buffered_renderer: BufferedRenderer,
+    script: crate::script::ScriptRuntime,
 }
 
 impl Runtime {
@@ -25,10 +26,19 @@ impl Runtime {
         let rect = terminal.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
 
         let args = crate::app::args::Args::parse();
+        let pre_config_cmds = args.pre_config_cmds.clone();
+        let post_config_cmds = args.post_config_cmds.clone();
+        let scripts = args.scripts.clone();
+
+        let mut app = App::new(rect, args);
+        let mut script = crate::script::ScriptRuntime::new();
+        app.init(&mut script, pre_config_cmds, post_config_cmds, scripts);
+
         Ok(Self {
             terminal,
-            app: App::new(rect, args),
+            app,
             buffered_renderer: BufferedRenderer::new(rect.width, rect.height),
+            script,
         })
     }
 
@@ -41,7 +51,6 @@ impl Runtime {
         let mut last_command_time = std::time::Instant::now();
         let mut is_idle = false;
         let mut idle_since: Option<std::time::Instant> = None;
-
 
         'main_loop: loop {
             let current_rect = self.app.ui.screen_rect();
@@ -68,7 +77,7 @@ impl Runtime {
                 );
             }
 
-            commands.extend(std::iter::from_fn(|| self.app.script.try_next_command()));
+            commands.extend(std::iter::from_fn(|| self.script.try_next_command()));
 
             if commands.is_empty() {
                 if event::poll(std::time::Duration::from_millis(50))? {
@@ -106,6 +115,13 @@ impl Runtime {
             }
 
             for command in commands {
+                if let Command::ExecuteScript(ref script_str) = command {
+                    if let Err(err) = self.script.execute(script_str) {
+                        self.app.model.status = Some(err);
+                    }
+                    should_redraw = true;
+                    continue;
+                }
                 let outcome = Dispatcher::dispatch(&mut self.app, command);
                 should_redraw |= outcome.redraw;
                 self.apply_outcome(&outcome);
@@ -131,6 +147,7 @@ impl Runtime {
         }
 
         self.terminal.restore()?;
+
         Ok(())
     }
 
@@ -298,7 +315,7 @@ impl Runtime {
             expand_before,
             expand_after,
             self.app.highlighter.as_ref(),
-            cs_ref
+            cs_ref,
         );
 
         Some(())
@@ -545,9 +562,24 @@ impl Runtime {
                     );
                 }
             } else {
-                let show_number = self.app.config.get("number", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
-                let show_cursorline = self.app.config.get("cursorline", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
-                let wrap_text = self.app.config.get("wrap", Some(buffer_id), Some(window_id)).and_then(|v| v.as_bool()).unwrap_or(false);
+                let show_number = self
+                    .app
+                    .config
+                    .get("number", Some(buffer_id), Some(window_id))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let show_cursorline = self
+                    .app
+                    .config
+                    .get("cursorline", Some(buffer_id), Some(window_id))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let wrap_text = self
+                    .app
+                    .config
+                    .get("wrap", Some(buffer_id), Some(window_id))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if let Some(state) = window.window_state_mut() {
                     state.set_show_gutter(show_number);
                     state.set_show_cursorline(show_cursorline);

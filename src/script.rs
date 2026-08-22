@@ -1,16 +1,18 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, sync::mpsc};
+use std::sync::{Arc, Mutex, mpsc};
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::controller::Command;
 
 use vim_script::{
     compiler::Compiler,
     host::{
-        Capability, CommandDefinition, CommandRequest, Host, HostFuture, HostRequest, HostRuntime,
+        Arity, Capability, CommandDefinition, CommandRequest, Host, HostFuture, HostRequest,
+        HostRuntime,
     },
     lexer::Lexer,
     parser::Parser,
     resolver::{Resolver, ResolverConfig},
-    runtime::{RuntimeError, RuntimeErrorKind, Scheduler, Value, Vm},
+    runtime::{RuntimeError, RuntimeErrorKind, RuntimeResult, Scheduler, Value, Vm},
     source::SourceMap,
 };
 
@@ -29,8 +31,16 @@ pub struct ScriptRuntime {
 impl ScriptRuntime {
     pub fn new() -> Self {
         let (sender, commands) = mpsc::channel();
-        let mut host = HostRuntime::new(Arc::new(EditorHost { sender }));
+        let mut host = HostRuntime::new(Arc::new(EditorHost {
+            sender,
+            state: Arc::new(Mutex::new(EditorState::default())),
+        }));
         host.capabilities.grant(Capability::Editor);
+
+        host.register_function("echo", Arity::Exact(1), vec![Capability::Editor]);
+        host.register_function("message", Arity::Exact(1), vec![Capability::Editor]);
+        host.register_function("echomsg", Arity::Exact(1), vec![Capability::Editor]);
+
         for spec in COMMAND_SPECS {
             host.register_command(CommandDefinition::from(spec));
         }
@@ -117,18 +127,95 @@ impl Default for ScriptRuntime {
     }
 }
 
+fn expect_arity(request: &HostRequest, expected: usize) -> RuntimeResult<()> {
+    if request.arguments.len() == expected {
+        Ok(())
+    } else {
+        Err(RuntimeError::coded(
+            "E119",
+            RuntimeErrorKind::ArityError,
+            format!(
+                "{} expects {expected} argument(s), got {}",
+                request.function,
+                request.arguments.len()
+            ),
+        ))
+    }
+}
+
+fn integer_argument(request: &HostRequest, index: usize) -> RuntimeResult<i64> {
+    match &request.arguments[index] {
+        Value::Integer(value) => Ok(*value),
+        value => Err(RuntimeError::coded(
+            "E745",
+            RuntimeErrorKind::TypeError,
+            format!(
+                "argument {} to {} must be a number, got {}",
+                index + 1,
+                request.function,
+                value.type_name()
+            ),
+        )),
+    }
+}
+
+fn string_argument(request: &HostRequest, index: usize) -> RuntimeResult<String> {
+    match &request.arguments[index] {
+        Value::String(value) => Ok(value.to_string()),
+        value => Err(RuntimeError::coded(
+            "E730",
+            RuntimeErrorKind::TypeError,
+            format!(
+                "argument {} to {} must be a string, got {}",
+                index + 1,
+                request.function,
+                value.type_name()
+            ),
+        )),
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EditorState {
+    pub messages: Vec<String>,
+}
+
+impl Default for EditorState {
+    fn default() -> Self {
+        Self {
+            messages: Vec::new(),
+        }
+    }
+}
+
 struct EditorHost {
     sender: mpsc::Sender<Command>,
+    pub state: Arc<Mutex<EditorState>>,
 }
 
 impl Host for EditorHost {
     fn call(&self, request: HostRequest) -> HostFuture {
+        let sender = self.sender.clone();
         Box::pin(async move {
-            Err(RuntimeError::coded(
-                "E_NOTIMPL",
-                RuntimeErrorKind::HostError,
-                format!("host function is not implemented: {}", request.function),
-            ))
+            match request.function.as_str() {
+                "echo" | "message" | "echomsg" => {
+                    expect_arity(&request, 1)?;
+                    let message = request.arguments[0].to_string();
+                    sender.send(Command::Echo { message }).map_err(|_| {
+                        RuntimeError::coded(
+                            "E_HOST",
+                            RuntimeErrorKind::HostError,
+                            "editor command queue is closed",
+                        )
+                    })?;
+                    Ok(Value::Null)
+                }
+                name => Err(RuntimeError::coded(
+                    "E117",
+                    RuntimeErrorKind::NameError,
+                    format!("unknown host function: {name}"),
+                )),
+            }
         })
     }
 
@@ -155,6 +242,14 @@ fn runtime_message(error: RuntimeError) -> String {
     }
 }
 
+fn lock_error() -> RuntimeError {
+    RuntimeError::coded(
+        "E605",
+        RuntimeErrorKind::HostError,
+        "editor state lock is poisoned",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +258,7 @@ mod tests {
     fn test_central_registry_specifications() {
         let mut host = HostRuntime::new(Arc::new(EditorHost {
             sender: mpsc::channel().0,
+            state: Arc::new(Mutex::new(EditorState::default())),
         }));
         for spec in COMMAND_SPECS {
             host.register_command(CommandDefinition::from(spec));
@@ -383,17 +479,38 @@ mod tests {
     #[test]
     fn test_echo_command_is_dispatched() {
         let mut runtime = ScriptRuntime::new();
-        runtime.execute("echo hello world").unwrap();
+        runtime.execute("message('hello world')").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
             Some(Command::Echo { ref message }) if message == "hello world"
         ));
 
         let mut runtime = ScriptRuntime::new();
-        runtime.execute("ec message").unwrap();
+        runtime.execute("message('message')").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
             Some(Command::Echo { ref message }) if message == "message"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("echo 'hello world'").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Echo { ref message }) if message == "hello world"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("echo 123").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Echo { ref message }) if message == "123"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("echo 1+1").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Echo { ref message }) if message == "2"
         ));
     }
 

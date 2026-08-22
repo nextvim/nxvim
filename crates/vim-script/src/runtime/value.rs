@@ -106,3 +106,46 @@ impl Value {
         }
     }
 }
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Null => write!(f, "null"),
+            Self::Bool(val) => write!(f, "{}", val),
+            Self::Integer(val) => write!(f, "{}", val),
+            Self::Float(val) => write!(f, "{}", val),
+            Self::String(val) => write!(f, "{}", val),
+            Self::Blob(val) => {
+                write!(f, "0z")?;
+                for byte in val.iter() {
+                    write!(f, "{:02X}", byte)?;
+                }
+                Ok(())
+            }
+            Self::List(values) => {
+                write!(f, "[")?;
+                for (i, val) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", val)?;
+                }
+                write!(f, "]")
+            }
+            Self::Dictionary(values) => {
+                write!(f, "{{")?;
+                for (i, (key, val)) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "'{}': {}", key.replace('\'', "''"), val)?;
+                }
+                write!(f, "}}")
+            }
+            Self::Closure(_) => write!(f, "function('<lambda>')"),
+            Self::Builtin(name) | Self::HostFunction(name) => write!(f, "function('{}')", name),
+            Self::Future(id) => write!(f, "future({})", id.0),
+            Self::HostObject(id) => write!(f, "object({})", id.0),
+        }
+    }
+}

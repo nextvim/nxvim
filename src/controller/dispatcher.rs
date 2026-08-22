@@ -26,16 +26,22 @@ impl Dispatcher {
                 app.model.status = Some(format!("Pending sequence: {sequence}"));
                 CommandOutcome::redraw()
             }
+            Command::ExecuteScript(_) => CommandOutcome::redraw(),
             Command::InvalidInput => {
                 app.model.status = Some("Invalid sequence".to_string());
                 CommandOutcome::redraw()
             }
             Command::Save { path, force } => {
                 let active_window = app.ui.focused_window_id();
-                if let Some(buffer_id) = crate::app::windows::WindowOps::window_buffer(&app.ui, active_window) {
+                if let Some(buffer_id) =
+                    crate::app::windows::WindowOps::window_buffer(&app.ui, active_window)
+                {
                     if let Ok(buffer) = app.model.get_buffer(buffer_id) {
                         if buffer.options().readonly && !force {
-                            app.model.status = Some(format!("Save failed: ReadOnly (buffer {})", buffer_id.get()));
+                            app.model.status = Some(format!(
+                                "Save failed: ReadOnly (buffer {})",
+                                buffer_id.get()
+                            ));
                             return CommandOutcome::redraw();
                         }
                         let path_buf = match path {
@@ -43,29 +49,44 @@ impl Dispatcher {
                             None => match buffer.path() {
                                 Some(p) => p.to_path_buf(),
                                 None => {
-                                    app.model.status = Some(format!("Save failed: No file name (buffer {})", buffer_id.get()));
+                                    app.model.status = Some(format!(
+                                        "Save failed: No file name (buffer {})",
+                                        buffer_id.get()
+                                    ));
                                     return CommandOutcome::redraw();
                                 }
-                            }
+                            },
                         };
                         let snapshot = buffer.snapshot();
                         let options = buffer.options().clone();
-                        let revision = app.model.buffer_state(buffer_id).map(|s| s.revision).unwrap_or(0);
-                        let sequence = app.services.files.begin_save(buffer_id, snapshot.changedtick());
-                        
+                        let revision = app
+                            .model
+                            .buffer_state(buffer_id)
+                            .map(|s| s.revision)
+                            .unwrap_or(0);
+                        let sequence = app
+                            .services
+                            .files
+                            .begin_save(buffer_id, snapshot.changedtick());
+
                         let owner = crate::app::services::TaskOwner {
                             buffer_id: Some(buffer_id),
                             window_id: Some(active_window),
                             revision,
                         };
-                        
+
                         let task_id = app.services.spawn_cancellable_task(
                             "files",
                             sequence,
                             owner,
                             crate::app::services::TaskType::Files,
                             move |token| {
-                                Some(files::save_file_cancellable(snapshot, path_buf, options, move || token.is_cancelled())?)
+                                Some(files::save_file_cancellable(
+                                    snapshot,
+                                    path_buf,
+                                    options,
+                                    move || token.is_cancelled(),
+                                )?)
                             },
                         );
                         if let Some(tid) = task_id {
@@ -109,28 +130,27 @@ impl Dispatcher {
                     force,
                 )
             }
-            Command::Task(result) => TaskDispatcher::dispatch(
-                &mut app.ui,
-                &mut app.model,
-                &mut app.services,
-                result,
-            ),
+            Command::Task(result) => {
+                TaskDispatcher::dispatch(&mut app.ui, &mut app.model, &mut app.services, result)
+            }
             Command::ClearSearchHighlight => {
                 LifecycleHandler::clear_search_highlight(&mut app.model)
             }
-            Command::Colorscheme { name } => {
-                LifecycleHandler::colorscheme(
-                    &mut app.ui,
-                    &mut app.model,
-                    &mut app.colorscheme,
-                    &mut app.highlighter,
-                    name.as_deref(),
-                )
-            }
+            Command::Colorscheme { name } => LifecycleHandler::colorscheme(
+                &mut app.ui,
+                &mut app.model,
+                &mut app.colorscheme,
+                &mut app.highlighter,
+                name.as_deref(),
+            ),
             Command::Set { arguments } => {
                 let active_window = app.ui.focused_window_id();
-                let buffer_id = crate::app::windows::WindowOps::window_buffer(&app.ui, active_window);
-                match app.config.execute_set_command(&arguments, buffer_id, Some(active_window)) {
+                let buffer_id =
+                    crate::app::windows::WindowOps::window_buffer(&app.ui, active_window);
+                match app
+                    .config
+                    .execute_set_command(&arguments, buffer_id, Some(active_window))
+                {
                     Ok(Some(msg)) => {
                         app.model.status = Some(msg);
                     }
@@ -155,7 +175,9 @@ impl Dispatcher {
                 CommandOutcome::redraw()
             }
             Command::Echo { message } => {
-                app.model.status = Some(message);
+                app.model.status = Some(message.clone());
+                app.message = message.clone();
+                app.messages.push(message);
                 CommandOutcome::redraw()
             }
             Command::RangeOp {
@@ -203,10 +225,8 @@ impl Dispatcher {
                     }
                     vim_input::Action::Script { count, script } => {
                         for _ in 0..*count {
-                            if let Err(err) = app.script.execute(script) {
-                                app.model.status = Some(format!("Script error: {err}"));
-                                break;
-                            }
+                            app.command_queue
+                                .push_back(Command::ExecuteScript(script.clone()));
                         }
                         return CommandOutcome::redraw();
                     }
@@ -358,7 +378,7 @@ impl Dispatcher {
                         &mut app.ui,
                         &mut app.model,
                         &mut app.controller,
-                        &mut app.script,
+                        &mut app.command_queue,
                         app.view_ids,
                         active_window,
                         &action,

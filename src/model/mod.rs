@@ -18,7 +18,7 @@ pub use buffers::Buffers;
 pub struct EditorModel {
     buffers: Buffers,
     initial_buffer: BufferId,
-    pub(crate) status: Option<String>,
+    pub status: Option<String>,
     pub commandline_buffer: BufferId,
     pub commandline_mode: char,
     pub search_pattern: Option<String>,
