@@ -7,7 +7,6 @@ use crate::app::ui::ViewIds;
 use crate::app::windows::WindowOps;
 use crate::controller::input::InputController;
 use crate::model::EditorModel;
-use crate::script::ScriptRuntime;
 
 use super::command::{CommandOutcome, ViewEffect};
 
@@ -144,7 +143,13 @@ impl CommandlineHandler {
                         model.search_pattern = Some(command.clone());
                     }
 
-                    command_queue.push_back(crate::controller::Command::ExecuteScript(command));
+                    let command_to_execute = if command.starts_with(':') {
+                        command 
+                    } else {
+                        format!("{}{}", model.commandline_mode, command)
+                    };
+
+                    command_queue.push_back(crate::controller::Command::ExecuteScript(command_to_execute));
                 }
                 CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }

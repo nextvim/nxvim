@@ -164,15 +164,16 @@ pub fn build_text(
         let mut match_ranges = Vec::<(usize, usize)>::new();
         if window.show_matches {
             if let Some(regex) = search_regex {
-                let line_text = line.trim();
+                let buffer_snapshot = display_map_snapshot.buffer_snapshot();
+                let line_len = buffer_snapshot.line_len(buffer_row);
+                let line_text: String = buffer_snapshot
+                    .text_for_range(Point::new(buffer_row, 0)..Point::new(buffer_row, line_len))
+                    .collect();
                 let matches = line_text.find_pattern(regex);
                 match_ranges = matches
                     .iter()
                     .map(|(byte_start, byte_len, _)| {
-                        let byte_end = *byte_start + *byte_len;
-                        let start_char = line_text[..*byte_start].chars().count();
-                        let end_char = line_text[..byte_end].chars().count();
-                        (start_char, end_char)
+                        (*byte_start, *byte_start + *byte_len)
                     })
                     .collect();
             }
@@ -225,9 +226,9 @@ pub fn build_text(
 
         let mut byte_column = 0;
         let mut display_column = 0u32;
-        for (char_index, mut character) in line.chars().enumerate() {
-            let mut char_len = character.len_utf8();
-            let mut char_width = character.width().unwrap_or(0) as u32;
+        for character in line.chars() {
+            let char_len = character.len_utf8();
+            let char_width = character.width().unwrap_or(0) as u32;
 
             let current_display_column = display_column;
             let is_eol = byte_column + char_len == line_len;
@@ -263,7 +264,7 @@ pub fn build_text(
             let in_match = if !is_eol {
                 match_ranges
                     .iter()
-                    .any(|&(s, e)| char_index >= s && char_index < e)
+                    .any(|&(s, e)| (point.column as usize) >= s && (point.column as usize) < e)
             } else {
                 false
             };

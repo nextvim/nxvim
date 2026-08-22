@@ -22,10 +22,12 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "file" => file(request),
         "nohlsearch" | "nohl" => Ok(Command::ClearSearchHighlight),
         "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "copy" | "move" | "join"
-        | "print" | "change" | "/" | "?" | "substitute" | "s" | "&" | "~" | "smagic"
-        | "snomagic" | "global" | "g" | "vglobal" | "v" | "vimgrep" | "vimgrepadd" => {
+        | "print" | "change" | "global" | "g" | "vglobal" | "v" | "vimgrep" | "vimgrepadd" => {
             placeholders(request)
         }
+        "substitute" | "s" | "&" | "~" | "smagic" | "snomagic" => substitute(request),
+        "/" => search_forward(request),
+        "?" => search_backward(request),
         "delete" => delete(request),
         "yank" => yank(request),
         "put" => put(request),
@@ -278,3 +280,22 @@ fn inspect(request: CommandRequest) -> Result<Command, RuntimeError> {
         ))
     }
 }
+
+fn search_forward(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::SearchForward {
+        pattern: request.command.arguments,
+    })
+}
+
+fn search_backward(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::SearchBackward {
+        pattern: request.command.arguments,
+    })
+}
+
+fn substitute(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::SearchForward {
+        pattern: request.command.arguments,
+    })
+}
+

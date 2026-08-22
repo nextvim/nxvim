@@ -815,6 +815,11 @@ impl<'a> Parser<'a> {
     }
 
     fn looks_like_source_ex_command(&self) -> bool {
+        if let TokenKind::Identifier(ref name) = self.current().kind {
+            if name == "substitute" || name == "s" || name == "smagic" || name == "snomagic" {
+                return true;
+            }
+        }
         let Some(next) = self.tokens.get(self.cursor + 1) else {
             return true;
         };
@@ -849,6 +854,11 @@ impl<'a> Parser<'a> {
     }
 
     fn looks_like_ex_command(&self) -> bool {
+        if let TokenKind::Identifier(ref name) = self.current().kind {
+            if name == "substitute" || name == "s" || name == "smagic" || name == "snomagic" {
+                return true;
+            }
+        }
         let Some(next) = self.tokens.get(self.cursor + 1) else {
             return false;
         };

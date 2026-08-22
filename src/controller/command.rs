@@ -61,6 +61,12 @@ pub enum Command {
         message: String,
     },
     ExecuteScript(String),
+    SearchForward {
+        pattern: String,
+    },
+    SearchBackward {
+        pattern: String,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -128,6 +134,14 @@ impl std::fmt::Debug for Command {
             }
             Command::Echo { message } => f.debug_struct("Echo").field("message", message).finish(),
             Command::ExecuteScript(script) => f.debug_tuple("ExecuteScript").field(script).finish(),
+            Command::SearchForward { pattern } => f
+                .debug_struct("SearchForward")
+                .field("pattern", pattern)
+                .finish(),
+            Command::SearchBackward { pattern } => f
+                .debug_struct("SearchBackward")
+                .field("pattern", pattern)
+                .finish(),
         }
     }
 }

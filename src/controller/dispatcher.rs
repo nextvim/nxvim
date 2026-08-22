@@ -9,6 +9,8 @@ use super::range::RangeCommandHandler;
 use super::task_dispatcher::TaskDispatcher;
 use super::window_handler::WindowHandler;
 
+use nxvim_log::log;
+
 const DEBUG_VIM_INPUT: bool = false;
 
 /// Formats the standard `[Mode] Action: ...` status message shared by
@@ -27,6 +29,39 @@ impl Dispatcher {
                 CommandOutcome::redraw()
             }
             Command::ExecuteScript(_) => CommandOutcome::redraw(),
+            Command::SearchForward { pattern } => {
+
+                log!("dispatch SearchForward {}", pattern);
+
+                let active_window = app.ui.focused_window_id();
+                app.model.search_pattern = Some(pattern.clone());
+                app.model.search_regex =
+                    vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                let _ = crate::app::windows::WindowOps::edit_window(
+                    &mut app.ui,
+                    &mut app.model,
+                    active_window,
+                    |buffer, _context, window_state| {
+                        window_state.selections.move_to_next_match(&pattern, true, buffer.as_text_buffer());
+                    },
+                );
+                CommandOutcome::redraw()
+            }
+            Command::SearchBackward { pattern } => {
+                let active_window = app.ui.focused_window_id();
+                app.model.search_pattern = Some(pattern.clone());
+                app.model.search_regex =
+                    vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                let _ = crate::app::windows::WindowOps::edit_window(
+                    &mut app.ui,
+                    &mut app.model,
+                    active_window,
+                    |buffer, _context, window_state| {
+                        window_state.selections.move_to_previous_match(&pattern, true, buffer.as_text_buffer());
+                    },
+                );
+                CommandOutcome::redraw()
+            }
             Command::InvalidInput => {
                 app.model.status = Some("Invalid sequence".to_string());
                 CommandOutcome::redraw()

@@ -75,8 +75,14 @@ impl View for CommandLineView {
             self.inner.draw(content_rect(area), renderer)
         } else {
             let msg = self.status_message.as_deref().unwrap_or("");
+            let parts: Vec<&str> = msg.split('\n').collect();
+            let msg = if parts.is_empty() {
+                "".to_string()
+            } else {
+                parts[0].to_string()
+            };
             let msg_width = msg.chars().count();
-            renderer.print(msg)?;
+            renderer.print(msg.as_str())?;
             if (msg_width as u16) < area.width {
                 let padding = " ".repeat((area.width - msg_width as u16) as usize);
                 renderer.print(&padding)?;

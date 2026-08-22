@@ -599,4 +599,34 @@ mod tests {
         let mut runtime = ScriptRuntime::new();
         assert!(runtime.execute("indexer invalid").is_err());
     }
+
+    #[test]
+    fn test_substitute_command_is_dispatched() {
+        for source in ["substitute /foo/bar/", "s /foo/bar/", "&", "~", "smagic /foo/bar/", "snomagic /foo/bar/"] {
+            let mut runtime = ScriptRuntime::new();
+            runtime.execute(source).unwrap();
+            assert!(matches!(
+                runtime.try_next_command(),
+                Some(Command::SearchForward { ref pattern }) if pattern == "/foo/bar/" || pattern.is_empty()
+            ));
+        }
+    }
+
+    #[test]
+    fn test_search_commands_are_dispatched() {
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("/foo/").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::SearchForward { ref pattern }) if pattern == "foo/"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("?bar?").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::SearchBackward { ref pattern }) if pattern == "bar?"
+        ));
+    }
 }
+

@@ -17,6 +17,14 @@ impl Mode {
     pub fn is_insert(&self) -> bool {
         matches!(self, Mode::Insert | Mode::Replace)
     }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Mode::Normal)
+    }
+
+    pub fn is_command(&self) -> bool {
+        matches!(self, Mode::Command)
+    }
 }
 
 impl std::fmt::Display for Mode {
