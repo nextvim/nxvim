@@ -9,7 +9,7 @@ use crate::view::globals::RenderGlobals;
 /// Statusline text, built with `vim_formatter` so width handling (alignment,
 /// truncation) is the same real Vim-statusline machinery the format language
 /// gives every escape code, instead of ad hoc string padding.
-const LINE1: &str = " %{mode} [%f%m]%{status} %=%l:%c | utf-8 ";
+const LINE1: &str = " %{mode} [%f%m] %=%l:%c | utf-8 ";
 const LINE2: &str = " %{scope}%=";
 
 /// Data resolved fresh each frame; the two compiled formats are static.
@@ -19,7 +19,6 @@ struct StatusLineData {
     buffer_name: String,
     modified: bool,
     cursor: Option<(u32, u32)>,
-    status_message: Option<String>,
     scope_path: Vec<String>,
     style: Style,
 }
@@ -44,10 +43,7 @@ impl FormatResolver for StatusLineData {
     fn eval_expression(&self, _id: ExprId, source: &str) -> Cow<'_, str> {
         match source {
             "mode" => Cow::Borrowed(self.mode_name.as_str()),
-            "status" => match &self.status_message {
-                Some(message) => Cow::Owned(format!(" \u{2014} {message}")),
-                None => Cow::Borrowed(""),
-            },
+            "status" => Cow::Borrowed(""),
             "scope" => Cow::Owned(if self.scope_path.is_empty() {
                 "Scope: [None]".to_string()
             } else {
@@ -95,7 +91,6 @@ impl StatusLineView {
             buffer_name,
             modified,
             cursor,
-            status_message: globals.status_message.map(str::to_owned),
             scope_path,
             style,
         };
@@ -150,7 +145,7 @@ mod tests {
         assert!(line1.contains("INSERT"));
         assert!(line1.contains("main.rs"));
         assert!(line1.contains("[+]"));
-        assert!(line1.contains("hello"));
+        assert!(!line1.contains("hello"));
         assert!(line1.contains("3:8"));
 
         let line2 = row_text(&renderer, 1, 80);

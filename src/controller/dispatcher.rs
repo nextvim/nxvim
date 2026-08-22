@@ -9,6 +9,8 @@ use super::range::RangeCommandHandler;
 use super::task_dispatcher::TaskDispatcher;
 use super::window_handler::WindowHandler;
 
+const DEBUG_VIM_INPUT: bool = false;
+
 /// Formats the standard `[Mode] Action: ...` status message shared by
 /// resolved editor actions and resolved range commands.
 pub(super) fn describe_action(mode: vim_input::Mode, action: &vim_input::Action) -> String {
@@ -152,6 +154,10 @@ impl Dispatcher {
                 app.indexer_enabled = enable;
                 CommandOutcome::redraw()
             }
+            Command::Echo { message } => {
+                app.model.status = Some(message);
+                CommandOutcome::redraw()
+            }
             Command::RangeOp {
                 operation,
                 bang,
@@ -162,11 +168,15 @@ impl Dispatcher {
             Command::Editor { action, register } => {
                 let active_window = app.ui.focused_window_id();
 
-                let mut message = describe_action(app.controller.mode(), &action);
-                if let Some(register) = register {
-                    message.push_str(&format!(" (reg: '{register}')"));
+                if DEBUG_VIM_INPUT {
+                    let mut message = describe_action(app.controller.mode(), &action);
+                    if let Some(register) = register {
+                        message.push_str(&format!(" (reg: '{register}')"));
+                    }
+                    app.model.status = Some(message);
+                } else {
+                    app.model.status = None;
                 }
-                app.model.status = Some(message);
 
                 match &action {
                     vim_input::Action::BeginMacro { register } => {
