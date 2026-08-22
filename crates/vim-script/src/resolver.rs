@@ -85,6 +85,8 @@ pub struct ResolverConfig {
     /// Hosts often supply globals dynamically. When enabled, an unresolved explicit
     /// global is materialized instead of diagnosed.
     pub allow_dynamic_globals: bool,
+    /// Treat unqualified variables at the top-level as global.
+    pub unqualified_is_global: bool,
 }
 
 impl Default for ResolverConfig {
@@ -100,6 +102,7 @@ impl Default for ResolverConfig {
             .collect(),
             allow_autoload: true,
             allow_dynamic_globals: true,
+            unqualified_is_global: false,
         }
     }
 }
@@ -525,14 +528,18 @@ impl Resolver {
     }
 
     fn declare_name(&mut self, name: &ScopedName, is_const: bool, span: Span) -> SymbolId {
-        let scope = self.scope_for_name(name, true);
+        let mut name = name.clone();
+        let scope = self.scope_for_name(&name, true);
+        if self.config.unqualified_is_global && name.scope == Scope::Unqualified && scope == ScopeId(0) {
+            name.scope = Scope::Global;
+        }
         let key = symbol_key(name.scope, &name.name);
         if let Some(symbol) = self.scopes[scope.0 as usize].symbols.get(&key).copied() {
             if !self.symbols[symbol.0 as usize].mutable {
                 self.diagnostics.push(
                     Diagnostic::error(
                         "R003",
-                        format!("cannot assign to immutable variable {}", display_name(name)),
+                        format!("cannot assign to immutable variable {}", display_name(&name)),
                         span,
                     )
                     .with_label(
@@ -544,7 +551,7 @@ impl Resolver {
                 self.diagnostics.push(
                     Diagnostic::error(
                         "R002",
-                        format!("{} is already declared", display_name(name)),
+                        format!("{} is already declared", display_name(&name)),
                         span,
                     )
                     .with_label(
@@ -566,9 +573,13 @@ impl Resolver {
     }
 
     fn lookup_name(&mut self, name: &ScopedName) -> Option<SymbolId> {
+        let mut name = name.clone();
+        if self.config.unqualified_is_global && name.scope == Scope::Unqualified && self.nearest_callable_scope().is_none() {
+            name.scope = Scope::Global;
+        }
         let key = symbol_key(name.scope, &name.name);
         if name.scope != Scope::Unqualified {
-            let scope = self.scope_for_name(name, false);
+            let scope = self.scope_for_name(&name, false);
             if let Some(symbol) = self.scopes[scope.0 as usize].symbols.get(&key).copied() {
                 return Some(symbol);
             }

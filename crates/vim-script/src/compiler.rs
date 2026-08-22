@@ -647,7 +647,7 @@ impl<'a> Compiler<'a> {
         match target {
             AssignmentTarget::Name(name) => {
                 let symbol = &self.program.symbols[symbol.0 as usize];
-                symbol.name == name.name && symbol.namespace == name.scope
+                symbol.name == name.name
             }
             _ => false,
         }
