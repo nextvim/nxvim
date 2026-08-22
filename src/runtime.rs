@@ -622,27 +622,27 @@ impl Runtime {
             view.refresh(&tabs, active_index, &globals);
         }
 
-        let (buffer_name, modified, cursor, scope_path) = self.status_line_data(active_window);
+        let (buffer_name, modified, cursor, scope_path, inspect_label) = self.status_line_data(active_window);
         if let Some(view) = self
             .app
             .ui
             .window_mut(self.app.view_ids.statusline)
             .and_then(Window::view_as_mut::<StatusLineView>)
         {
-            view.refresh(&globals, buffer_name, modified, cursor, scope_path);
+            view.refresh(&globals, buffer_name, modified, cursor, scope_path, inspect_label);
         }
     }
 
     fn status_line_data(
         &self,
         active_window: vim_ui::WindowId,
-    ) -> (String, bool, Option<(u32, u32)>, Vec<String>) {
+    ) -> (String, bool, Option<(u32, u32)>, Vec<String>, String) {
         let Some(buffer_id) = WindowOps::window_buffer(&self.app.ui, active_window) else {
-            return (String::new(), false, None, Vec::new());
+            return (String::new(), false, None, Vec::new(), "Scope".to_string());
         };
         let buffer_name = buffer_display_name(&self.app.model, buffer_id);
         let Ok(buffer) = self.app.model.get_buffer(buffer_id) else {
-            return (buffer_name, false, None, Vec::new());
+            return (buffer_name, false, None, Vec::new(), "Scope".to_string());
         };
         let modified = buffer.is_modified();
         let Some(window_state) = self
@@ -651,7 +651,7 @@ impl Runtime {
             .window(active_window)
             .and_then(Window::window_state)
         else {
-            return (buffer_name, modified, None, Vec::new());
+            return (buffer_name, modified, None, Vec::new(), "Scope".to_string());
         };
         let point = if window_state.selections.selections.is_empty() {
             text::Point::new(0, 0)
@@ -665,11 +665,20 @@ impl Runtime {
         let cursor = Some((point.row + 1, point.column + 1));
 
         let mut scope_path = Vec::new();
+        let mut inspect_label = "Scope".to_string();
         if self.app.inspect {
+            inspect_label = match self.app.inspect_what {
+                crate::app::InspectKind::TreeSitter => "[treesitter]".to_string(),
+                crate::app::InspectKind::Textmate => "[textmate]".to_string(),
+                crate::app::InspectKind::Indexer => "[indexer]".to_string(),
+                crate::app::InspectKind::None => "Scope".to_string(),
+            };
             if let Some(state) = self.app.model.buffer_state(buffer_id) {
                 match self.app.inspect_what {
                     crate::app::InspectKind::TreeSitter => {
-                        if let Ok(tree) = &state.treesitter {
+                        if !self.app.treesitter_enabled {
+                            scope_path = vec!["treesitter is not enabled".to_string()];
+                        } else if let Ok(tree) = &state.treesitter {
                             if let Ok(offset) = buffer
                                 .snapshot()
                                 .point_to_offset(vim_buffer::Point::new(point.row, point.column))
@@ -684,20 +693,46 @@ impl Runtime {
                         }
                     }
                     crate::app::InspectKind::Textmate => {
-                        let file_path = buffer.path().and_then(|p| p.to_str());
-                        scope_path = state.highlights.scope_path_at_position(
-                            buffer.snapshot().as_inner(),
-                            file_path,
-                            point.row,
-                            point.column,
-                        );
+                        if !self.app.syntax_highlight {
+                            scope_path = vec!["syntax highlight is not enabled".to_string()];
+                        } else {
+                            let file_path = buffer.path().and_then(|p| p.to_str());
+                            scope_path = state.highlights.scope_path_at_position(
+                                buffer.snapshot().as_inner(),
+                                file_path,
+                                point.row,
+                                point.column,
+                            );
+                        }
+                    }
+                    crate::app::InspectKind::Indexer => {
+                        if !self.app.indexer_enabled {
+                            scope_path = vec!["indexer is not enabled".to_string()];
+                        } else {
+                            let files_count = self.app.services.indexer.buffer_keywords.len();
+                            let keys_count: usize = self.app.services.indexer.buffer_keywords.values()
+                                .map(|row_map| row_map.values().map(|set| set.len()).sum::<usize>())
+                                .sum();
+                            scope_path = vec![format!("files: {}, keys: {}", files_count, keys_count)];
+                            if let Ok(offset) = buffer
+                                .snapshot()
+                                .point_to_offset(vim_buffer::Point::new(point.row, point.column))
+                            {
+                                let text: String = buffer.snapshot().chunks().collect();
+                                use vim_buffer::TextSearch;
+                                if let Some((_, _, word)) = text.find_word(offset.0) {
+                                    let results = self.app.services.indexer.query(word, None);
+                                    scope_path.extend(results.iter().map(|entry| entry.keyword.clone()).take(5));
+                                }
+                            }
+                        }
                     }
                     crate::app::InspectKind::None => {}
                 }
             }
         }
 
-        (buffer_name, modified, cursor, scope_path)
+        (buffer_name, modified, cursor, scope_path, inspect_label)
     }
 
     fn layout_snapshot(&self, fallback: vim_ui::Rect) -> LayoutSnapshot {

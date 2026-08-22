@@ -13,14 +13,28 @@ const LINE1: &str = " %{mode} [%f%m] %=%l:%c | utf-8 ";
 const LINE2: &str = " %{scope}%=";
 
 /// Data resolved fresh each frame; the two compiled formats are static.
-#[derive(Default)]
 struct StatusLineData {
     mode_name: String,
     buffer_name: String,
     modified: bool,
     cursor: Option<(u32, u32)>,
     scope_path: Vec<String>,
+    inspect_label: String,
     style: Style,
+}
+
+impl Default for StatusLineData {
+    fn default() -> Self {
+        Self {
+            mode_name: String::new(),
+            buffer_name: String::new(),
+            modified: false,
+            cursor: None,
+            scope_path: Vec::new(),
+            inspect_label: "Scope".to_string(),
+            style: Style::default(),
+        }
+    }
 }
 
 impl FormatResolver for StatusLineData {
@@ -45,9 +59,9 @@ impl FormatResolver for StatusLineData {
             "mode" => Cow::Borrowed(self.mode_name.as_str()),
             "status" => Cow::Borrowed(""),
             "scope" => Cow::Owned(if self.scope_path.is_empty() {
-                "Scope: [None]".to_string()
+                format!("{}: [None]", self.inspect_label)
             } else {
-                format!("Scope: {}", self.scope_path.join(" > "))
+                format!("{}: {}", self.inspect_label, self.scope_path.join(" > "))
             }),
             _ => Cow::Borrowed(""),
         }
@@ -79,6 +93,7 @@ impl StatusLineView {
         modified: bool,
         cursor: Option<(u32, u32)>,
         scope_path: Vec<String>,
+        inspect_label: String,
     ) {
         let mut style = Style::default().bg(Color::Grey).fg(Color::Black);
         if let Some(cs) = globals.colorscheme {
@@ -92,6 +107,7 @@ impl StatusLineView {
             modified,
             cursor,
             scope_path,
+            inspect_label,
             style,
         };
     }
@@ -136,6 +152,7 @@ mod tests {
             true,
             Some((3, 8)),
             vec!["function_item".to_string(), "block".to_string()],
+            "Scope".to_string(),
         );
 
         let mut renderer = BufferedRenderer::new(80, 2);

@@ -164,6 +164,7 @@ impl Dispatcher {
                         app.inspect_what = match s {
                             "treesitter" => crate::app::InspectKind::TreeSitter,
                             "textmate" => crate::app::InspectKind::Textmate,
+                            "indexer" => crate::app::InspectKind::Indexer,
                             _ => crate::app::InspectKind::None,
                         };
                     }
