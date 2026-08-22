@@ -79,6 +79,7 @@ impl ScriptRuntime {
 
         let host = self.scheduler.host().expect("script host is installed");
         let mut config = ResolverConfig::default();
+        config.unqualified_is_global = true;
         config
             .builtins
             .extend(host.functions.names().map(str::to_owned));
@@ -511,6 +512,14 @@ mod tests {
         assert!(matches!(
             runtime.try_next_command(),
             Some(Command::Echo { ref message }) if message == "2"
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("let x = 123").unwrap();
+        runtime.execute("echo x").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::Echo { ref message }) if message == "123"
         ));
     }
 
