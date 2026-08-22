@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 const CHECKPOINT_INTERVAL: u32 = 64;
-const MAX_CHECKPOINT_DISTANCE: u32 = CHECKPOINT_INTERVAL * 4;
-const FALLBACK_PARSE_DISTANCE: u32 = 32;
+const MAX_LOOKBACK: u32 = 128;
 
 use rope::Point;
 use std::collections::HashMap;
@@ -12,7 +11,7 @@ use syntect::{
     highlighting::{Theme, ThemeSet},
     parsing::{ParseState, Scope, ScopeStack, SyntaxSet},
 };
-use text::{BufferSnapshot, ToOffset, ToPoint};
+use text::{BufferSnapshot, ToOffset};
 
 /// A half-open UTF-8 byte-column range within one buffer row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +325,7 @@ pub fn parse_scopes_cancellable(
     let start_row_iter = if let Some(cp) = resume_checkpoint.as_ref() {
         cp.row
     } else {
-        start_row.saturating_sub(FALLBACK_PARSE_DISTANCE)
+        start_row.saturating_sub(MAX_LOOKBACK)
     };
     let end_row_iter = end_row.min(snapshot.row_count());
 
@@ -361,7 +360,7 @@ pub fn parse_scopes_cancellable(
         let line_end_offset = Point::new(row, snapshot.line_len(row)).to_offset(snapshot);
 
         // Periodically save checkpoints (every 64 lines)
-        if row > 0 && row % CHECKPOINT_INTERVAL == 0 && row >= start_row {
+        if row > 0 && row % CHECKPOINT_INTERVAL == 0 {
             checkpoints.push(ParseStateCheckpoint {
                 row,
                 parse_state: parser.clone(),
@@ -475,18 +474,10 @@ impl BufferHighlightState {
     }
 
     fn nearest_checkpoint(&self, target_row: u32) -> Option<ParseStateCheckpoint> {
-        let mut row = target_row - (target_row % CHECKPOINT_INTERVAL);
-        loop {
-            if target_row - row > MAX_CHECKPOINT_DISTANCE {
-                break;
-            }
-            if let Some(cp) = self.checkpoints.get(&row) {
+        if let Some((&row, cp)) = self.checkpoints.range(..=target_row).next_back() {
+            if target_row - row <= MAX_LOOKBACK {
                 return Some(cp.clone());
             }
-            if row < CHECKPOINT_INTERVAL {
-                break;
-            }
-            row -= CHECKPOINT_INTERVAL;
         }
         None
     }
@@ -515,7 +506,7 @@ impl BufferHighlightState {
         let start_row_iter = if let Some(cp) = checkpoint.as_ref() {
             cp.row
         } else {
-            row.saturating_sub(FALLBACK_PARSE_DISTANCE)
+            row.saturating_sub(MAX_LOOKBACK)
         };
 
         let mut text = String::new();
