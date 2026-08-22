@@ -54,6 +54,9 @@ pub enum Command {
     Indexer {
         enable: bool,
     },
+    Inspect {
+        enable: bool,
+    },
     Echo {
         message: String,
     },
@@ -119,6 +122,9 @@ impl std::fmt::Debug for Command {
                 .finish(),
             Command::Indexer { enable } => {
                 f.debug_struct("Indexer").field("enable", enable).finish()
+            }
+            Command::Inspect { enable } => {
+                f.debug_struct("Inspect").field("enable", enable).finish()
             }
             Command::Echo { message } => f.debug_struct("Echo").field("message", message).finish(),
             Command::ExecuteScript(script) => f.debug_tuple("ExecuteScript").field(script).finish(),

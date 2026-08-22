@@ -6,7 +6,7 @@ use crate::layout::{ComputedLayout, LayoutEngine, LayoutNode};
 use crate::overlay::OverlayManager;
 use crate::rect::Rect;
 use crate::renderer::Renderer;
-use crate::types::{FloatingConfig, NavigationDirection, SplitAxis};
+use crate::types::{FloatingConfig, NavigationDirection, SplitAxis, SizeConstraint};
 use crate::window::Window;
 use crate::window_store::WindowStore;
 use std::collections::HashSet;
@@ -300,6 +300,14 @@ impl Ui {
             self.update_layout();
         }
         Ok(adjusted)
+    }
+
+    pub fn set_window_constraint(&mut self, id: WindowId, constraint: SizeConstraint) -> bool {
+        let updated = self.layout_engine.set_constraint(id, constraint);
+        if updated {
+            self.update_layout();
+        }
+        updated
     }
 
     pub fn draw(&mut self, renderer: &mut dyn Renderer) -> std::io::Result<()> {

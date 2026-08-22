@@ -490,6 +490,79 @@ impl BufferHighlightState {
         }
         None
     }
+
+    pub fn scope_path_at_position(
+        &self,
+        snapshot: &BufferSnapshot,
+        file_path: Option<&str>,
+        row: u32,
+        column: u32,
+    ) -> Vec<String> {
+        let syntax_set = syntax_set();
+        let syntax = file_path
+            .and_then(|path| Path::new(path).extension())
+            .and_then(|extension| extension.to_str())
+            .and_then(|extension| syntax_set.find_syntax_by_extension(extension))
+            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+
+        let checkpoint = self.nearest_checkpoint(row);
+        let (mut parser, mut stack) = if let Some(cp) = checkpoint.as_ref() {
+            (cp.parse_state.clone(), cp.scope_stack.clone())
+        } else {
+            (ParseState::new(syntax), ScopeStack::new())
+        };
+
+        let start_row_iter = if let Some(cp) = checkpoint.as_ref() {
+            cp.row
+        } else {
+            row.saturating_sub(FALLBACK_PARSE_DISTANCE)
+        };
+
+        let mut text = String::new();
+        for r in start_row_iter..=row {
+            let line_start_offset = Point::new(r, 0).to_offset(snapshot);
+            let line_end_offset = Point::new(r, snapshot.line_len(r)).to_offset(snapshot);
+
+            text.clear();
+            for chunk in snapshot
+                .as_rope()
+                .chunks_in_range(line_start_offset..line_end_offset)
+            {
+                text.push_str(chunk);
+            }
+            text.push('\n');
+            let Ok(parsed) = parser.parse_line(&text, &syntax_set) else {
+                return Vec::new();
+            };
+
+            if r == row {
+                for (range, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
+                    if stack.apply(&operation).is_err() {
+                        return Vec::new();
+                    }
+                    if column as usize >= range.start && (column as usize) < range.end {
+                        return stack
+                            .as_slice()
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
+                    }
+                }
+                return stack
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+            } else {
+                for (_, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
+                    if stack.apply(&operation).is_err() {
+                        return Vec::new();
+                    }
+                }
+            }
+        }
+        Vec::new()
+    }
 }
 
 impl Default for BufferHighlightState {

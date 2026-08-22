@@ -159,6 +159,15 @@ impl Dispatcher {
                         app.model.status = Some(format!("Error: {}", err));
                     }
                 }
+                if let Some(val) = app.config.get("inspect", buffer_id, Some(active_window)) {
+                    if let Some(s) = val.as_string() {
+                        app.inspect_what = match s {
+                            "treesitter" => crate::app::InspectKind::TreeSitter,
+                            "textmate" => crate::app::InspectKind::Textmate,
+                            _ => crate::app::InspectKind::None,
+                        };
+                    }
+                }
                 CommandOutcome::redraw()
             }
             Command::Syntax { enable } => {
@@ -172,6 +181,10 @@ impl Dispatcher {
             }
             Command::Indexer { enable } => {
                 app.indexer_enabled = enable;
+                CommandOutcome::redraw()
+            }
+            Command::Inspect { enable } => {
+                app.inspect = enable;
                 CommandOutcome::redraw()
             }
             Command::Echo { message } => {

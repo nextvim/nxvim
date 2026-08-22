@@ -478,6 +478,12 @@ impl Runtime {
         rect: vim_ui::Rect,
         out: &mut impl Write,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let status_height = if self.app.inspect { 2 } else { 1 };
+        self.app.ui.set_window_constraint(
+            self.app.view_ids.statusline,
+            vim_ui::SizeConstraint::Fixed(status_height),
+        );
+
         let layout = self.layout_snapshot(rect);
         crate::app::ui::ViewSynchronizer::synchronize_viewports(
             &mut self.app.ui,
@@ -659,18 +665,34 @@ impl Runtime {
         let cursor = Some((point.row + 1, point.column + 1));
 
         let mut scope_path = Vec::new();
-        if let Some(state) = self.app.model.buffer_state(buffer_id) {
-            if let Ok(tree) = &state.treesitter {
-                if let Ok(offset) = buffer
-                    .snapshot()
-                    .point_to_offset(vim_buffer::Point::new(point.row, point.column))
-                {
-                    scope_path = tree
-                        .scope_path_at_byte(offset.0)
-                        .into_iter()
-                        .filter(|node| node.named && !node.kind.is_empty())
-                        .map(|node| node.kind)
-                        .collect();
+        if self.app.inspect {
+            if let Some(state) = self.app.model.buffer_state(buffer_id) {
+                match self.app.inspect_what {
+                    crate::app::InspectKind::TreeSitter => {
+                        if let Ok(tree) = &state.treesitter {
+                            if let Ok(offset) = buffer
+                                .snapshot()
+                                .point_to_offset(vim_buffer::Point::new(point.row, point.column))
+                            {
+                                scope_path = tree
+                                    .scope_path_at_byte(offset.0)
+                                    .into_iter()
+                                    .filter(|node| node.named && !node.kind.is_empty())
+                                    .map(|node| node.kind)
+                                    .collect();
+                            }
+                        }
+                    }
+                    crate::app::InspectKind::Textmate => {
+                        let file_path = buffer.path().and_then(|p| p.to_str());
+                        scope_path = state.highlights.scope_path_at_position(
+                            buffer.snapshot().as_inner(),
+                            file_path,
+                            point.row,
+                            point.column,
+                        );
+                    }
+                    crate::app::InspectKind::None => {}
                 }
             }
         }

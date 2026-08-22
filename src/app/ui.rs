@@ -175,7 +175,7 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
         left_sidebar: Some((left_panel_id, SizeConstraint::Fixed(30))),
         right_sidebar: Some((right_id, SizeConstraint::Fixed(30))),
         bottom_bar: Some((cmd_id, SizeConstraint::Fixed(1))),
-        status_bar: Some((status_id, SizeConstraint::Fixed(2))),
+        status_bar: Some((status_id, SizeConstraint::Fixed(1))),
         center: main_id,
     }
     .build();

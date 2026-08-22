@@ -130,6 +130,13 @@ impl ConfigRegistry {
             scope: OptionScope::BufferLocal,
             description: "Use spaces instead of tabs",
         });
+        self.register(OptionSpec {
+            name: "inspect",
+            aliases: &[],
+            default_value: ConfigValue::String("none".to_string()),
+            scope: OptionScope::Global,
+            description: "Inspect style (none, treesitter, textmate)",
+        });
     }
 }
 
@@ -209,18 +216,29 @@ impl ConfigStore {
             _ => return Err(format!("Invalid type for option: {name}")),
         }
 
+        let mut final_value = value;
+        if name == "inspect" {
+            if let ConfigValue::String(ref s) = final_value {
+                let s_stripped = s.trim_matches('"').trim_matches('\'');
+                if s_stripped != "none" && s_stripped != "treesitter" && s_stripped != "textmate" {
+                    return Err(format!("Invalid value for option inspect: {s}"));
+                }
+                final_value = ConfigValue::String(s_stripped.to_string());
+            }
+        }
+
         match spec.scope {
             OptionScope::WindowLocal => {
                 if let Some(w_id) = window_id {
                     self.window_local
                         .entry(w_id)
                         .or_default()
-                        .insert(name, value);
+                        .insert(name, final_value);
                 } else {
-                    self.global.insert(name.clone(), value.clone());
+                    self.global.insert(name.clone(), final_value.clone());
                     // Apply to all windows if it's set globally
                     for w_store in self.window_local.values_mut() {
-                        w_store.insert(name.clone(), value.clone());
+                        w_store.insert(name.clone(), final_value.clone());
                     }
                 }
             }
@@ -229,16 +247,16 @@ impl ConfigStore {
                     self.buffer_local
                         .entry(b_id)
                         .or_default()
-                        .insert(name, value);
+                        .insert(name, final_value);
                 } else {
-                    self.global.insert(name.clone(), value.clone());
+                    self.global.insert(name.clone(), final_value.clone());
                     for b_store in self.buffer_local.values_mut() {
-                        b_store.insert(name.clone(), value.clone());
+                        b_store.insert(name.clone(), final_value.clone());
                     }
                 }
             }
             OptionScope::Global => {
-                self.global.insert(name, value);
+                self.global.insert(name, final_value);
             }
         }
 

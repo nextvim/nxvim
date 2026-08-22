@@ -34,6 +34,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "syntax" => syntax(request),
         "treesitter" => treesitter(request),
         "indexer" => indexer(request),
+        "inspect" => inspect(request),
         name => Err(RuntimeError::coded(
             "E492",
             RuntimeErrorKind::InvalidCommand,
@@ -254,6 +255,21 @@ fn indexer(request: CommandRequest) -> Result<Command, RuntimeError> {
         Ok(Command::Indexer { enable: true })
     } else if arg == "off" {
         Ok(Command::Indexer { enable: false })
+    } else {
+        Err(RuntimeError::coded(
+            "E474",
+            RuntimeErrorKind::InvalidCommand,
+            format!("Invalid argument: {}", arg),
+        ))
+    }
+}
+
+fn inspect(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let arg = request.command.arguments.trim();
+    if arg == "on" {
+        Ok(Command::Inspect { enable: true })
+    } else if arg == "off" {
+        Ok(Command::Inspect { enable: false })
     } else {
         Err(RuntimeError::coded(
             "E474",

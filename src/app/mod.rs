@@ -10,6 +10,13 @@ pub mod windows;
 
 use windows::WindowOps;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectKind {
+    None,
+    TreeSitter,
+    Textmate,
+}
+
 pub struct App {
     pub model: crate::model::EditorModel,
     pub controller: crate::controller::input::InputController,
@@ -21,18 +28,14 @@ pub struct App {
     pub highlighter: Option<textmate::Highlighter<'static>>,
 
     // App State
-    // set number, cursorline, etc
     pub config: config::ConfigStore,
-    // syn on/off
     pub syntax_highlight: bool,
-    // tree on/off
     pub treesitter_enabled: bool,
-    // index on/off
     pub indexer_enabled: bool,
-    // echo
     pub message: String,
-    // echomessage
     pub messages: Vec<String>,
+    pub inspect: bool,
+    pub inspect_what: InspectKind,
 }
 
 impl App {
@@ -75,6 +78,8 @@ impl App {
             indexer_enabled: false,
             message: "".to_string(),
             messages: Vec::new(),
+            inspect: false,
+            inspect_what: InspectKind::None,
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());

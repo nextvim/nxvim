@@ -333,6 +333,26 @@ impl LayoutNode {
             }
         }
     }
+
+    pub fn set_constraint(&mut self, target_id: WindowId, new_constraint: SizeConstraint) -> bool {
+        match self {
+            LayoutNode::Leaf { .. } => false,
+            LayoutNode::Split { children, constraints, .. } => {
+                for (i, child) in children.iter_mut().enumerate() {
+                    if let LayoutNode::Leaf { window_id } = child {
+                        if *window_id == target_id {
+                            constraints[i] = new_constraint;
+                            return true;
+                        }
+                    }
+                    if child.set_constraint(target_id, new_constraint) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
 }
 
 pub struct LayoutEngine {
@@ -374,6 +394,10 @@ impl LayoutEngine {
 
     pub fn adjust_size(&mut self, target_id: WindowId, axis: SplitAxis, amount: f32) -> bool {
         self.root_layout.adjust_size(target_id, axis, amount)
+    }
+
+    pub fn set_constraint(&mut self, target_id: WindowId, constraint: SizeConstraint) -> bool {
+        self.root_layout.set_constraint(target_id, constraint)
     }
 
     pub fn contains_leaf(&self, target_id: WindowId) -> bool {
