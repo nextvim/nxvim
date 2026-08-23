@@ -92,14 +92,10 @@ pub struct ResolverConfig {
 impl Default for ResolverConfig {
     fn default() -> Self {
         Self {
-            builtins: [
-                "abs", "add", "empty", "exists", "filter", "get", "has", "join", "len", "map",
-                "max", "min", "printf", "range", "remove", "reverse", "sort", "split", "string",
-                "tolower", "toupper", "type",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
+            builtins: crate::runtime::builtins::BuiltinRegistry::with_defaults()
+                .names()
+                .map(str::to_owned)
+                .collect(),
             allow_autoload: true,
             allow_dynamic_globals: true,
             unqualified_is_global: false,
@@ -574,7 +570,11 @@ impl Resolver {
 
     fn lookup_name(&mut self, name: &ScopedName) -> Option<SymbolId> {
         let mut name = name.clone();
-        if self.config.unqualified_is_global && name.scope == Scope::Unqualified && self.nearest_callable_scope().is_none() {
+        if self.config.unqualified_is_global
+            && name.scope == Scope::Unqualified
+            && self.nearest_callable_scope().is_none()
+            && !self.config.builtins.contains(&name.name)
+        {
             name.scope = Scope::Global;
         }
         let key = symbol_key(name.scope, &name.name);
