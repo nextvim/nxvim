@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 rope = { path = "../zed/crates/rope" }
 text = { path = "../zed/crates/text" }
-syntect = { git = "https://github.com/trishume/syntect" }
+syntect = { path = "crates/syntect" }
 vim-colorscheme = { path = "../vim-colorscheme" }
 
 [dev-dependencies]

@@ -3,18 +3,25 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        A Vim-inspired terminal text editor written in Rust
 
-License:        GPL-3.0-or-later AND Apache-2.0
-URL:            https://github.com/user/nxvim
-Source0:        %{name}-%{version}.tar.gz
+%global commit bcbf190e2c821cc1cfe0f057d864ca03b4d530a8
 
+License:        VIM LICENSE, GPL-2.0-or-later
+URL:            https://github.com/nextvim/nxvim
+Source0:        https://github.com/nextvim/nxvim/archive/%{commit}/%{name}-%{commit}.tar.gz
+
+# Rust/Cargo toolchain and native build dependencies used by the crate graph.
 BuildRequires:  cargo
 BuildRequires:  rust
+BuildRequires:  gcc
+BuildRequires:  gcc-c++
+BuildRequires:  clang-devel
+BuildRequires:  pkgconf-pkg-config
 
 %description
 A Vim-inspired terminal text editor written in Rust, powered by Zed's ultra-high-performance Rope + SumTree-backed text buffers and concurrent snapshot technologies.
 
 %prep
-%autosetup
+%autosetup -n %{name}-%{commit}
 
 %build
 cargo build --release --locked
@@ -29,5 +36,5 @@ install -D -p -m 644 LICENSE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE
 %{_bindir}/nxvim
 
 %changelog
-* Sat Aug 22 2026 Maintainer <maintainer@example.com> - 0.1.0-1
+* Sat Aug 22 2026 Maintainer <m4rvin2005@gmail.com> - 0.1.0-1
 - Initial package release

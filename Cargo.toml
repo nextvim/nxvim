@@ -13,6 +13,7 @@ members = [
     "crates/vim-indexer",
     "crates/vim-macros",
     "crates/textmate",
+    "crates/textmate/crates/syntect",
     "crates/vim-treesitter",
     "crates/vim-scanner",
     "crates/vim-colorscheme",
@@ -80,7 +81,7 @@ serde = { version = "1.0.217", features = ["derive"] }
 smallvec = "1.13"
 smol = "2.0.2"
 sum_tree = { path = "crates/zed/crates/sum_tree" }
-syntect = { git = "https://github.com/trishume/syntect" }
+syntect = { path = "crates/textmate/crates/syntect" }
 text = { path = "crates/zed/crates/text" }
 
 toml = "0.8.19"
