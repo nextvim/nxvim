@@ -149,30 +149,30 @@ Total functions: 598
 ## Collections (List, Dict, Blob, Tuple)
 
 - [x] `add({object}, {item})` -> List/Blob - append {item} to {object}
-- [ ] `blob2list({blob})` -> List - convert {blob} into a list of numbers
+- [x] `blob2list({blob})` -> List - convert {blob} into a list of numbers
 - [ ] `blob2str({blob} [, {options}])` -> List - convert {blob} into a list of strings
-- [ ] `copy({expr})` -> any - make a shallow copy of {expr}
-- [ ] `count({comp}, {expr} [, {ic} [, {start}]])` -> Number - count how many {expr} are in {comp}
-- [ ] `deepcopy({expr} [, {noref}])` -> any - make a full copy of {expr}
+- [x] `copy({expr})` -> any - make a shallow copy of {expr}
+- [x] `count({comp}, {expr} [, {ic} [, {start}]])` -> Number - count how many {expr} are in {comp}
+- [x] `deepcopy({expr} [, {noref}])` -> any - make a full copy of {expr}
 - [x] `empty({expr})` -> Number - |TRUE| if {expr} is empty
-- [ ] `extend({expr1}, {expr2} [, {expr3}])` -> List/Dict - insert items of {expr2} into {expr1}
-- [ ] `extendnew({expr1}, {expr2} [, {expr3}])` -> List/Dict - like |extend()| but creates a new List or Dictionary
+- [x] `extend({expr1}, {expr2} [, {expr3}])` -> List/Dict - insert items of {expr2} into {expr1}
+- [x] `extendnew({expr1}, {expr2} [, {expr3}])` -> List/Dict - like |extend()| but creates a new List or Dictionary
 - [ ] `filter({expr1}, {expr2})` -> List/Dict/Blob/String - remove items from {expr1} where {expr2} is 0
-- [ ] `flatten({list} [, {maxdepth}])` -> List - flatten {list} up to {maxdepth} levels
-- [ ] `flattennew({list} [, {maxdepth}])` -> List - flatten a copy of {list}
+- [x] `flatten({list} [, {maxdepth}])` -> List - flatten {list} up to {maxdepth} levels
+- [x] `flattennew({list} [, {maxdepth}])` -> List - flatten a copy of {list}
 - [ ] `foreach({expr1}, {expr2})` -> List/Tuple/Dict/Blob/String - for each item in {expr1} call {expr2}
 - [x] `get({dict}, {key} [, {def}])` -> any - get item {key} from {dict} or {def}
 - [x] `get({func}, {what})` -> any - get property of funcref/partial {func}
 - [x] `get({list}, {idx} [, {def}])` -> any - get item {idx} from {list} or {def}
-- [ ] `has_key({dict}, {key})` -> Number - |TRUE| if {dict} has entry {key}
-- [ ] `index({object}, {expr} [, {start} [, {ic}]])` -> Number - index in {object} where {expr} appears
+- [x] `has_key({dict}, {key})` -> Number - |TRUE| if {dict} has entry {key}
+- [x] `index({object}, {expr} [, {start} [, {ic}]])` -> Number - index in {object} where {expr} appears
 - [ ] `indexof({object}, {expr} [, {opts}]])` -> Number - index in {object} where {expr} is true
-- [ ] `insert({object}, {item} [, {idx}])` -> List - insert {item} in {object} [before {idx}]
-- [ ] `items({expr})` -> List - key/index-value pairs in {expr}
-- [ ] `keys({dict})` -> List - keys in {dict}
+- [x] `insert({object}, {item} [, {idx}])` -> List - insert {item} in {object} [before {idx}]
+- [x] `items({expr})` -> List - key/index-value pairs in {expr}
+- [x] `keys({dict})` -> List - keys in {dict}
 - [x] `len({expr})` -> Number - the length of {expr}
-- [ ] `list2blob({list})` -> Blob - turn {list} of numbers into a Blob
-- [ ] `list2str({list} [, {utf8}])` -> String - turn {list} of numbers into a String
+- [x] `list2blob({list})` -> Blob - turn {list} of numbers into a Blob
+- [x] `list2str({list} [, {utf8}])` -> String - turn {list} of numbers into a String
 - [ ] `list2tuple({list})` -> Tuple - turn {list} of items into a tuple
 - [ ] `map({expr1}, {expr2})` -> List/Dict/Blob/String - change each item in {expr1} to {expr2}
 - [ ] `mapnew({expr1}, {expr2})` -> List/Dict/Blob/String - like |map()| but creates a new List or Dictionary
@@ -181,17 +181,17 @@ Total functions: 598
 - [x] `range({expr} [, {max} [, {stride}]])` -> List - items from {expr} to {max}
 - [ ] `readblob({fname} [, {offset} [, {size}]])` -> Blob - read a |Blob| from {fname}
 - [ ] `reduce({object}, {func} [, {initial}])` -> any - reduce {object} using {func}
-- [ ] `remove({blob}, {idx} [, {end}])` -> Number/Blob - remove bytes {idx}-{end} from {blob}
-- [ ] `remove({dict}, {key})` -> any - remove entry {key} from {dict}
-- [ ] `remove({list}, {idx} [, {end}])` - any/List remove items {idx}-{end} from {list}
-- [ ] `repeat({expr}, {count})` -> List/Tuple/Blob/String - repeat {expr} {count} times
+- [x] `remove({blob}, {idx} [, {end}])` -> Number/Blob - remove bytes {idx}-{end} from {blob}
+- [x] `remove({dict}, {key})` -> any - remove entry {key} from {dict}
+- [x] `remove({list}, {idx} [, {end}])` - any/List remove items {idx}-{end} from {list}
+- [x] `repeat({expr}, {count})` -> List/Tuple/Blob/String - repeat {expr} {count} times
 - [x] `reverse({obj})` -> List/Tuple/Blob/String - reverse {obj}
-- [ ] `slice({expr}, {start} [, {end}])` -> String/List/Blob - slice of a String, List or Blob
+- [x] `slice({expr}, {start} [, {end}])` -> String/List/Blob - slice of a String, List or Blob
 - [x] `sort({list} [, {how} [, {dict}]])` -> List - sort {list}, compare with {how}
 - [ ] `str2blob({list} [, {options}])` -> Blob - convert list of strings into a Blob
 - [ ] `tuple2list({tuple})` -> List - turn {tuple} of items into a list
-- [ ] `uniq({list} [, {func} [, {dict}]])` -> List - remove adjacent duplicates from a list
-- [ ] `values({dict})` -> List - values in {dict}
+- [x] `uniq({list} [, {func} [, {dict}]])` -> List - remove adjacent duplicates from a list
+- [x] `values({dict})` -> List - values in {dict}
 
 ## Window and Tabpage
 

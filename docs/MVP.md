@@ -158,7 +158,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 
 [x] `/pattern` / `?pattern` — Search forward/backward for pattern.
 [x] `n` / `N` — Repeat last search in same/opposite direction.
-[ ] `*` / `#` — Search for word under cursor forward/backward. *Pending implementation.*
+[x] `*` / `#` — Search for word under cursor forward/backward. *Pending implementation.*
 [x] **Search highlighting** — Matches are highlighted in the text view using `onig` and `vim-regex`.
 [x] **Basic regular expressions** — Supported via custom regex parsing.
 [ ] **Search history** — *Not yet implemented.*
