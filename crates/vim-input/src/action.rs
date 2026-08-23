@@ -202,6 +202,10 @@ pub enum Action {
         count: u32,
         select: bool,
     },
+    MoveToLine {
+        line: u32,
+        select: bool,
+    },
 
     MoveToScreenTop {
         count: u32,
@@ -538,6 +542,9 @@ impl std::fmt::Display for Action {
             Action::MoveToEndOfNextLine { count, .. } => {
                 write!(f, "MoveToEndOfNextLine({})", count)
             }
+            Action::MoveToLine { line, .. } => {
+                write!(f, "MoveToLine({})", line)
+            }
             Action::MoveToScreenTop { count, .. } => write!(f, "MoveToScreenTop({})", count),
             Action::MoveToScreenMiddle { count, .. } => write!(f, "MoveToScreenMiddle({})", count),
             Action::MoveToScreenBottom { count, .. } => write!(f, "MoveToScreenBottom({})", count),
@@ -720,6 +727,7 @@ impl Action {
                 Action::MoveToEndOfDocument { count, select }
             }
             Action::MoveToStartOfLine { count, .. } => Action::MoveToStartOfLine { count, select },
+            Action::MoveToLine { line, .. } => Action::MoveToLine { line, select },
             Action::MoveToStartOfLineNonSpace { count, .. } => {
                 Action::MoveToStartOfLineNonSpace { count, select }
             }
@@ -870,6 +878,10 @@ impl Action {
             },
             Action::MoveToStartOfLine { .. } => Action::MoveToStartOfLine {
                 count,
+                select: false,
+            },
+            Action::MoveToLine { line, .. } => Action::MoveToLine {
+                line,
                 select: false,
             },
             Action::MoveToStartOfLineNonSpace { .. } => Action::MoveToStartOfLineNonSpace {
@@ -1128,6 +1140,7 @@ impl Action {
             Action::MoveToStartOfDocument { count, .. } => *count,
             Action::MoveToEndOfDocument { count, .. } => *count,
             Action::MoveToStartOfLine { count, .. } => *count,
+            Action::MoveToLine { .. } => 1,
             Action::MoveToStartOfLineNonSpace { count, .. } => *count,
             Action::MoveToEndOfLine { count, .. } => *count,
             Action::MoveToStartOfPreviousLine { count, .. } => *count,

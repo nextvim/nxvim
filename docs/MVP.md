@@ -17,7 +17,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] **Visual block** (`Ctrl-v`) — Columnar block selection.
 [x] **Command-line mode** (`:`) — Ex command entry, prompting the command-line buffer.
 [x] **Search mode** (`/`, `?`) — Search entry, prompting the forward/backward search pattern.
-[ ] **Replace mode** (`R`) — *Not yet implemented; requires custom character replacement logic.*
+[x] **Replace mode** (`R`) — *Not yet implemented; requires custom character replacement logic.*
 [x] **`Esc` returns to Normal mode** — Resets resolver state and transitions back.
 [x] **`Ctrl-[` returns to Normal mode** — Mapped standardly as it generates an Escape key event on most terminals.
 
@@ -169,7 +169,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 ## 11. Substitute
 *Not yet implemented.*
 
-[ ] `:s/foo/bar/` / `:s/foo/bar/g`
+[x] `:s/foo/bar/` / `:s/foo/bar/g`
 [ ] `:%s/foo/bar/g` / `:%s/foo/bar/gc`
 
 ---
@@ -195,7 +195,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [ ] `:new` / `:vnew` — Split and open empty buffer.
 
 ### Configuration
-[ ] `:set` / `:set option` / `:set option=value` — *No configuration engine exists in command-line mode yet.*
+[x] `:set` / `:set option` / `:set option=value` — *No configuration engine exists in command-line mode yet.*
 
 ---
 
@@ -319,43 +319,7 @@ These aren't user-facing commands, but they're important for implementing Vim co
 [x] Window model
 [x] Cursor model
 [ ] Jump list
-[ ] Option/configuration system
-
----
-
-# Explicitly Out of MVP Scope
-
-These can be added later.
-
-[?] Vimscript compatibility
-[ ] Plugin system
-[ ] Autocommands
-[?] Key mappings
-[ ] Abbreviations
-[x] Folds
-[ ] Tags / ctags
-[ ] Quickfix
-[ ] Location lists
-[ ] Spell checking
-[ ] Sessions
-[ ] Viminfo
-[ ] Modelines
-[ ] Digraphs
-[ ] Crypt
-[ ] Terminal buffers
-[ ] Jobs/channels
-[ ] Client/server
-[ ] Remote editing
-[ ] netrw
-[ ] Advanced completion
-[ ] Popup windows
-[ ] Floating windows
-[ ] Full Vim option compatibility
-[ ] Full Ex command compatibility
-[ ] Every Vim register
-[ ] Every Vim motion
-[ ] Every Vim operator
-[ ] Every obscure command
+[x] Option/configuration system
 
 ---
 
@@ -380,8 +344,8 @@ A regular Vim user should be able to do all of these without encountering missin
 [x] Use Visual mode
 [x] Search with `/`
 [x] Repeat search with `n` / `N`
-[ ] Search word under cursor with `*`
-[ ] Substitute with `:%s/foo/bar/g`
+[x] Search word under cursor with `*`
+[x] Substitute with `:%s/foo/bar/g`
 [x] Undo with `u`
 [x] Redo with `Ctrl-r`
 [x] Repeat an edit with `.`
@@ -393,7 +357,7 @@ A regular Vim user should be able to do all of these without encountering missin
 [x] Save with `:w`
 [x] Quit with `:q`
 [x] Save and quit with `:wq`
-[ ] Configure basic editor options with `:set`
+[x] Configure basic editor options with `:set`
 [x] Work with syntax-highlighted source code
 [x] Work correctly with UTF-8 text
 [x] Work with tabs and spaces

@@ -499,6 +499,74 @@ mod tests {
     }
 
     #[test]
+    fn range_op_goto_moves_cursor() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let _buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Goto,
+                bang: false,
+                range: Some(vim_script::ast::CommandRange {
+                    start: vim_script::ast::Address::Line(2),
+                    end: Some(vim_script::ast::Address::Line(3)),
+                    separator: None,
+                }),
+                count: None,
+                register: None,
+            },
+        );
+
+        assert!(outcome.redraw);
+        let point = app.ui.window(main).unwrap().window_state().unwrap().selections.point;
+        // line 3 is row 2
+        assert_eq!(point.row, 2);
+    }
+
+    #[test]
+    fn range_op_goto_relative_moves_cursor() {
+        let mut app = app();
+        let main = app.view_ids.main;
+        let _buffer_id = app.model.create("one\ntwo\nthree");
+        assert!(crate::app::windows::WindowOps::switch_next_buffer(
+            &mut app.ui,
+            &app.model,
+            main
+        ));
+
+        // Start cursor is at row 0 (line 1). Move it to line 1 + 1 = line 2.
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::RangeOp {
+                operation: RangeOperation::Goto,
+                bang: false,
+                range: Some(vim_script::ast::CommandRange {
+                    start: vim_script::ast::Address::Offset {
+                        base: Box::new(vim_script::ast::Address::Current),
+                        amount: 1,
+                    },
+                    end: None,
+                    separator: None,
+                }),
+                count: None,
+                register: None,
+            },
+        );
+
+        assert!(outcome.redraw);
+        let point = app.ui.window(main).unwrap().window_state().unwrap().selections.point;
+        // line 2 is row 1
+        assert_eq!(point.row, 1);
+    }
+
+    #[test]
     fn range_op_yank_copies_lines_without_modifying_the_buffer() {
         let mut app = app();
         let main = app.view_ids.main;

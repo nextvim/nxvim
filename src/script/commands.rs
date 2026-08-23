@@ -26,6 +26,13 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
             placeholders(request)
         }
         "substitute" | "s" | "&" | "~" | "smagic" | "snomagic" => substitute(request),
+        "" => Ok(Command::RangeOp {
+            operation: RangeOperation::Goto,
+            bang: request.command.bang,
+            range: request.command.range,
+            count: request.command.count,
+            register: request.command.register,
+        }),
         "/" => search_forward(request),
         "?" => search_backward(request),
         "delete" => delete(request),

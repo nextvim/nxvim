@@ -3,6 +3,8 @@ use crate::source::{Diagnostic, SourceId, Span};
 
 type ExParseResult<T> = Result<T, Box<Diagnostic>>;
 
+const ALLOW_EMPTY_EX_COMMAND_NAME: bool = true;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsedExLine {
     pub command: ExCommand,
@@ -49,7 +51,7 @@ impl<'a> ExLineParser<'a> {
             let range = self.range()?;
             self.horizontal_space();
             let name = self.word();
-            if name.is_empty() {
+            if name.is_empty() && !ALLOW_EMPTY_EX_COMMAND_NAME {
                 return Err(self
                     .error(
                         "X001",
@@ -316,6 +318,7 @@ impl<'a> ExLineParser<'a> {
                 })?;
                 Address::Line(line)
             }
+            Some('+' | '-') => Address::Current,
             _ => return Ok(None),
         };
         while matches!(self.peek(), Some('+' | '-')) {
@@ -468,5 +471,24 @@ mod tests {
             .unwrap();
         assert_eq!(parsed_backward.command.name, "?");
         assert_eq!(parsed_backward.command.arguments, "foo bar");
+    }
+
+    #[test]
+    fn parses_relative_range() {
+        let parsed = ExLineParser::new(SourceId(0), "100,+20write", 0)
+            .parse()
+            .unwrap();
+        assert_eq!(
+            parsed.command.range,
+            Some(CommandRange {
+                start: Address::Line(100),
+                end: Some(Address::Offset {
+                    base: Box::new(Address::Current),
+                    amount: 20
+                }),
+                separator: Some(RangeSeparator::Comma)
+            })
+        );
+        assert_eq!(parsed.command.name, "write");
     }
 }

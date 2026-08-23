@@ -19,6 +19,7 @@ pub enum RangeOperation {
     Delete,
     Yank,
     Put,
+    Goto,
 }
 
 /// Live editor state needed to resolve an Ex command's `CommandRange` (`%`,
@@ -160,6 +161,10 @@ impl RangeCommandHandler {
             RangeOperation::Put => vim_input::Action::PutLines {
                 line: end_line,
                 before: bang,
+            },
+            RangeOperation::Goto => vim_input::Action::MoveToLine {
+                line: end_line,
+                select: false,
             },
         }
     }

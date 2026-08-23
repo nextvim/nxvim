@@ -1275,6 +1275,14 @@ impl Editor {
                     .selections
                     .move_to_start_of_line(*select, buffer.as_text_buffer());
             }
+            Action::MoveToLine { line, select } => {
+                buffer_display_context
+                    .selections
+                    .move_to_line(*select, *line, buffer.as_text_buffer());
+                if let Some(first) = buffer_display_context.selections.first() {
+                    buffer_display_context.selections.point = first.head().to_point(buffer.as_text_buffer());
+                }
+            }
             Action::MoveToStartOfLineNonSpace { select, .. } => {
                 buffer_display_context
                     .selections
@@ -1945,6 +1953,7 @@ impl Editor {
                     | Action::MoveToStartOfDocument { select, .. }
                     | Action::MoveToEndOfDocument { select, .. }
                     | Action::MoveToStartOfLine { select, .. }
+                    | Action::MoveToLine { select, .. }
                     | Action::MoveToStartOfLineNonSpace { select, .. }
                     | Action::MoveToEndOfLine { select, .. }
                     | Action::MoveToPreviousParagraph { select, .. }
@@ -2423,6 +2432,7 @@ impl Editor {
             | Action::MoveToStartOfDocument { select, .. }
             | Action::MoveToEndOfDocument { select, .. }
             | Action::MoveToStartOfLine { select, .. }
+            | Action::MoveToLine { select, .. }
             | Action::MoveToStartOfLineNonSpace { select, .. }
             | Action::MoveToEndOfLine { select, .. }
             | Action::MoveToPreviousParagraph { select, .. }
