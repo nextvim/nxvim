@@ -5,7 +5,6 @@ use std::io::Write;
 
 pub const LOG_FILE: &str = "/tmp/nxvim.log";
 
-
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {

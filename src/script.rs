@@ -67,6 +67,7 @@ impl ScriptRuntime {
                 source = stripped;
             }
         }
+
         let source_id = self.sources.add("command_line", source);
         let lexed = Lexer::new(source_id, source).lex();
         self.check_diagnostics(&lexed.diagnostics)?;

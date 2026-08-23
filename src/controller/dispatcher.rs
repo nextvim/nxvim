@@ -11,8 +11,6 @@ use super::range::RangeCommandHandler;
 use super::task_dispatcher::TaskDispatcher;
 use super::window_handler::WindowHandler;
 
-use nxvim_log::log;
-
 const DEBUG_VIM_INPUT: bool = false;
 
 /// Formats the standard `[Mode] Action: ...` status message shared by

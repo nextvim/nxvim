@@ -12,7 +12,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "bprevious" | "bprev" | "previoustab" => buffers(request),
         "save" | "write" | "update" => files(request),
         "edit" | "enew" | "view" | "visual" | "ex" => edit(request),
-        "split" | "vsplit" => split(request),
+        "hsplit" | "vsplit" => split(request),
         "saveas" => saveas(request),
         "qall" | "quitall" => qall(request),
         "cquit" => cquit(request),
@@ -200,7 +200,7 @@ fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
         Some(argument.to_string())
     };
     match request.command.name.as_str() {
-        "split" => Ok(Command::Editor {
+        "hsplit" => Ok(Command::Editor {
             action: vim_input::Action::SplitHorizontal { file_path },
             register: None,
         }),

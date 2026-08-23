@@ -2,7 +2,6 @@ use text::{Point, ToOffset};
 use vim_input::{Action, Mode};
 use vim_regex::Regex;
 use vim_ui::{Ui, WindowId};
-use nxvim_log::log;
 
 use crate::app::ui::ViewIds;
 use crate::app::windows::WindowOps;
