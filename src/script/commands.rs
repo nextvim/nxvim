@@ -295,58 +295,65 @@ fn search_backward(request: CommandRequest) -> Result<Command, RuntimeError> {
 
 fn substitute(request: CommandRequest) -> Result<Command, RuntimeError> {
     let args = request.command.arguments.trim();
-    let (pattern, substitute_text) = if args.is_empty() {
-        (String::new(), String::new())
+    let (pattern, substitute_text, flags) = if args.is_empty() {
+        (String::new(), String::new(), String::new())
     } else {
         let mut chars = args.chars();
         let delimiter = chars.next().unwrap_or('/');
         if delimiter.is_alphanumeric() || delimiter.is_whitespace() || delimiter == '\\' {
-            (args.to_string(), String::new())
+            (args.to_string(), String::new(), String::new())
         } else {
             let mut pat = String::new();
             let mut rep = String::new();
+            let mut flg = String::new();
             let mut escaped = false;
-            let mut in_replacement = false;
+            let mut delimiter_count = 1;
             for ch in chars {
                 if escaped {
-                    if in_replacement {
+                    if delimiter_count == 1 {
+                        pat.push(ch);
+                    } else if delimiter_count == 2 {
                         rep.push(ch);
                     } else {
-                        pat.push(ch);
+                        flg.push(ch);
                     }
                     escaped = false;
                     continue;
                 }
                 if ch == '\\' {
                     escaped = true;
-                    if in_replacement {
+                    if delimiter_count == 1 {
+                        pat.push(ch);
+                    } else if delimiter_count == 2 {
                         rep.push(ch);
                     } else {
-                        pat.push(ch);
+                        flg.push(ch);
                     }
                     continue;
                 }
                 if ch == delimiter {
-                    if !in_replacement {
-                        in_replacement = true;
-                        continue;
-                    } else {
-                        break;
+                    delimiter_count += 1;
+                    if delimiter_count > 3 {
+                        flg.push(ch);
                     }
+                    continue;
                 }
-                if in_replacement {
+                if delimiter_count == 1 {
+                    pat.push(ch);
+                } else if delimiter_count == 2 {
                     rep.push(ch);
                 } else {
-                    pat.push(ch);
+                    flg.push(ch);
                 }
             }
-            (pat, rep)
+            (pat, rep, flg)
         }
     };
     let range = request.command.range.clone();
     Ok(Command::Substitute {
         pattern,
         substitute_text,
+        flags,
         range,
     })
 }

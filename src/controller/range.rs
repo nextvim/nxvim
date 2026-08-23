@@ -23,10 +23,10 @@ pub enum RangeOperation {
 
 /// Live editor state needed to resolve an Ex command's `CommandRange` (`%`,
 /// `.`, `$`, marks, ...) into concrete line numbers.
-struct EditorRangeStateProvider<'a> {
-    ui: &'a Ui,
-    model: &'a EditorModel,
-    window_id: WindowId,
+pub struct EditorRangeStateProvider<'a> {
+    pub ui: &'a Ui,
+    pub model: &'a EditorModel,
+    pub window_id: WindowId,
 }
 
 impl<'a> RangeStateProvider for EditorRangeStateProvider<'a> {

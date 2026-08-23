@@ -70,6 +70,7 @@ pub enum Command {
     Substitute {
         pattern: String,
         substitute_text: String,
+        flags: String,
         range: Option<vim_script::ast::CommandRange>,
     },
 }
@@ -147,10 +148,11 @@ impl std::fmt::Debug for Command {
                 .debug_struct("SearchBackward")
                 .field("pattern", pattern)
                 .finish(),
-            Command::Substitute { pattern, substitute_text, range } => f
+            Command::Substitute { pattern, substitute_text, flags, range } => f
                 .debug_struct("Substitute")
                 .field("pattern", pattern)
                 .field("substitute_text", substitute_text)
+                .field("flags", flags)
                 .field("range", range)
                 .finish(),
         }
