@@ -531,32 +531,34 @@ impl Resolver {
         }
         let key = symbol_key(name.scope, &name.name);
         if let Some(symbol) = self.scopes[scope.0 as usize].symbols.get(&key).copied() {
-            if !self.symbols[symbol.0 as usize].mutable {
-                self.diagnostics.push(
-                    Diagnostic::error(
-                        "R003",
-                        format!("cannot assign to immutable variable {}", display_name(&name)),
-                        span,
-                    )
-                    .with_label(
-                        self.symbols[symbol.0 as usize].declaration,
-                        "declared immutable here",
-                    ),
-                );
-            } else if is_const {
-                self.diagnostics.push(
-                    Diagnostic::error(
-                        "R002",
-                        format!("{} is already declared", display_name(&name)),
-                        span,
-                    )
-                    .with_label(
-                        self.symbols[symbol.0 as usize].declaration,
-                        "previous declaration here",
-                    ),
-                );
+            if self.symbols[symbol.0 as usize].kind != SymbolKind::Builtin {
+                if !self.symbols[symbol.0 as usize].mutable {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "R003",
+                            format!("cannot assign to immutable variable {}", display_name(&name)),
+                            span,
+                        )
+                        .with_label(
+                            self.symbols[symbol.0 as usize].declaration,
+                            "declared immutable here",
+                        ),
+                    );
+                } else if is_const {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "R002",
+                            format!("{} is already declared", display_name(&name)),
+                            span,
+                        )
+                        .with_label(
+                            self.symbols[symbol.0 as usize].declaration,
+                            "previous declaration here",
+                        ),
+                    );
+                }
+                return symbol;
             }
-            return symbol;
         }
         self.define_in(
             scope,

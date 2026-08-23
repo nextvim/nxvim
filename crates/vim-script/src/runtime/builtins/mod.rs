@@ -50,16 +50,8 @@ impl BuiltinRegistry {
         let mut registry = Self::default();
         math::register(&mut registry);
         string::register(&mut registry);
-        registry.register("add", BuiltinArity::Exact(2), collections::add);
-        registry.register("empty", BuiltinArity::Exact(1), collections::empty);
+        collections::register(&mut registry);
         registry.register("exists", BuiltinArity::Exact(1), state::exists_without_vm_context);
-        registry.register("get", BuiltinArity::Range { min: 2, max: 3 }, collections::get);
-        registry.register("len", BuiltinArity::Exact(1), collections::len);
-        registry.register("max", BuiltinArity::Exact(1), collections::max);
-        registry.register("min", BuiltinArity::Exact(1), collections::min);
-        registry.register("range", BuiltinArity::Range { min: 1, max: 3 }, collections::range);
-        registry.register("reverse", BuiltinArity::Exact(1), collections::reverse);
-        registry.register("sort", BuiltinArity::Exact(1), collections::sort);
         registry.register("type", BuiltinArity::Exact(1), types::value_type);
         registry
     }
