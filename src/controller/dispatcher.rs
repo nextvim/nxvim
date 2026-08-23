@@ -1,5 +1,6 @@
 use crate::app::App;
 use vim_script::host::RangeStateProvider;
+use text::ToPoint;
 
 use super::buffer_handler::BufferHandler;
 use super::command::{Command, CommandOutcome};
@@ -93,6 +94,16 @@ impl Dispatcher {
                 let start_row = (start_line.saturating_sub(1)) as u32;
                 let end_row = (end_line.saturating_sub(1)) as u32;
 
+                let cursor_pos = provider.ui
+                    .window(provider.window_id)
+                    .and_then(vim_ui::Window::window_state)
+                    .and_then(|w| provider.model.get_buffer(w.buffer_id).ok().map(|buf| (w, buf)))
+                    .and_then(|(w, buf)| {
+                        w.selections
+                            .first()
+                            .map(|sel| sel.head().to_point(buf.as_text_buffer()))
+                    });
+
                 let regex = vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
                 let _ = crate::app::windows::WindowOps::edit_window(
                     &mut app.ui,
@@ -108,7 +119,15 @@ impl Dispatcher {
                             if !row_exists {
                                 continue;
                             }
-                            let mut start_search_offset = 0;
+                            let mut start_search_offset = if let Some(pos) = cursor_pos {
+                                if row == pos.row {
+                                    pos.column as usize
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            };
                             loop {
                                 let (text, line_start_offset) = {
                                     let text_buf = buffer.as_text_buffer();
@@ -149,6 +168,11 @@ impl Dispatcher {
                         }
                     },
                 );
+
+                app.model.search_pattern = None;
+                app.model.search_regex = None;
+                app.model.search_range = None;
+                app.model.substitute_text = None;
 
                 CommandOutcome::redraw()
             }
@@ -533,7 +557,8 @@ impl Dispatcher {
                     ));
                 }
 
-                if crate::app::windows::WindowOps::window_buffer(&app.ui, active_window)
+                let current_focused = app.ui.focused_window_id();
+                if crate::app::windows::WindowOps::window_buffer(&app.ui, current_focused)
                     == Some(app.model.commandline_buffer())
                 {
                     if let Some(window) = app
@@ -599,6 +624,15 @@ impl Dispatcher {
                                 }
                             }
                         }
+                    }
+                } else {
+                    // clearing required
+                    if app.model.substitute_text.is_some() {                        
+                        app.model.search_pattern = None;
+                        app.model.search_regex = None;
+                        app.model.search_range = None;
+                        app.model.substitute_text = None;
+                        return CommandOutcome::redraw();
                     }
                 }
 

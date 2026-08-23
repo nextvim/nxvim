@@ -144,6 +144,7 @@ mod tests {
             status_message: Some("hello"),
             search_pattern: None,
             search_regex: None,
+            search_range: None,
             substitute_text: None,
             colorscheme: None,
         };

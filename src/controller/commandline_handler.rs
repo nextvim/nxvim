@@ -115,6 +115,10 @@ impl CommandlineHandler {
                 outcome
             }
             Action::Clear if active_window == view_ids.commandline => {
+                model.search_pattern = None;
+                model.search_regex = None;
+                model.search_range = None;
+                model.substitute_text = None;
                 CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }
             Action::InsertNewLine { .. }

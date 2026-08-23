@@ -44,6 +44,7 @@ impl TextView {
             Some(&buffer_state.highlights),
             globals.search_pattern,
             globals.search_regex,
+            globals.search_range,
             globals.substitute_text,
             globals.colorscheme,
         );
@@ -69,6 +70,36 @@ impl View for TextView {
     }
 }
 
+struct ViewRangeStateProvider<'a> {
+    buffer: &'a vim_buffer::Buffer,
+    window: &'a vim_ui::WindowState,
+}
+
+impl<'a> vim_script::host::RangeStateProvider for ViewRangeStateProvider<'a> {
+    fn cursor_line(&self) -> usize {
+        use text::ToPoint;
+        if self.window.selections.selections.is_empty() {
+            1
+        } else {
+            (self.window.selections.primary().head().to_point(self.buffer.as_text_buffer()).row + 1) as usize
+        }
+    }
+
+    fn line_count(&self) -> usize {
+        self.buffer.as_text_buffer().row_count() as usize
+    }
+
+    fn get_mark(&self, name: char) -> Option<usize> {
+        use text::ToPoint;
+        self.buffer.resolve_mark(name)
+            .map(|offset| (offset.0.to_point(self.buffer.as_text_buffer()).row + 1) as usize)
+    }
+
+    fn search_pattern(&self, _pattern: &str, _forward: bool, _start_line: usize) -> Option<usize> {
+        None
+    }
+}
+
 pub fn build_text(
     buffer: &vim_buffer::Buffer,
     window: &WindowState,
@@ -78,9 +109,15 @@ pub fn build_text(
     highlights: Option<&textmate::BufferHighlightState>,
     _search_pattern: Option<&str>,
     search_regex: Option<&vim_regex::Regex>,
+    search_range: Option<&vim_script::ast::CommandRange>,
     substitute_text: Option<&str>,
     colorscheme: Option<&vim_ui::ColorScheme>,
 ) -> vim_ui::TextViewModel {
+    let resolved_search_range = search_range.and_then(|range| {
+        let provider = ViewRangeStateProvider { buffer, window };
+        vim_script::host::resolve_range(range, &provider).ok()
+    });
+
     let mut default_style = vim_ui::Style::default();
     if let Some(cs) = colorscheme {
         if let Some(normal_style) = cs.get_style("Normal") {
@@ -165,19 +202,27 @@ pub fn build_text(
 
         let mut match_ranges = Vec::<(usize, usize)>::new();
         if window.show_matches {
-            if let Some(regex) = search_regex {
-                let buffer_snapshot = display_map_snapshot.buffer_snapshot();
-                let line_len = buffer_snapshot.line_len(buffer_row);
-                let line_text: String = buffer_snapshot
-                    .text_for_range(Point::new(buffer_row, 0)..Point::new(buffer_row, line_len))
-                    .collect();
-                let matches = line_text.find_pattern(regex);
-                match_ranges = matches
-                    .iter()
-                    .map(|(byte_start, byte_len, _)| {
-                        (*byte_start, *byte_start + *byte_len)
-                    })
-                    .collect();
+            let in_search_range = if let Some((start, end)) = resolved_search_range {
+                let line = (buffer_row + 1) as usize;
+                line >= start && line <= end
+            } else {
+                true
+            };
+            if in_search_range {
+                if let Some(regex) = search_regex {
+                    let buffer_snapshot = display_map_snapshot.buffer_snapshot();
+                    let line_len = buffer_snapshot.line_len(buffer_row);
+                    let line_text: String = buffer_snapshot
+                        .text_for_range(Point::new(buffer_row, 0)..Point::new(buffer_row, line_len))
+                        .collect();
+                    let matches = line_text.find_pattern(regex);
+                    match_ranges = matches
+                        .iter()
+                        .map(|(byte_start, byte_len, _)| {
+                            (*byte_start, *byte_start + *byte_len)
+                        })
+                        .collect();
+                }
             }
         }
 
@@ -541,6 +586,7 @@ mod tests {
             Some(&regex),
             None,
             None,
+            None,
         );
 
         // Row 0: "hello world" -> no matches
@@ -551,6 +597,60 @@ mod tests {
         assert_eq!(span_texts.get(1), Some(&"next"));
         assert_eq!(row1.spans[1].style.bg, Some(vim_ui::Color::Yellow));
         assert_eq!(row1.spans[1].style.fg, Some(vim_ui::Color::Black));
+    }
+
+    #[test]
+    fn test_search_regex_highlighting_with_range() {
+        use super::build_text;
+        use vim_buffer::{Buffer, BufferId};
+        use vim_ui::{Rect, Viewport, WindowState};
+
+        let buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "next world\nrust nextvim\nnext row\n",
+        );
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        window_state.update(buffer.snapshot().as_inner().clone(), 80, 24, false);
+
+        let regex =
+            vim_regex::Regex::compile("next", vim_regex::CompileOptions::default()).unwrap();
+        let range = vim_script::ast::CommandRange {
+            start: vim_script::ast::Address::Line(2),
+            end: Some(vim_script::ast::Address::Line(3)),
+            separator: None,
+        };
+        let model = build_text(
+            &buffer,
+            &window_state,
+            Rect::new(0, 0, 80, 24),
+            true,
+            vim_input::Mode::Normal,
+            None,
+            Some("next"),
+            Some(&regex),
+            Some(&range),
+            None,
+            None,
+        );
+
+        // Row 0: "next world" -> line 1, not in search range (lines 2..3) -> no matches highlighted
+        let row0 = &model.rows[0];
+        let span_texts_0: Vec<&str> = row0.spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(span_texts_0.len(), 1);
+        assert_eq!(span_texts_0[0], "next world");
+
+        // Row 1: "rust nextvim" -> line 2, in range -> match highlighted
+        let row1 = &model.rows[1];
+        let span_texts_1: Vec<&str> = row1.spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(span_texts_1.get(1), Some(&"next"));
+        assert_eq!(row1.spans[1].style.bg, Some(vim_ui::Color::Yellow));
+
+        // Row 2: "next row" -> line 3, in range -> match highlighted
+        let row2 = &model.rows[2];
+        let span_texts_2: Vec<&str> = row2.spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(span_texts_2.get(0), Some(&"next"));
+        assert_eq!(row2.spans[0].style.bg, Some(vim_ui::Color::Yellow));
     }
 
     #[test]
@@ -595,6 +695,7 @@ mod tests {
             Rect::new(0, 0, 80, 24),
             true,
             vim_input::Mode::Normal,
+            None,
             None,
             None,
             None,

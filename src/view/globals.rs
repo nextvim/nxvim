@@ -9,6 +9,7 @@ pub struct RenderGlobals<'a> {
     pub status_message: Option<&'a str>,
     pub search_pattern: Option<&'a str>,
     pub search_regex: Option<&'a vim_regex::Regex>,
+    pub search_range: Option<&'a vim_script::ast::CommandRange>,
     pub substitute_text: Option<&'a str>,
     pub colorscheme: Option<&'a vim_ui::ColorScheme>,
 }
