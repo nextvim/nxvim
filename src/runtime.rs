@@ -114,8 +114,10 @@ impl Runtime {
                 should_redraw = true;
             }
 
+            let processed_any = !commands.is_empty();
             for command in commands {
                 if let Command::ExecuteScript(ref script_str) = command {
+                    let _ = self.script.update_state(&self.app.model);
                     if let Err(err) = self.script.execute(script_str) {
                         self.app.model.status = Some(err);
                     }
@@ -128,6 +130,9 @@ impl Runtime {
                 if outcome.quit {
                     break 'main_loop;
                 }
+            }
+            if processed_any {
+                let _ = self.script.update_state(&self.app.model);
             }
 
             if should_redraw {

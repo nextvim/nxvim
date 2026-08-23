@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::controller::Command;
+use text::{BufferId, BufferSnapshot};
 
 use vim_script::{
     compiler::Compiler,
@@ -16,8 +17,13 @@ use vim_script::{
     source::SourceMap,
 };
 
+pub mod builtins;
 pub mod commands;
 pub mod registry;
+
+thread_local! {
+    pub static CURRENT_STATE: std::cell::RefCell<Option<Arc<Mutex<EditorState>>>> = std::cell::RefCell::new(None);
+}
 
 use registry::COMMAND_SPECS;
 
@@ -26,14 +32,16 @@ pub struct ScriptRuntime {
     commands: mpsc::Receiver<Command>,
     globals: HashMap<String, Value>,
     sources: SourceMap,
+    state: Arc<Mutex<EditorState>>,
 }
 
 impl ScriptRuntime {
     pub fn new() -> Self {
         let (sender, commands) = mpsc::channel();
+        let state = Arc::new(Mutex::new(EditorState::default()));
         let mut host = HostRuntime::new(Arc::new(EditorHost {
             sender,
-            state: Arc::new(Mutex::new(EditorState::default())),
+            state: state.clone(),
         }));
         host.capabilities.grant(Capability::Editor);
 
@@ -52,6 +60,7 @@ impl ScriptRuntime {
             commands,
             globals: HashMap::new(),
             sources: SourceMap::default(),
+            state,
         }
     }
 
@@ -84,6 +93,10 @@ impl ScriptRuntime {
         config
             .builtins
             .extend(host.functions.names().map(str::to_owned));
+        config
+            .builtins
+            .extend(builtins::names().map(str::to_owned));
+
         let resolved = Resolver::new(config).resolve(program);
         self.check_diagnostics(&resolved.diagnostics)?;
         let resolved_program = resolved
@@ -95,15 +108,34 @@ impl ScriptRuntime {
         let module = compiled
             .module
             .ok_or_else(|| "script compilation produced no module".to_owned())?;
-        let vm = Vm::with_globals(module, self.globals.clone()).map_err(runtime_message)?;
-        let task = self.scheduler.spawn(vm).map_err(runtime_message)?;
-        let value = self
-            .scheduler
-            .run_until_complete(task)
-            .map_err(runtime_message)?;
-        if let Some(task) = self.scheduler.task(task) {
-            self.globals = task.vm.globals.clone();
-        }
+        
+        let mut vm = Vm::with_globals(module, self.globals.clone()).map_err(runtime_message)?;
+        builtins::register(&mut vm.builtins);
+
+        CURRENT_STATE.with(|cell| {
+            *cell.borrow_mut() = Some(self.state.clone());
+        });
+
+        let task_res = self.scheduler.spawn(vm).map_err(runtime_message);
+        let value = match task_res {
+            Ok(task) => {
+                let run_res = self
+                    .scheduler
+                    .run_until_complete(task)
+                    .map_err(runtime_message);
+                if let Some(task_info) = self.scheduler.task(task) {
+                    self.globals = task_info.vm.globals.clone();
+                }
+                run_res
+            }
+            Err(e) => Err(e),
+        };
+
+        CURRENT_STATE.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+
+        let value = value?;
         Ok(value)
     }
 
@@ -131,7 +163,10 @@ impl ScriptRuntime {
             context: vim_script::host::HostContext::default(),
         };
 
-        let definition = host.commands.resolve(&request.command.name).map_err(runtime_message)?;
+        let definition = host
+            .commands
+            .resolve(&request.command.name)
+            .map_err(runtime_message)?;
         request.command.name = definition.name.clone();
 
         if request.command.bang && !definition.accepts_bang {
@@ -156,6 +191,54 @@ impl ScriptRuntime {
 
     pub fn try_next_command(&self) -> Option<Command> {
         self.commands.try_recv().ok()
+    }
+
+    pub fn update_state(&self, model: &crate::model::EditorModel) -> Result<(), String> {
+        let mut lock = match self.state.try_lock() {
+            Ok(lock) => lock,
+            Err(_) => return Ok(()), // Skip update if lock is contested
+        };
+
+        let active_ids = model.buffers().list();
+        // Remove buffers that are no longer listed/active
+        lock.buffers.retain(|id, _| {
+            active_ids.iter().any(|&active_id| active_id.get() == id.to_proto())
+        });
+        lock.names.clear();
+
+        for id in active_ids {
+            if let Ok(buffer) = model.buffers().get(id) {
+                let text_id = text::BufferId::new(id.get()).unwrap();
+                let current_tick = buffer.changedtick().get();
+                
+                let needs_update = match lock.buffers.get(&text_id) {
+                    Some((_, existing_tick)) => *existing_tick != current_tick,
+                    None => true,
+                };
+
+                if needs_update {
+                    let snapshot = buffer.as_text_buffer().snapshot().clone();
+                    lock.buffers.insert(text_id, (snapshot, current_tick));
+                }
+
+                if let Some(path) = buffer.path() {
+                    lock.names.insert(path.to_path_buf(), text_id);
+                }
+            }
+        }
+
+        let current_id = model.buffers().current();
+        lock.current_buffer_id = Some(text::BufferId::new(current_id.get()).unwrap());
+
+        Ok(())
+    }
+
+    pub fn read_state<F, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce(&EditorState) -> T,
+    {
+        let lock = self.state.lock().map_err(|_| "Editor state lock is poisoned".to_string())?;
+        Ok(f(&*lock))
     }
 
     fn check_diagnostics(&self, diagnostics: &[vim_script::Diagnostic]) -> Result<(), String> {
@@ -192,47 +275,29 @@ fn expect_arity(request: &HostRequest, expected: usize) -> RuntimeResult<()> {
     }
 }
 
-fn integer_argument(request: &HostRequest, index: usize) -> RuntimeResult<i64> {
-    match &request.arguments[index] {
-        Value::Integer(value) => Ok(*value),
-        value => Err(RuntimeError::coded(
-            "E745",
-            RuntimeErrorKind::TypeError,
-            format!(
-                "argument {} to {} must be a number, got {}",
-                index + 1,
-                request.function,
-                value.type_name()
-            ),
-        )),
-    }
-}
-
-fn string_argument(request: &HostRequest, index: usize) -> RuntimeResult<String> {
-    match &request.arguments[index] {
-        Value::String(value) => Ok(value.to_string()),
-        value => Err(RuntimeError::coded(
-            "E730",
-            RuntimeErrorKind::TypeError,
-            format!(
-                "argument {} to {} must be a string, got {}",
-                index + 1,
-                request.function,
-                value.type_name()
-            ),
-        )),
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EditorState {
-    pub messages: Vec<String>,
+    pub buffers: HashMap<BufferId, (BufferSnapshot, u64)>,
+    pub names: HashMap<PathBuf, BufferId>,
+    pub current_buffer_id: Option<BufferId>,
+}
+
+impl std::fmt::Debug for EditorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EditorState")
+            .field("buffers_count", &self.buffers.len())
+            .field("names", &self.names)
+            .field("current_buffer_id", &self.current_buffer_id)
+            .finish()
+    }
 }
 
 impl Default for EditorState {
     fn default() -> Self {
         Self {
-            messages: Vec::new(),
+            buffers: HashMap::new(),
+            names: HashMap::new(),
+            current_buffer_id: None,
         }
     }
 }
@@ -702,7 +767,14 @@ mod tests {
 
     #[test]
     fn test_substitute_command_is_dispatched() {
-        for source in ["substitute /foo/bar/", "s /foo/bar/", "&", "~", "smagic /foo/bar/", "snomagic /foo/bar/"] {
+        for source in [
+            "substitute /foo/bar/",
+            "s /foo/bar/",
+            "&",
+            "~",
+            "smagic /foo/bar/",
+            "snomagic /foo/bar/",
+        ] {
             let mut runtime = ScriptRuntime::new();
             runtime.execute(source).unwrap();
             assert!(matches!(
@@ -729,4 +801,3 @@ mod tests {
         ));
     }
 }
-

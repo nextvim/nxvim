@@ -141,8 +141,8 @@ Total functions: 598
 - [ ] `getbufline({buf}, {lnum} [, {end}])` -> List - lines {lnum} to {end} of buffer {buf}
 - [ ] `getbufoneline({buf}, {lnum})` -> String - line {lnum} of buffer {buf}
 - [ ] `getbufvar({buf}, {varname} [, {def}])` -> any - variable {varname} in buffer {buf}
-- [ ] `getline({lnum})` -> String - line {lnum} of current buffer
-- [ ] `getline({lnum}, {end})` -> List - lines {lnum} to {end} of current buffer
+- [x] `getline({lnum})` -> String - line {lnum} of current buffer
+- [x] `getline({lnum}, {end})` -> List - lines {lnum} to {end} of current buffer
 - [ ] `line({expr} [, {winid}])` -> Number - line nr of cursor, last line or mark
 - [ ] `line2byte({lnum})` -> Number - byte count of line {lnum}
 
@@ -687,4 +687,3 @@ Total functions: 598
 - [ ] `sound_playfile({path} [, {callback}])` -> Number - play sound file {path}
 - [ ] `sound_stop({id})` -> none - stop playing sound {id}
 - [x] `string({expr})` -> String - String representation of {expr} value
-
