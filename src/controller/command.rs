@@ -67,6 +67,11 @@ pub enum Command {
     SearchBackward {
         pattern: String,
     },
+    Substitute {
+        pattern: String,
+        substitute_text: String,
+        range: Option<vim_script::ast::CommandRange>,
+    },
 }
 
 impl std::fmt::Debug for Command {
@@ -141,6 +146,12 @@ impl std::fmt::Debug for Command {
             Command::SearchBackward { pattern } => f
                 .debug_struct("SearchBackward")
                 .field("pattern", pattern)
+                .finish(),
+            Command::Substitute { pattern, substitute_text, range } => f
+                .debug_struct("Substitute")
+                .field("pattern", pattern)
+                .field("substitute_text", substitute_text)
+                .field("range", range)
                 .finish(),
         }
     }

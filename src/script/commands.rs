@@ -294,8 +294,60 @@ fn search_backward(request: CommandRequest) -> Result<Command, RuntimeError> {
 }
 
 fn substitute(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::SearchForward {
-        pattern: request.command.arguments,
+    let args = request.command.arguments.trim();
+    let (pattern, substitute_text) = if args.is_empty() {
+        (String::new(), String::new())
+    } else {
+        let mut chars = args.chars();
+        let delimiter = chars.next().unwrap_or('/');
+        if delimiter.is_alphanumeric() || delimiter.is_whitespace() || delimiter == '\\' {
+            (args.to_string(), String::new())
+        } else {
+            let mut pat = String::new();
+            let mut rep = String::new();
+            let mut escaped = false;
+            let mut in_replacement = false;
+            for ch in chars {
+                if escaped {
+                    if in_replacement {
+                        rep.push(ch);
+                    } else {
+                        pat.push(ch);
+                    }
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    if in_replacement {
+                        rep.push(ch);
+                    } else {
+                        pat.push(ch);
+                    }
+                    continue;
+                }
+                if ch == delimiter {
+                    if !in_replacement {
+                        in_replacement = true;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                if in_replacement {
+                    rep.push(ch);
+                } else {
+                    pat.push(ch);
+                }
+            }
+            (pat, rep)
+        }
+    };
+    let range = request.command.range.clone();
+    Ok(Command::Substitute {
+        pattern,
+        substitute_text,
+        range,
     })
 }
 

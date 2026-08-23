@@ -65,6 +65,8 @@ impl CommandlineHandler {
                 model.history_index = None;
                 model.history_temp.clear();
                 if mode_char == '/' || mode_char == '?' {
+                    model.search_range = None;
+                    model.substitute_text = None;
                     if !selection_text.is_empty() {
                         let pattern = format!("\\<{selection_text}\\>");
                         model.search_pattern = Some(pattern);
@@ -138,10 +140,14 @@ impl CommandlineHandler {
                         model.search_regex =
                             Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
                         model.search_pattern = Some(pattern);
+                        model.search_range = None;
+                        model.substitute_text = None;
                     } else if model.commandline_mode == '/' || model.commandline_mode == '?' {
                         model.search_regex =
                             Regex::compile(&command, vim_regex::CompileOptions::default()).ok();
                         model.search_pattern = Some(command.clone());
+                        model.search_range = None;
+                        model.substitute_text = None;
                     }
 
                     let command_to_execute = if command.starts_with(':') {
@@ -184,6 +190,8 @@ impl CommandlineHandler {
                             model.search_pattern = Some(text.clone());
                             model.search_regex =
                                 Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
+                            model.search_range = None;
+                            model.substitute_text = None;
                         }
                     }
                 }
@@ -204,12 +212,16 @@ impl CommandlineHandler {
                             model.search_pattern = Some(text.clone());
                             model.search_regex =
                                 Regex::compile(&text, vim_regex::CompileOptions::default()).ok();
+                            model.search_range = None;
+                            model.substitute_text = None;
                         }
                     } else {
                         model.history_index = None;
                         let text = model.history_temp.clone();
                         Self::set_commandline_text(ui, model, view_ids.commandline, &text);
                         if model.commandline_mode == '/' || model.commandline_mode == '?' {
+                            model.search_range = None;
+                            model.substitute_text = None;
                             if text.is_empty() {
                                 model.search_pattern = None;
                                 model.search_regex = None;

@@ -30,11 +30,12 @@ impl Dispatcher {
             }
             Command::ExecuteScript(_) => CommandOutcome::redraw(),
             Command::SearchForward { pattern } => {
-
                 let active_window = app.ui.focused_window_id();
                 app.model.search_pattern = Some(pattern.clone());
                 app.model.search_regex =
                     vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                app.model.search_range = None;
+                app.model.substitute_text = None;
                 let _ = crate::app::windows::WindowOps::edit_window(
                     &mut app.ui,
                     &mut app.model,
@@ -50,6 +51,8 @@ impl Dispatcher {
                 app.model.search_pattern = Some(pattern.clone());
                 app.model.search_regex =
                     vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                app.model.search_range = None;
+                app.model.substitute_text = None;
                 let _ = crate::app::windows::WindowOps::edit_window(
                     &mut app.ui,
                     &mut app.model,
@@ -58,6 +61,14 @@ impl Dispatcher {
                         window_state.selections.move_to_previous_match(&pattern, true, buffer.as_text_buffer());
                     },
                 );
+                CommandOutcome::redraw()
+            }
+            Command::Substitute { pattern, substitute_text, range } => {
+                app.model.search_pattern = Some(pattern.clone());
+                app.model.search_regex =
+                    vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                app.model.search_range = range;
+                app.model.substitute_text = Some(substitute_text);
                 CommandOutcome::redraw()
             }
             Command::InvalidInput => {
@@ -440,6 +451,76 @@ impl Dispatcher {
                         &action,
                     ));
                 }
+
+                if crate::app::windows::WindowOps::window_buffer(&app.ui, active_window)
+                    == Some(app.model.commandline_buffer())
+                {
+                    if let Some(window) = app
+                        .ui
+                        .window(active_window)
+                        .and_then(vim_ui::Window::window_state)
+                    {
+                        if let Ok(buffer) = app.model.get_buffer(app.model.commandline_buffer()) {
+                            if let Some(selection) = window.selections.first() {
+                                use text::ToOffset;
+                                use text::ToPoint;
+                                let text_buffer = buffer.as_text_buffer();
+                                let current_row = selection.head().to_point(text_buffer).row;
+                                let start = text::Point::new(current_row, 0).to_offset(text_buffer);
+                                let end = text::Point::new(
+                                    current_row,
+                                    text_buffer.line_len(current_row),
+                                )
+                                .to_offset(text_buffer);
+                                let raw_pattern: String =
+                                    text_buffer.as_rope().chunks_in_range(start..end).collect();
+
+                                let command_line =
+                                    format!("{}{}", app.model.commandline_mode, raw_pattern);
+                                let mut runtime = crate::script::ScriptRuntime::new();
+                                if let Ok(cmd) = runtime.peek_command(&command_line) {
+                                    match cmd {
+                                        Command::SearchForward { pattern }
+                                        | Command::SearchBackward { pattern } => {
+                                            if pattern.is_empty() {
+                                                app.model.search_pattern = None;
+                                                app.model.search_regex = None;
+                                            } else {
+                                                app.model.search_regex =
+                                                    vim_regex::Regex::compile(
+                                                        &pattern,
+                                                        vim_regex::CompileOptions::default(),
+                                                    )
+                                                    .ok();
+                                                app.model.search_pattern = Some(pattern);
+                                            }
+                                            app.model.search_range = None;
+                                            app.model.substitute_text = None;
+                                        }
+                                        Command::Substitute { pattern, substitute_text, range } => {
+                                            if pattern.is_empty() {
+                                                app.model.search_pattern = None;
+                                                app.model.search_regex = None;
+                                            } else {
+                                                app.model.search_regex =
+                                                    vim_regex::Regex::compile(
+                                                        &pattern,
+                                                        vim_regex::CompileOptions::default(),
+                                                    )
+                                                    .ok();
+                                                app.model.search_pattern = Some(pattern);
+                                            }
+                                            app.model.search_range = range;
+                                            app.model.substitute_text = Some(substitute_text);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 outcome
             }
         }

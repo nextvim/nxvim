@@ -106,6 +106,53 @@ impl ScriptRuntime {
         Ok(value)
     }
 
+    pub fn peek_command(&self, source: &str) -> Result<Command, String> {
+        let mut source = source;
+        if let Some(stripped) = source.strip_prefix(':') {
+            if stripped
+                .trim_start()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                source = stripped;
+            }
+        }
+
+        let parsed = vim_script::ex_parser::ExLineParser::new(vim_script::SourceId(0), source, 0)
+            .parse()
+            .map_err(|diagnostic| diagnostic.message.clone())?;
+
+        let host = self.scheduler.host().expect("script host is installed");
+
+        let mut request = vim_script::host::CommandRequest {
+            command: parsed.command,
+            context: vim_script::host::HostContext::default(),
+        };
+
+        let definition = host.commands.resolve(&request.command.name).map_err(runtime_message)?;
+        request.command.name = definition.name.clone();
+
+        if request.command.bang && !definition.accepts_bang {
+            return Err(format!("{} does not accept !", definition.name));
+        }
+        if request.command.range.is_some() && !definition.accepts_range {
+            return Err(format!("{} does not accept a range", definition.name));
+        }
+        if definition.accepts_count || definition.accepts_register {
+            let (count, register, remaining) = parse_count_and_register_helper(
+                &request.command.arguments,
+                definition.accepts_count,
+                definition.accepts_register,
+            );
+            request.command.count = count;
+            request.command.register = register;
+            request.command.arguments = remaining;
+        }
+
+        commands::execute(request).map_err(runtime_message)
+    }
+
     pub fn try_next_command(&self) -> Option<Command> {
         self.commands.try_recv().ok()
     }
@@ -251,9 +298,61 @@ fn lock_error() -> RuntimeError {
     )
 }
 
+fn parse_count_and_register_helper(
+    arguments: &str,
+    accepts_count: bool,
+    accepts_register: bool,
+) -> (Option<u64>, Option<char>, String) {
+    let mut count = None;
+    let mut register = None;
+    let mut remaining = String::new();
+
+    let words: Vec<&str> = arguments.split_whitespace().collect();
+    let mut idx = 0;
+
+    if idx < words.len() && accepts_register {
+        let word = words[idx];
+        if word.len() == 1 {
+            let ch = word.chars().next().unwrap();
+            let is_number = ch.is_ascii_digit();
+            if !is_number || !accepts_count {
+                register = Some(ch);
+                idx += 1;
+            }
+        }
+    }
+
+    if idx < words.len() && accepts_count {
+        let word = words[idx];
+        if let Ok(c) = word.parse::<u64>() {
+            count = Some(c);
+            idx += 1;
+        }
+    }
+
+    if idx < words.len() {
+        remaining = words[idx..].join(" ");
+    }
+
+    (count, register, remaining)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_peek_command() {
+        let runtime = ScriptRuntime::new();
+        let cmd = runtime.peek_command("write! output.txt").unwrap();
+        assert!(matches!(
+            cmd,
+            Command::Save {
+                path: Some(path),
+                force: true,
+            } if path == PathBuf::from("output.txt")
+        ));
+    }
 
     #[test]
     fn test_central_registry_specifications() {
@@ -607,7 +706,7 @@ mod tests {
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::SearchForward { ref pattern }) if pattern == "/foo/bar/" || pattern.is_empty()
+                Some(Command::Substitute { ref pattern, .. }) if pattern == "foo" || pattern.is_empty()
             ));
         }
     }

@@ -32,12 +32,8 @@ impl EditorHandler {
 
         let search_pattern = model.search_pattern.clone();
         let mut next_mode = None;
-        let is_commandline =
-            WindowOps::window_buffer(ui, active_window) == Some(model.commandline_buffer());
-        let is_history_move =
-            is_commandline && matches!(action, Action::MoveUp { .. } | Action::MoveDown { .. });
 
-        if !is_history_move {
+        {
             let _ = WindowOps::edit_window(
                 ui,
                 model,
@@ -63,6 +59,7 @@ impl EditorHandler {
                 },
             );
         }
+
         // Reset the register selection regardless of whether the action
         // consumed it, so it never leaks into an unrelated follow-up action.
         services.clipboard.release();
@@ -70,36 +67,6 @@ impl EditorHandler {
             input.set_mode(mode);
         }
 
-        if WindowOps::window_buffer(ui, active_window) == Some(model.commandline_buffer()) {
-            if model.commandline_mode == '/' || model.commandline_mode == '?' {
-                if let Some(window) = ui
-                    .window(active_window)
-                    .and_then(vim_ui::Window::window_state)
-                {
-                    if let Ok(buffer) = model.get_buffer(model.commandline_buffer()) {
-                        if let Some(selection) = window.selections.first() {
-                            let text_buffer = buffer.as_text_buffer();
-                            let current_row = selection.head().to_point(text_buffer).row;
-                            let start = Point::new(current_row, 0).to_offset(text_buffer);
-                            let end = Point::new(current_row, text_buffer.line_len(current_row))
-                                .to_offset(text_buffer);
-                            let pattern: String =
-                                text_buffer.as_rope().chunks_in_range(start..end).collect();
-                            if pattern.is_empty() {
-                                model.search_pattern = None;
-                                model.search_regex = None;
-                            } else {
-                                model.search_regex =
-                                    Regex::compile(&pattern, vim_regex::CompileOptions::default())
-                                        .ok();
-                                // model.search_regex = Regex::new(&pattern).ok();
-                                model.search_pattern = Some(pattern);
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         CommandOutcome::redraw()
     }
