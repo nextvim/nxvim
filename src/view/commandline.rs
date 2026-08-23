@@ -46,6 +46,7 @@ impl CommandLineView {
             status_message: globals.status_message,
             search_pattern: None,
             search_regex: None,
+            substitute_text: None,
             colorscheme: globals.colorscheme,
         };
         self.inner.refresh(

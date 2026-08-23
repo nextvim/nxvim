@@ -44,6 +44,7 @@ impl TextView {
             Some(&buffer_state.highlights),
             globals.search_pattern,
             globals.search_regex,
+            globals.substitute_text,
             globals.colorscheme,
         );
         self.inner.set_model(model);
@@ -77,6 +78,7 @@ pub fn build_text(
     highlights: Option<&textmate::BufferHighlightState>,
     _search_pattern: Option<&str>,
     search_regex: Option<&vim_regex::Regex>,
+    substitute_text: Option<&str>,
     colorscheme: Option<&vim_ui::ColorScheme>,
 ) -> vim_ui::TextViewModel {
     let mut default_style = vim_ui::Style::default();
@@ -278,6 +280,27 @@ pub fn build_text(
                     shape: cursor_shape(mode),
                     visible: true,
                 });
+            }
+
+            let mut skipped_by_substitute = false;
+            if let Some(sub_text) = substitute_text {
+                if !sub_text.is_empty() {
+                if let Some(&(start, end)) = match_ranges
+                    .iter()
+                    .find(|&&(s, e)| (point.column as usize) >= s && (point.column as usize) < e)
+                {
+                    if (point.column as usize) == start {
+                        let mut style = row_default_style.clone();
+                        style.bg = search_style.bg;
+                        style.fg = search_style.fg;
+                        spans.push(vim_ui::model::TextSpan::new(sub_text.to_string(), style));
+                    }
+                    skipped_by_substitute = true;
+                }
+                }
+            }
+            if skipped_by_substitute {
+                continue;
             }
 
             if is_eol && !selection_state.selected_cell && !selection_state.at_cursor_head {
@@ -517,6 +540,7 @@ mod tests {
             Some("next"),
             Some(&regex),
             None,
+            None,
         );
 
         // Row 0: "hello world" -> no matches
@@ -571,6 +595,7 @@ mod tests {
             Rect::new(0, 0, 80, 24),
             true,
             vim_input::Mode::Normal,
+            None,
             None,
             None,
             None,

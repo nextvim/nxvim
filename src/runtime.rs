@@ -516,6 +516,7 @@ impl Runtime {
             status_message: self.app.model.status.as_deref(),
             search_pattern: self.app.model.search_pattern.as_deref(),
             search_regex: self.app.model.search_regex.as_ref(),
+            substitute_text: self.app.model.substitute_text.as_deref(),
             colorscheme: colorscheme.as_ref(),
         };
 

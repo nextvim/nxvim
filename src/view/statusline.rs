@@ -144,6 +144,7 @@ mod tests {
             status_message: Some("hello"),
             search_pattern: None,
             search_regex: None,
+            substitute_text: None,
             colorscheme: None,
         };
         view.refresh(

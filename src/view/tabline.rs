@@ -164,6 +164,7 @@ mod tests {
             status_message: None,
             search_pattern: None,
             search_regex: None,
+            substitute_text: None,
             colorscheme: None,
         }
     }
