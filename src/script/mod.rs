@@ -482,6 +482,19 @@ mod tests {
     }
 
     #[test]
+    fn qall_and_its_abbreviation_are_dispatched_as_quit_all() {
+        for source in ["qa", "qall", "qa!"] {
+            let mut runtime = ScriptRuntime::new();
+            runtime.execute(source).unwrap();
+            let force = source.ends_with('!');
+            assert!(matches!(
+                runtime.try_next_command(),
+                Some(Command::QuitAll { force: actual }) if actual == force
+            ));
+        }
+    }
+
+    #[test]
     fn navigation_commands_are_dispatched() {
         for (source, forward) in [("bnext", true), ("previoustab", false)] {
             let mut runtime = ScriptRuntime::new();

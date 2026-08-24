@@ -112,15 +112,35 @@ impl SharedOperations {
             .map(|(win_id, _)| win_id)
             .collect();
 
-        if non_cmd_windows.len() <= 1 {
-            Ok(CommandOutcome::quit())
-        } else {
+        if non_cmd_windows.len() > 1 {
             let mut outcome = CommandOutcome::redraw();
             outcome.view_effects.push(ViewEffect::Close(active_window));
             if let Some(&remaining) = non_cmd_windows.iter().find(|&&win| win != active_window) {
                 outcome.view_effects.push(ViewEffect::Focus(remaining));
             }
             Ok(outcome)
+        } else {
+            let Some(active_buffer) = WindowOps::window_buffer(ui, active_window) else {
+                return Ok(CommandOutcome::quit());
+            };
+            let remaining_buffer = model
+                .list()
+                .into_iter()
+                .find(|&buffer_id| buffer_id != active_buffer);
+
+            if let Some(remaining_buffer) = remaining_buffer {
+                model.wipe(active_buffer, force).map_err(|error| {
+                    vim_script::runtime::RuntimeError::coded(
+                        "E89",
+                        vim_script::runtime::RuntimeErrorKind::HostError,
+                        error.to_string(),
+                    )
+                })?;
+                WindowOps::switch_to(ui, model, active_window, remaining_buffer);
+                Ok(CommandOutcome::redraw())
+            } else {
+                Ok(CommandOutcome::quit())
+            }
         }
     }
 
@@ -140,6 +160,36 @@ impl SharedOperations {
             }
         }
         CommandOutcome::redraw()
+    }
+
+    /// Quit the application after verifying that no editor buffer has unsaved changes.
+    pub fn quit_all(
+        model: &mut EditorModel,
+        force: bool,
+    ) -> Result<CommandOutcome, vim_script::runtime::RuntimeError> {
+        if !force
+            && let Some(buffer) = model
+                .buffers()
+                .list()
+                .into_iter()
+                .filter(|&buffer_id| buffer_id != model.commandline_buffer())
+                .filter_map(|buffer_id| model.get_buffer(buffer_id).ok())
+                .find(|buffer| buffer.is_modified())
+        {
+            return Err(vim_script::runtime::RuntimeError::coded(
+                "E37",
+                vim_script::runtime::RuntimeErrorKind::HostError,
+                format!(
+                    "No write since last change in {} (add ! to override)",
+                    buffer.path().map_or_else(
+                        || "[No Name]".to_string(),
+                        |path| path.display().to_string()
+                    )
+                ),
+            ));
+        }
+
+        Ok(CommandOutcome::quit())
     }
 
     /// Window split directional navigation

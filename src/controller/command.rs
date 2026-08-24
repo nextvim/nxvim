@@ -19,6 +19,9 @@ pub enum Command {
     Quit {
         force: bool,
     },
+    QuitAll {
+        force: bool,
+    },
     Edit {
         path: Option<PathBuf>,
         force: bool,
@@ -91,6 +94,7 @@ impl std::fmt::Debug for Command {
                 .field("force", force)
                 .finish(),
             Command::Quit { force } => f.debug_struct("Quit").field("force", force).finish(),
+            Command::QuitAll { force } => f.debug_struct("QuitAll").field("force", force).finish(),
             Command::Edit { path, force } => f
                 .debug_struct("Edit")
                 .field("path", path)

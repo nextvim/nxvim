@@ -69,6 +69,63 @@ mod tests {
     }
 
     #[test]
+    fn quit_closes_focused_buffer_before_quitting_application() {
+        let first = std::env::temp_dir().join(format!(
+            "nxvim-command-quit-first-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let second = std::env::temp_dir().join(format!(
+            "nxvim-command-quit-second-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut app = crate::app::App::new(
+            Rect::new(0, 0, 80, 24),
+            crate::app::args::Args {
+                paths: vec![first, second],
+                ..Default::default()
+            },
+        );
+        let main = app.view_ids.main;
+        let focused_buffer = window_buffer(&app, main).unwrap();
+
+        let outcome = Dispatcher::dispatch(&mut app, Command::Quit { force: false });
+
+        assert!(!outcome.quit);
+        assert_eq!(app.model.list().len(), 1);
+        assert_ne!(window_buffer(&app, main), Some(focused_buffer));
+    }
+
+    #[test]
+    fn quit_all_rejects_modified_buffers_unless_forced() {
+        let mut app = app();
+        let active_buffer = window_buffer(&app, app.view_ids.main).unwrap();
+        app.model.create("second");
+        let buffer = app.model.get_buffer_mut(active_buffer).unwrap();
+        let mut transaction = buffer.transaction(vim_buffer::EditOrigin::VimScript);
+        transaction.replace(
+            None,
+            vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(0))
+                .unwrap(),
+            "changed",
+        );
+        transaction.commit(None).unwrap();
+
+        let blocked = Dispatcher::dispatch(&mut app, Command::QuitAll { force: false });
+        assert!(!blocked.quit);
+        assert!(
+            app.model
+                .status
+                .as_deref()
+                .is_some_and(|status| status.contains("No write since last change"))
+        );
+
+        let forced = Dispatcher::dispatch(&mut app, Command::QuitAll { force: true });
+        assert!(forced.quit);
+    }
+
+    #[test]
     fn dispatcher_switches_buffers_and_emits_window_effects() {
         let mut app = app();
         let main = app.view_ids.main;

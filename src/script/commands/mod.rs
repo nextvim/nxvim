@@ -112,7 +112,7 @@ fn saveas(request: CommandRequest) -> Result<Command, RuntimeError> {
 }
 
 fn qall(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::Quit {
+    Ok(Command::QuitAll {
         force: request.command.bang,
     })
 }

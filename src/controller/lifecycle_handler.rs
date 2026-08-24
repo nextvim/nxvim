@@ -11,7 +11,8 @@ use super::shared_operations::SharedOperations;
 /// Handles application lifecycle operations — quit, edit, and the write+quit
 /// combinations (`:wq`, `:wqall`) — whether they originate from a resolved
 /// key action (`Action::Quit`) or a script Ex command (`Command::Quit`,
-/// `Command::Edit`, `Command::WriteQuit`, `Command::WriteQuitAll`). This is
+/// `Command::QuitAll`, `Command::Edit`, `Command::WriteQuit`,
+/// `Command::WriteQuitAll`). This is
 /// the single call path for `SharedOperations::quit`/`SharedOperations::edit`,
 /// so there is exactly one place that turns their `Result` into a
 /// `CommandOutcome`/status message.
@@ -41,6 +42,11 @@ impl LifecycleHandler {
         force: bool,
     ) -> CommandOutcome {
         let result = SharedOperations::quit(ui, model, active_window, force);
+        Self::outcome_or_status(model, result)
+    }
+
+    pub fn quit_all(model: &mut EditorModel, force: bool) -> CommandOutcome {
+        let result = SharedOperations::quit_all(model, force);
         Self::outcome_or_status(model, result)
     }
 
@@ -76,10 +82,8 @@ impl LifecycleHandler {
         }
     }
 
-    /// `:wqall` should write and close every window; `SharedOperations::quit`
-    /// does not yet distinguish closing one window from closing all of them
-    /// (`SCRIPT.md` P0.4), so this mirrors the same simplification `:qall`
-    /// already makes today and writes only the active buffer before quitting.
+    /// `:wqall` writes the active buffer before quitting. Unlike `:qall`, it
+    /// retains the write step and currently writes only the active buffer.
     pub fn write_and_quit_all(
         ui: &mut Ui,
         model: &mut EditorModel,

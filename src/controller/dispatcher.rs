@@ -280,6 +280,7 @@ impl Dispatcher {
                 let active_window = app.ui.focused_window_id();
                 LifecycleHandler::quit(&mut app.ui, &mut app.model, active_window, force)
             }
+            Command::QuitAll { force } => LifecycleHandler::quit_all(&mut app.model, force),
             Command::Edit { path, force } => {
                 let active_window = app.ui.focused_window_id();
                 LifecycleHandler::edit(
