@@ -1,6 +1,6 @@
 # MVP Vim Clone — Essential Feature Checklist & Status
 
-**Estimated Completion: 87.9%** (181 / 206 checklist items completed)
+**Estimated Completion: 89.3%** (184 / 206 checklist items completed)
 
 This document tracks the target features for the MVP Vim clone (`nxvim`) and describes their current implementation status in the codebase (under [src/controller](file:///home/iceman/Developer/rust/nextvim/nxvim/src/controller) and [src/script](file:///home/iceman/Developer/rust/nextvim/nxvim/src/script)).
 
@@ -170,7 +170,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 *Not yet implemented.*
 
 [x] `:s/foo/bar/` / `:s/foo/bar/g`
-[ ] `:s/foo/bar/gc` / `:%s/foo/bar/gc`
+[x] `:s/foo/bar/gc` / `:%s/foo/bar/gc`
 
 ---
 

@@ -31,6 +31,29 @@ pub use dispatcher::Dispatcher;
 pub use range::RangeOperation;
 pub use substitute_handler::{Prompt, PromptChoice, PromptHandler, SubstituteHandler};
 
+/// Converts a terminal event into a response to the active confirmation prompt.
+pub fn prompt_choice(event: &crossterm::event::Event) -> Option<PromptChoice> {
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+
+    let Event::Key(key) = event else {
+        return None;
+    };
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('y' | 'Y') => Some(PromptChoice::Yes),
+        KeyCode::Char('n' | 'N') => Some(PromptChoice::No),
+        KeyCode::Char('a' | 'A') => Some(PromptChoice::All),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(PromptChoice::Quit)
+        }
+        KeyCode::Char('q' | 'Q') | KeyCode::Esc => Some(PromptChoice::Quit),
+        KeyCode::Char('l' | 'L') => Some(PromptChoice::Last),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

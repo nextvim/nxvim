@@ -1,6 +1,13 @@
 pub use vim_ui::{Rect, Ui};
 
-use super::windows::WindowOps;
+use crate::app::App;
+use crate::app::windows::WindowOps;
+use crate::view::{
+    CommandLineView, LayoutSnapshot, RenderGlobals, StatusLineView, TabLineView, TextView,
+    WindowLayout, globals::buffer_display_name,
+};
+use text::ToPoint;
+use vim_ui::Window;
 
 /// Concrete UI identities. `main` and `commandline` are semantic model windows;
 /// tabline, statusline, and side panels are presentation-only chrome.
@@ -15,6 +22,15 @@ pub struct ViewIds {
 }
 
 pub struct ViewSynchronizer;
+
+/// Selects the buffer whose state should be exposed to script execution.
+pub fn current_buffer(app: &App) -> vim_buffer::BufferId {
+    let focused_window = app.ui.focused_window_id();
+    WindowOps::window_buffer(&app.ui, focused_window)
+        .filter(|id| *id != app.model.commandline_buffer())
+        .or_else(|| WindowOps::window_buffer(&app.ui, app.view_ids.main))
+        .unwrap_or_else(|| app.model.buffers().current())
+}
 
 impl ViewSynchronizer {
     pub fn apply(
@@ -132,6 +148,251 @@ impl ViewSynchronizer {
         window.set_view(Box::new(crate::view::TextView::new()));
         true
     }
+}
+
+/// Rebuilds every window's owned rendering model from window state,
+/// buffer state, and `RenderGlobals`, immediately before the draw pass.
+pub fn refresh_views(app: &mut crate::app::App, layout: &LayoutSnapshot) {
+    app.ui.set_colorscheme(app.colorscheme.clone());
+    let colorscheme = app.ui.colorscheme().cloned();
+    let globals = RenderGlobals {
+        mode: app.controller.mode(),
+        status_message: app.model.status.as_deref(),
+        search_pattern: app.model.search_pattern.as_deref(),
+        search_regex: app.model.search_regex.as_ref(),
+        search_range: app.model.search_range.as_ref(),
+        substitute_text: app.model.substitute_text.as_deref(),
+        colorscheme: colorscheme.as_ref(),
+    };
+
+    let active_window = app.ui.focused_window_id();
+    let commandline_id = app.view_ids.commandline;
+
+    for (window_id, buffer_id) in WindowOps::window_buffers(&app.ui) {
+        let Ok(buffer) = app.model.get_buffer(buffer_id) else {
+            continue;
+        };
+        let Some(buffer_state) = app.model.buffer_state(buffer_id) else {
+            continue;
+        };
+        let fallback_viewport = app
+            .ui
+            .window(window_id)
+            .and_then(Window::window_state)
+            .map(|state| state.viewport)
+            .unwrap_or_default();
+        let window_layout = layout.get(window_id).unwrap_or(WindowLayout {
+            rect: vim_ui::Rect::new(
+                0,
+                0,
+                fallback_viewport.width as u16,
+                fallback_viewport.height as u16,
+            ),
+            draws_border: fallback_viewport.has_border,
+        });
+        let inner_rect = if window_layout.draws_border {
+            window_layout.rect.inner(1)
+        } else {
+            window_layout.rect
+        };
+        let active = window_id == active_window;
+
+        let Some(window) = app.ui.window_mut(window_id) else {
+            continue;
+        };
+        if window_id == commandline_id {
+            let (window_state, view) = window.refresh_parts::<CommandLineView>();
+            if let (Some(window_state), Some(view)) = (window_state, view) {
+                view.refresh(
+                    buffer,
+                    window_state,
+                    buffer_state,
+                    inner_rect,
+                    active,
+                    &globals,
+                );
+            }
+        } else {
+            let show_number = app
+                .config
+                .get("number", Some(buffer_id), Some(window_id))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let show_cursorline = app
+                .config
+                .get("cursorline", Some(buffer_id), Some(window_id))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let wrap_text = app
+                .config
+                .get("wrap", Some(buffer_id), Some(window_id))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if let Some(state) = window.window_state_mut() {
+                state.set_show_gutter(show_number);
+                state.set_show_cursorline(show_cursorline);
+                state.set_wrap_text(wrap_text);
+            }
+            let (window_state, view) = window.refresh_parts::<TextView>();
+            if let (Some(window_state), Some(view)) = (window_state, view) {
+                view.refresh(
+                    buffer,
+                    window_state,
+                    buffer_state,
+                    inner_rect,
+                    active,
+                    &globals,
+                );
+            }
+        }
+    }
+
+    let buffer_ids = app.model.list();
+    let tabs: Vec<String> = buffer_ids
+        .iter()
+        .map(|&id| buffer_display_name(&app.model, id))
+        .collect();
+    // The command-line buffer is intentionally unlisted, so use the
+    // editor window that was focused before entering command-line mode.
+    let tab_window = if active_window == commandline_id {
+        app.ui
+            .focus_manager()
+            .previous_id()
+            .filter(|&id| id != commandline_id)
+            .unwrap_or(app.view_ids.main)
+    } else {
+        active_window
+    };
+    let active_index = WindowOps::window_buffer(&app.ui, tab_window)
+        .and_then(|id| buffer_ids.iter().position(|&candidate| candidate == id))
+        .unwrap_or(0);
+    if let Some(view) = app
+        .ui
+        .window_mut(app.view_ids.tabline)
+        .and_then(Window::view_as_mut::<TabLineView>)
+    {
+        view.refresh(&tabs, active_index, &globals);
+    }
+
+    let (buffer_name, modified, cursor, scope_path, inspect_label) =
+        status_line_data(app, active_window);
+    if let Some(view) = app
+        .ui
+        .window_mut(app.view_ids.statusline)
+        .and_then(Window::view_as_mut::<StatusLineView>)
+    {
+        view.refresh(
+            &globals,
+            buffer_name,
+            modified,
+            cursor,
+            scope_path,
+            inspect_label,
+        );
+    }
+}
+
+fn status_line_data(
+    app: &crate::app::App,
+    active_window: vim_ui::WindowId,
+) -> (String, bool, Option<(u32, u32)>, Vec<String>, String) {
+    let Some(buffer_id) = WindowOps::window_buffer(&app.ui, active_window) else {
+        return (String::new(), false, None, Vec::new(), "Scope".to_string());
+    };
+    let buffer_name = buffer_display_name(&app.model, buffer_id);
+    let Ok(buffer) = app.model.get_buffer(buffer_id) else {
+        return (buffer_name, false, None, Vec::new(), "Scope".to_string());
+    };
+    let modified = buffer.is_modified();
+    let Some(window_state) = app.ui.window(active_window).and_then(Window::window_state) else {
+        return (buffer_name, modified, None, Vec::new(), "Scope".to_string());
+    };
+    let point = if window_state.selections.selections.is_empty() {
+        text::Point::new(0, 0)
+    } else {
+        window_state
+            .selections
+            .primary()
+            .head()
+            .to_point(buffer.snapshot().as_inner())
+    };
+    let cursor = Some((point.row + 1, point.column + 1));
+
+    let mut scope_path = Vec::new();
+    let mut inspect_label = "Scope".to_string();
+    if app.inspect {
+        inspect_label = match app.inspect_what {
+            crate::app::InspectKind::TreeSitter => "[treesitter]".to_string(),
+            crate::app::InspectKind::Textmate => "[textmate]".to_string(),
+            crate::app::InspectKind::Indexer => "[indexer]".to_string(),
+            crate::app::InspectKind::None => "Scope".to_string(),
+        };
+        if let Some(state) = app.model.buffer_state(buffer_id) {
+            match app.inspect_what {
+                crate::app::InspectKind::TreeSitter => {
+                    if !app.treesitter_enabled {
+                        scope_path = vec!["treesitter is not enabled".to_string()];
+                    } else if let Ok(tree) = &state.treesitter {
+                        if let Ok(offset) = buffer
+                            .snapshot()
+                            .point_to_offset(vim_buffer::Point::new(point.row, point.column))
+                        {
+                            scope_path = tree
+                                .scope_path_at_byte(offset.0)
+                                .into_iter()
+                                .filter(|node| node.named && !node.kind.is_empty())
+                                .map(|node| node.kind)
+                                .collect();
+                        }
+                    }
+                }
+                crate::app::InspectKind::Textmate => {
+                    if !app.syntax_highlight {
+                        scope_path = vec!["syntax highlight is not enabled".to_string()];
+                    } else {
+                        let file_path = buffer.path().and_then(|p| p.to_str());
+                        scope_path = state.highlights.scope_path_at_position(
+                            buffer.snapshot().as_inner(),
+                            file_path,
+                            point.row,
+                            point.column,
+                        );
+                    }
+                }
+                crate::app::InspectKind::Indexer => {
+                    if !app.indexer_enabled {
+                        scope_path = vec!["indexer is not enabled".to_string()];
+                    } else {
+                        let files_count = app.services.indexer.buffer_keywords.len();
+                        let keys_count: usize = app
+                            .services
+                            .indexer
+                            .buffer_keywords
+                            .values()
+                            .map(|row_map| row_map.values().map(|set| set.len()).sum::<usize>())
+                            .sum();
+                        scope_path = vec![format!("files: {}, keys: {}", files_count, keys_count)];
+                        if let Ok(offset) = buffer
+                            .snapshot()
+                            .point_to_offset(vim_buffer::Point::new(point.row, point.column))
+                        {
+                            let text: String = buffer.snapshot().chunks().collect();
+                            use vim_buffer::TextSearch;
+                            if let Some((_, _, word)) = text.find_word(offset.0) {
+                                let results = app.services.indexer.query(word, None);
+                                scope_path.extend(
+                                    results.iter().map(|entry| entry.keyword.clone()).take(5),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::app::InspectKind::None => {}
+            }
+        }
+    }
+
+    (buffer_name, modified, cursor, scope_path, inspect_label)
 }
 
 pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::Error>> {

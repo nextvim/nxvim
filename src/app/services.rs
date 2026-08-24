@@ -7,8 +7,11 @@ pub use vim_indexer as indexer;
 pub use vim_macros as macros;
 pub use vim_treesitter as treesitter;
 
+use crate::app::App;
+use crate::app::windows::WindowOps;
+use text::ToPoint;
 use vim_buffer::BufferId;
-use vim_ui::WindowId;
+use vim_ui::{Window, WindowId};
 
 pub type TaskId = background_worker::TaskId;
 
@@ -237,6 +240,269 @@ impl Services {
     }
 }
 
+/// Speculative idle prefetch grows the highlighted margin around the
+/// viewport gradually across repeated idle ticks instead of requesting
+/// the full margin in one shot. `highlight_run` parses any newly
+/// requested, not-yet-cached rows synchronously, so a large one-shot
+/// margin (previously up to 1000 rows before + 500 after) could stall
+/// the main loop for a visible amount of time. Ramping the margin by a
+/// bounded step every ~50ms tick keeps each synchronous parse small
+/// while still reaching full prefetch coverage within about half a
+/// second of going idle.
+pub fn schedule_state_updates(app: &mut App, idle_elapsed: Option<std::time::Duration>) {
+    const IDLE_EXPAND_STEP_BEFORE: u32 = 100;
+    const IDLE_EXPAND_STEP_AFTER: u32 = 50;
+    const IDLE_EXPAND_MAX_BEFORE: u32 = 1000;
+    const IDLE_EXPAND_MAX_AFTER: u32 = 500;
+
+    let (expand_before, expand_after) = match idle_elapsed {
+        Some(elapsed) => {
+            let ticks = elapsed.as_millis() as u32 / 50;
+            (
+                ticks
+                    .saturating_mul(IDLE_EXPAND_STEP_BEFORE)
+                    .min(IDLE_EXPAND_MAX_BEFORE),
+                ticks
+                    .saturating_mul(IDLE_EXPAND_STEP_AFTER)
+                    .min(IDLE_EXPAND_MAX_AFTER),
+            )
+        }
+        None => (0, 0),
+    };
+
+    let window_ids: Vec<_> = WindowOps::window_buffers(&app.ui)
+        .into_iter()
+        .map(|(window_id, _)| window_id)
+        .collect();
+
+    for window_id in window_ids {
+        schedule_window_display_map(app, window_id);
+        schedule_window_highlight(app, window_id, expand_before, expand_after);
+        schedule_window_treesitter(app, window_id);
+        schedule_window_indexer(app, window_id);
+    }
+}
+
+fn schedule_window_display_map(app: &mut App, window_id: vim_ui::WindowId) -> Option<()> {
+    const CHUNK_ROWS: u32 = 4_096;
+
+    let buffer_id = WindowOps::window_buffer(&app.ui, window_id)?;
+    let revision = app.model.buffer_state_mut(buffer_id)?.revision;
+    let buffer = app.model.get_buffer(buffer_id).ok()?;
+    let snapshot = buffer.snapshot().as_inner().clone();
+    let window = app.ui.window(window_id).and_then(Window::window_state)?;
+
+    if window.pending_display_map.is_some() {
+        return None;
+    }
+
+    let cursor_row = if window.selections.selections.is_empty() {
+        0
+    } else {
+        window.selections.primary().head().to_point(&snapshot).row
+    };
+
+    let requested_rows = window
+        .display_map
+        .nearest_missing_range(cursor_row, CHUNK_ROWS)?;
+    let input = window.display_map.expansion_input(requested_rows.clone())?;
+    let generation = input.generation.clone();
+    let sequence = window.sequence.clone();
+    let owner = crate::app::services::TaskOwner {
+        buffer_id: Some(buffer_id),
+        window_id: Some(window_id),
+        revision,
+    };
+
+    let task = app.services.spawn_cancellable_task(
+        "display_map",
+        sequence,
+        owner,
+        crate::app::services::TaskType::DisplayMap,
+        move |token| display_map::build_expansion(input, &token),
+    );
+
+    if task.is_some() {
+        let window_mut = app
+            .ui
+            .window_mut(window_id)
+            .and_then(Window::window_state_mut)?;
+        window_mut.pending_display_map = Some((generation, requested_rows));
+    }
+
+    Some(())
+}
+
+pub fn schedule_window_highlight(
+    app: &mut App,
+    window_id: vim_ui::WindowId,
+    expand_before: u32,
+    expand_after: u32,
+) -> Option<()> {
+    if !app.syntax_highlight {
+        return Some(());
+    }
+    let buffer_id = WindowOps::window_buffer(&app.ui, window_id)?;
+    let buffer = app.model.get_buffer(buffer_id).ok()?;
+    let snapshot = buffer.snapshot().as_inner().clone();
+    let file_path = buffer.path().and_then(|p| p.to_str()).map(str::to_owned);
+    let window = app.ui.window(window_id).and_then(Window::window_state)?;
+
+    let display_map_snapshot = window.display_map.snapshot();
+    let scroll_y = display_map_snapshot.scroll_y;
+    let viewport_height = window.viewport.height as u32;
+    let start_row = display_map_snapshot
+        .try_buffer_row_for_display_row(scroll_y)
+        .unwrap_or(0);
+    let end_row = display_map_snapshot
+        .try_buffer_row_for_display_row(
+            (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
+        )
+        .unwrap_or_else(|| display_map_snapshot.buffer_snapshot().max_point().row);
+
+    let colorscheme = app.colorscheme.as_ref();
+    let fallback_colorscheme;
+    let cs_ref = match colorscheme {
+        Some(cs) => cs,
+        None => {
+            fallback_colorscheme = vim_colorscheme::ColorScheme::load_default();
+            &fallback_colorscheme
+        }
+    };
+
+    let highlights = &mut app.model.buffer_state_mut(buffer_id)?.highlights;
+    textmate::highlight_run(
+        highlights,
+        &snapshot,
+        file_path.as_deref(),
+        start_row,
+        end_row,
+        expand_before,
+        expand_after,
+        app.highlighter.as_ref(),
+        cs_ref,
+    );
+
+    Some(())
+}
+
+fn schedule_window_treesitter(app: &mut App, window_id: vim_ui::WindowId) -> Option<()> {
+    if !app.treesitter_enabled {
+        return Some(());
+    }
+    let buffer_id = WindowOps::window_buffer(&app.ui, window_id)?;
+    let revision = app.model.buffer_state_mut(buffer_id)?.revision;
+    let buffer = app.model.get_buffer(buffer_id).ok()?;
+    let path = buffer.path()?.to_str()?;
+    let grammar = treesitter::Grammar::from_path(path)?;
+    let changedtick = buffer.changedtick();
+
+    if !app.services.treesitter.is_parsing(buffer_id)
+        && app.services.treesitter.syntax_tree(buffer_id).is_none()
+    {
+        if let Some(state) = app.model.buffer_state(buffer_id) {
+            if let Ok(syntax_tree) = &state.treesitter {
+                if syntax_tree.grammar() == grammar {
+                    app.services.treesitter.initialize_from_parsed(
+                        buffer_id,
+                        changedtick,
+                        grammar,
+                        syntax_tree.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    if !app
+        .services
+        .treesitter
+        .should_parse(buffer_id, changedtick, grammar)
+    {
+        return None;
+    }
+
+    let sequence = app
+        .services
+        .treesitter
+        .begin_parse(buffer_id, changedtick, grammar);
+    let snapshot = buffer.snapshot().clone();
+    let owner = crate::app::services::TaskOwner {
+        buffer_id: Some(buffer_id),
+        window_id: Some(window_id),
+        revision,
+    };
+
+    let old_tree = app.services.treesitter.syntax_tree(buffer_id).cloned();
+    let task_id = app.services.spawn_cancellable_task(
+        "treesitter",
+        sequence,
+        owner,
+        crate::app::services::TaskType::Treesitter,
+        move |token| {
+            let cancelled = move || token.is_cancelled();
+            let res =
+                treesitter::parse_snapshot_cancellable(snapshot, grammar, old_tree, cancelled);
+            Some(res)
+        },
+    )?;
+
+    app.services.treesitter.set_pending_task(buffer_id, task_id);
+    Some(())
+}
+
+fn schedule_window_indexer(app: &mut App, window_id: vim_ui::WindowId) -> Option<()> {
+    if !app.indexer_enabled {
+        return Some(());
+    }
+    let buffer_id = WindowOps::window_buffer(&app.ui, window_id)?;
+    let revision = app.model.buffer_state_mut(buffer_id)?.revision;
+    let buffer = app.model.get_buffer(buffer_id).ok()?;
+    let changedtick = buffer.changedtick();
+
+    if app.services.indexer.should_index(buffer_id, changedtick) {
+        if let Some(state) = app.model.buffer_state(buffer_id) {
+            if let Ok(index_result) = &state.index {
+                if index_result.changedtick == changedtick {
+                    app.services.indexer.initialize_from_indexed(
+                        buffer_id,
+                        changedtick,
+                        index_result.source_key.clone(),
+                        index_result.keywords.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    if !app.services.indexer.should_index(buffer_id, changedtick) {
+        return None;
+    }
+
+    let sequence = app.services.indexer.begin_index(buffer_id, changedtick);
+    let snapshot = buffer.snapshot().clone();
+    let source_key = buffer.path()?.to_string_lossy().into_owned();
+    let owner = crate::app::services::TaskOwner {
+        buffer_id: Some(buffer_id),
+        window_id: Some(window_id),
+        revision,
+    };
+
+    let task_id = app.services.spawn_cancellable_task(
+        "indexer",
+        sequence,
+        owner,
+        crate::app::services::TaskType::Indexer,
+        move |token| {
+            let cancelled = move || token.is_cancelled();
+            indexer::index_buffer_cancellable(source_key, snapshot, cancelled)
+        },
+    )?;
+
+    app.services.indexer.set_pending_task(buffer_id, task_id);
+    Some(())
+}
+
 impl Default for Services {
     fn default() -> Self {
         Self::new()
@@ -249,7 +515,6 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::time::{Duration, Instant};
-    use vim_buffer::BufferId;
     use vim_ui::WindowId;
 
     #[test]
