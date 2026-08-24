@@ -15,6 +15,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "save" | "write" | "update" => files(request),
         "edit" | "enew" | "view" | "visual" | "ex" => edit(request),
         "hsplit" | "vsplit" => split(request),
+        "new" | "vnew" => split_new(request),
         "saveas" => saveas(request),
         "qall" | "quitall" => qall(request),
         "cquit" => cquit(request),
@@ -212,6 +213,12 @@ fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
         }),
         _ => unreachable!(),
     }
+}
+
+fn split_new(request: CommandRequest) -> Result<Command, RuntimeError> {
+    Ok(Command::SplitNew {
+        vertical: request.command.name == "vnew",
+    })
 }
 
 fn colorscheme(request: CommandRequest) -> Result<Command, RuntimeError> {

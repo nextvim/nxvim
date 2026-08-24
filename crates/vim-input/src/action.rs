@@ -341,6 +341,9 @@ pub enum Action {
     ScrollLineUp {
         count: u32,
     },
+    CenterCursorLine,
+    CursorLineTop,
+    CursorLineBottom,
 
     MoveToColumn {
         count: u32,
@@ -459,6 +462,7 @@ pub enum Action {
         count: u32,
     },
     InsertText(String),
+    InsertRegister,
     InsertNewLineMotion {
         count: u32,
         motion: Box<Action>,
@@ -580,6 +584,9 @@ impl std::fmt::Display for Action {
             Action::ScrollHalfPageUp { count } => write!(f, "ScrollHalfPageUp({})", count),
             Action::ScrollLineDown { count } => write!(f, "ScrollLineDown({})", count),
             Action::ScrollLineUp { count } => write!(f, "ScrollLineUp({})", count),
+            Action::CenterCursorLine => write!(f, "CenterCursorLine"),
+            Action::CursorLineTop => write!(f, "CursorLineTop"),
+            Action::CursorLineBottom => write!(f, "CursorLineBottom"),
             Action::MoveToColumn { count } => write!(f, "MoveToColumn({})", count),
             Action::SearchForward { count } => write!(f, "SearchForward {}", count),
             Action::SearchBackward { count } => write!(f, "SearchBackward {}", count),
@@ -684,6 +691,7 @@ impl std::fmt::Display for Action {
             Action::SetToOpenLineAbove { count } => write!(f, "SetOpenLineAbove({})", count),
             Action::InsertNewLine { count } => write!(f, "InsertNewLine({})", count),
             Action::InsertText(s) => write!(f, "InsertText({})", s),
+            Action::InsertRegister => write!(f, "InsertRegister"),
             Action::InsertNewLineMotion { count, motion } => {
                 write!(f, "InsertNewLineMotion({}, {})", count, motion)
             }
@@ -1037,6 +1045,9 @@ impl Action {
             Action::ScrollHalfPageUp { .. } => Action::ScrollHalfPageUp { count },
             Action::ScrollLineDown { .. } => Action::ScrollLineDown { count },
             Action::ScrollLineUp { .. } => Action::ScrollLineUp { count },
+            Action::CenterCursorLine => Action::CenterCursorLine,
+            Action::CursorLineTop => Action::CursorLineTop,
+            Action::CursorLineBottom => Action::CursorLineBottom,
             Action::MoveToColumn { .. } => Action::MoveToColumn { count },
             Action::SearchForward { .. } => Action::SearchForward { count },
             Action::SearchBackward { .. } => Action::SearchBackward { count },
@@ -1108,6 +1119,7 @@ impl Action {
             Action::SetToOpenLineAbove { .. } => Action::SetToOpenLineAbove { count },
             Action::InsertNewLine { .. } => Action::InsertNewLine { count },
             Action::InsertText(s) => Action::InsertText(s),
+            Action::InsertRegister => Action::InsertRegister,
             Action::InsertNewLineMotion { motion, .. } => {
                 Action::InsertNewLineMotion { count, motion }
             }

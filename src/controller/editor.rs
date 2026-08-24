@@ -1460,6 +1460,43 @@ impl Editor {
                     buffer.as_text_buffer(),
                 );
             }
+            Action::CenterCursorLine | Action::CursorLineTop | Action::CursorLineBottom => {
+                let cursor = buffer_display_context
+                    .selections
+                    .first()
+                    .map(|selection| selection.head().to_point(buffer.as_text_buffer()));
+                let Some(cursor) = cursor else {
+                    return next_mode;
+                };
+
+                let display_cursor = buffer_display_context
+                    .display_map
+                    .snapshot()
+                    .point_to_display_point(cursor);
+                let viewport = buffer_display_context.viewport;
+                buffer_display_context.display_map.scroll_to_cursor(
+                    display_cursor,
+                    viewport.height as i32,
+                    viewport.width as i32,
+                );
+
+                let snapshot = buffer_display_context.display_map.snapshot();
+                let visible_rows = snapshot.visible_rows;
+                if visible_rows > 0 {
+                    let desired_scroll = match action {
+                        Action::CenterCursorLine => {
+                            display_cursor.row().saturating_sub(visible_rows / 2)
+                        }
+                        Action::CursorLineTop => display_cursor.row(),
+                        Action::CursorLineBottom => display_cursor
+                            .row()
+                            .saturating_sub(visible_rows.saturating_sub(1)),
+                        _ => unreachable!(),
+                    };
+                    let max_scroll = snapshot.row_count().saturating_sub(visible_rows);
+                    buffer_display_context.display_map.scroll_y = desired_scroll.min(max_scroll);
+                }
+            }
             Action::MoveToScreenTop { select, .. } => {
                 let display_snapshot = buffer_display_context.display_map.snapshot();
                 let target_point = display_snapshot
@@ -1509,6 +1546,18 @@ impl Editor {
                     mode == Mode::Replace,
                 );
             }
+            Action::InsertRegister => {
+                let (text, _) = services.clipboard.read();
+                if !text.is_empty() {
+                    self.insert_text(
+                        buffer,
+                        &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
+                        &text,
+                        false,
+                    );
+                }
+            }
             Action::DeleteChar { count } | Action::Delete { count } => {
                 if *count > 1
                     && buffer_display_context
@@ -1549,7 +1598,7 @@ impl Editor {
                         .chunks_in_range(head_offset..end_offset)
                         .collect()
                 };
-                services.clipboard.set_text(&text);
+                services.clipboard.set_delete_text(&text);
 
                 if self.delete_text(
                     buffer,
@@ -1620,7 +1669,7 @@ impl Editor {
                         .chunks_in_range(start_offset..head_offset)
                         .collect()
                 };
-                services.clipboard.set_text(&text);
+                services.clipboard.set_delete_text(&text);
 
                 if self.delete_text(
                     buffer,
@@ -1782,7 +1831,7 @@ impl Editor {
                     .as_rope()
                     .chunks_in_range(start_offset..end_offset)
                     .collect();
-                services.clipboard.set_lines(text);
+                services.clipboard.set_delete_lines(text);
 
                 remove_overlapping_folds(
                     &mut buffer_display_context.folds,
@@ -1826,7 +1875,7 @@ impl Editor {
                     .as_rope()
                     .chunks_in_range(start_offset..end_offset)
                     .collect();
-                services.clipboard.set_lines(text);
+                services.clipboard.set_yank_lines(text);
             }
             Action::PutLines { line, before } => {
                 if services.clipboard.is_empty() {
@@ -1902,7 +1951,7 @@ impl Editor {
                 if !text.ends_with('\n') {
                     text.push('\n');
                 }
-                services.clipboard.set_lines(text);
+                services.clipboard.set_delete_lines(text);
 
                 buffer_display_context.selections.selections = selections;
                 buffer_display_context.selections.point = point;
@@ -2074,7 +2123,7 @@ impl Editor {
                     let text = buffer_display_context
                         .selections
                         .text(buffer.as_text_buffer());
-                    services.clipboard.set_text(text);
+                    services.clipboard.set_delete_text(text);
 
                     buffer_display_context.selections.selections = selections;
                     buffer_display_context.selections.point = point;
@@ -2145,7 +2194,7 @@ impl Editor {
                     .selections
                     .text(buffer.as_text_buffer());
                 if !text.is_empty() {
-                    services.clipboard.set_text(text);
+                    services.clipboard.set_delete_text(text);
                 }
                 self.delete_text(
                     buffer,
@@ -2159,7 +2208,7 @@ impl Editor {
                     .selections
                     .text(buffer.as_text_buffer());
                 if !text.is_empty() {
-                    services.clipboard.set_text(text);
+                    services.clipboard.set_delete_text(text);
                 }
                 self.delete_text(
                     buffer,
@@ -2552,7 +2601,7 @@ impl Editor {
         let text = buffer_display_context
             .selections
             .text(buffer.as_text_buffer());
-        services.clipboard.set_text(text);
+        services.clipboard.set_yank_text(text);
 
         buffer_display_context.selections.selections = selections;
         buffer_display_context.selections.point = point;
@@ -2580,7 +2629,7 @@ impl Editor {
         if !text.ends_with('\n') {
             text.push('\n');
         }
-        services.clipboard.set_lines(text);
+        services.clipboard.set_yank_lines(text);
 
         selections.selections = original_selections;
         selections.point = point;
@@ -2608,22 +2657,61 @@ impl Editor {
                 }
             }
             vim_clipboard::ClipboardKind::Line => {
-                let cursor_row = selections
-                    .first()
-                    .unwrap()
-                    .head()
-                    .to_point(buffer.as_text_buffer())
-                    .row;
-                let has_next_line = cursor_row + 1 < buffer.as_text_buffer().row_count();
-                if has_next_line {
-                    selections.move_to_start_of_next_line(false, buffer.as_text_buffer());
+                let cursor = selections.first().unwrap().clone();
+                let cursor_row = cursor.head().to_point(buffer.as_text_buffer()).row;
+                let insertion_row = cursor_row + 1;
+                let has_next_line = insertion_row < buffer.as_text_buffer().row_count();
+                let insertion_offset = if has_next_line {
+                    Point::new(insertion_row, 0).to_offset(buffer.as_text_buffer())
                 } else {
-                    selections.move_to_end_of_line(false, buffer.as_text_buffer());
-                    self.insert_text(buffer, selections, folds, &self.new_line(buffer), false);
+                    Point::new(cursor_row, buffer.as_text_buffer().line_len(cursor_row))
+                        .to_offset(buffer.as_text_buffer())
+                };
+
+                let mut line_text = text;
+                if !line_text.ends_with('\n') {
+                    line_text.push_str(&self.new_line(buffer));
+                }
+                let pasted_rows = line_text.bytes().filter(|byte| *byte == b'\n').count() as u32;
+                let mut payload = String::new();
+                if !has_next_line {
+                    payload.push_str(&self.new_line(buffer));
                 }
                 for _ in 0..count {
-                    self.insert_text(buffer, selections, folds, &text, false);
+                    payload.push_str(&line_text);
                 }
+
+                let insertion_anchor = buffer
+                    .as_text_buffer()
+                    .anchor_at(insertion_offset, Bias::Left);
+                selections.update(
+                    buffer.as_text_buffer(),
+                    &Selection {
+                        id: cursor.id,
+                        start: insertion_anchor,
+                        end: insertion_anchor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    },
+                );
+                self.insert_text(buffer, selections, folds, &payload, false);
+
+                // Set the cursor from the known insertion row rather than
+                // navigating back across the result. Motions can traverse
+                // adjacent empty rows and land beyond the pasted text.
+                let target_row = insertion_row + pasted_rows.saturating_mul(count) - 1;
+                let target_offset = Point::new(target_row, 0).to_offset(buffer.as_text_buffer());
+                let target = buffer.as_text_buffer().anchor_at(target_offset, Bias::Left);
+                selections.update(
+                    buffer.as_text_buffer(),
+                    &Selection {
+                        id: cursor.id,
+                        start: target,
+                        end: target,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    },
+                );
             }
         }
     }
@@ -3360,7 +3448,102 @@ mod tests {
     }
 
     #[test]
-    fn debug_put_lines_isolated() {
+    fn yank_and_delete_actions_update_numbered_registers() {
+        let mut buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "one\ntwo\nthree",
+        );
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+        let editor = Editor::new();
+
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::YankLine { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+        window_state
+            .selections
+            .move_down(false, 1, buffer.as_text_buffer());
+        editor
+            .execute(
+                Mode::Normal,
+                &Action::DeleteLine { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        assert_eq!(
+            services
+                .clipboard
+                .registers
+                .get(vim_clipboard::RegisterName::Numbered(0))
+                .unwrap()
+                .text(),
+            "one\n"
+        );
+        assert_eq!(
+            services
+                .clipboard
+                .registers
+                .get(vim_clipboard::RegisterName::Numbered(1))
+                .unwrap()
+                .text(),
+            "two\n"
+        );
+    }
+
+    #[test]
+    fn linewise_put_on_empty_line_does_not_cross_following_empty_lines() {
+        let mut buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "top\n\n\nbottom",
+        );
+        let mut buffer_context = BufferState::unloaded();
+        let mut window_state = WindowState::new(&buffer, Viewport::default());
+        let mut services = Services::new();
+        services.clipboard.set_lines("pasted\n");
+        window_state.selections.selections.clear();
+        let empty_line = Point::new(1, 0).to_offset(buffer.as_text_buffer());
+        window_state
+            .selections
+            .add(buffer.as_text_buffer(), empty_line);
+
+        Editor::new()
+            .execute(
+                Mode::Normal,
+                &Action::Put { count: 1 },
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        assert_eq!(buffer.as_text_buffer().text(), "top\n\npasted\n\nbottom");
+        assert_eq!(
+            window_state
+                .selections
+                .primary()
+                .head()
+                .to_point(buffer.as_text_buffer()),
+            Point::new(2, 0)
+        );
+    }
+
+    #[test]
+    fn linewise_put_at_end_keeps_cursor_on_inserted_line() {
         let mut buffer = Buffer::new(
             BufferId::new(1).unwrap(),
             ReplicaId::LOCAL,
@@ -3386,7 +3569,15 @@ mod tests {
             )
             .expect("action applies without panicking");
 
-        eprintln!("RESULT: {:?}", buffer.as_text_buffer().text());
+        assert_eq!(buffer.as_text_buffer().text(), "one\ntwo\nthree\none\n");
+        assert_eq!(
+            window_state
+                .selections
+                .primary()
+                .head()
+                .to_point(buffer.as_text_buffer()),
+            Point::new(3, 0)
+        );
     }
 
     #[test]

@@ -672,6 +672,16 @@ impl Keymap {
             .expect("Valid binding");
 
         normal_actions
+            .bind("zz", Action::CenterCursorLine)
+            .expect("Valid binding");
+        normal_actions
+            .bind("zt", Action::CursorLineTop)
+            .expect("Valid binding");
+        normal_actions
+            .bind("zb", Action::CursorLineBottom)
+            .expect("Valid binding");
+
+        normal_actions
             .bind("gt", Action::NextTab { count: 1 })
             .expect("Valid binding");
         normal_actions

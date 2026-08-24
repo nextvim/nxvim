@@ -68,6 +68,7 @@ pub struct Resolver {
     operator_count: u32,
     register: Option<char>,
     waiting_for_register: bool,
+    waiting_for_insert_register: bool,
     in_recording: bool,
 }
 
@@ -88,6 +89,7 @@ impl Resolver {
             operator_count: 1,
             register: None,
             waiting_for_register: false,
+            waiting_for_insert_register: false,
             in_recording: false,
         }
     }
@@ -114,6 +116,7 @@ impl Resolver {
             || !self.keys.is_empty()
             || self.pending_operator.is_some()
             || self.waiting_for_register
+            || self.waiting_for_insert_register
     }
 
     pub fn pending(&self) -> PendingInput<'_> {
@@ -133,6 +136,7 @@ impl Resolver {
         self.operator_count = 1;
         self.register = None;
         self.waiting_for_register = false;
+        self.waiting_for_insert_register = false;
     }
 
     pub fn feed(&mut self, key: Key, keymap: &Keymap) -> ResolveOutcome {
@@ -197,6 +201,32 @@ impl Resolver {
     }
 
     fn feed_insert(&mut self, key: Key, keymap: &Keymap) -> ResolveOutcome {
+        if self.waiting_for_insert_register {
+            self.waiting_for_insert_register = false;
+            if let KeyCode::Char(
+                register @ ('"'
+                | '-'
+                | '_'
+                | '0'..='9'
+                | 'a'..='z'
+                | 'A'..='Z'
+                | '*'
+                | '+'
+                | '/'
+                | ':'),
+            ) = key.code
+            {
+                self.register = Some(register);
+                return self.emit(Action::InsertRegister);
+            }
+            return self.invalid([key]);
+        }
+
+        if key == Key::parse("C-r").expect("valid insert-register key") {
+            self.waiting_for_insert_register = true;
+            return ResolveOutcome::Pending;
+        }
+
         self.keys.push(key);
         match match_map(&self.keys, keymap.bindings(BindingContext::Insert)) {
             Match::Complete(action) => {
@@ -559,6 +589,21 @@ mod tests {
         let action = resolved(resolver.feed(Key::char('p'), &map));
         assert_eq!(action.register, Some('a'));
         assert_eq!(action.action, Action::Put { count: 1 });
+    }
+
+    #[test]
+    fn resolves_insert_mode_register_insertion() {
+        let map = Keymap::vim_defaults();
+        let mut resolver = Resolver::new(Mode::Insert);
+
+        assert_eq!(
+            resolver.feed(Key::parse("C-r").unwrap(), &map),
+            ResolveOutcome::Pending
+        );
+        let action = resolved(resolver.feed(Key::char('+'), &map));
+        assert_eq!(action.action, Action::InsertRegister);
+        assert_eq!(action.register, Some('+'));
+        assert_eq!(resolver.mode(), Mode::Insert);
     }
 
     #[test]

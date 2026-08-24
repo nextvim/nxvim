@@ -1,3 +1,120 @@
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+fn clipboard_commands(
+    register: RegisterName,
+    write: bool,
+) -> Vec<(&'static str, Vec<&'static str>)> {
+    let primary = register == RegisterName::Selection;
+
+    #[cfg(target_os = "linux")]
+    {
+        if write {
+            vec![
+                ("wl-copy", if primary { vec!["--primary"] } else { vec![] }),
+                (
+                    "xclip",
+                    vec!["-selection", if primary { "primary" } else { "clipboard" }],
+                ),
+                (
+                    "xsel",
+                    vec![if primary { "--primary" } else { "--clipboard" }, "--input"],
+                ),
+            ]
+        } else {
+            vec![
+                (
+                    "wl-paste",
+                    if primary {
+                        vec!["--primary", "--no-newline"]
+                    } else {
+                        vec!["--no-newline"]
+                    },
+                ),
+                (
+                    "xclip",
+                    vec![
+                        "-selection",
+                        if primary { "primary" } else { "clipboard" },
+                        "-out",
+                    ],
+                ),
+                (
+                    "xsel",
+                    vec![
+                        if primary { "--primary" } else { "--clipboard" },
+                        "--output",
+                    ],
+                ),
+            ]
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = primary;
+        vec![(if write { "pbcopy" } else { "pbpaste" }, vec![])]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = primary;
+        vec![(
+            "powershell",
+            if write {
+                vec![
+                    "-NoProfile",
+                    "-Command",
+                    "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+                ]
+            } else {
+                vec!["-NoProfile", "-Command", "Get-Clipboard -Raw"]
+            },
+        )]
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (primary, write);
+        vec![]
+    }
+}
+
+fn write_system_clipboard(register: RegisterName, text: &str) -> bool {
+    for (program, args) in clipboard_commands(register, true) {
+        let Ok(mut child) = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+        if child
+            .stdin
+            .take()
+            .and_then(|mut stdin| stdin.write_all(text.as_bytes()).ok())
+            .is_some()
+            && child.wait().is_ok_and(|status| status.success())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn read_system_clipboard(register: RegisterName) -> Option<String> {
+    clipboard_commands(register, false)
+        .into_iter()
+        .find_map(|(program, args)| {
+            Command::new(program)
+                .args(args)
+                .stderr(Stdio::null())
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+        })
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ClipboardKind {
     #[default]
@@ -25,18 +142,35 @@ impl Clipboard {
         self.current_register.set(RegisterName::Unnamed);
     }
 
-    pub fn set(&mut self, text: impl Into<String>, kind: ClipboardKind) {
-        let curr = self.current_register.get();
-        if curr == RegisterName::BlackHole {
-            // The black-hole register discards whatever is written to it and
-            // never affects the unnamed/numbered registers.
-            self.current_register.set(RegisterName::Unnamed);
-            return;
-        }
-        let reg = Register::new(vec![text.into()], kind);
-        self.registers.set(curr, reg.clone());
-        self.registers.push_numbered(reg);
+    fn write_selected(&mut self, reg: Register) -> bool {
+        let selected = self.current_register.get();
         self.current_register.set(RegisterName::Unnamed);
+        if selected == RegisterName::BlackHole {
+            return false;
+        }
+        if matches!(selected, RegisterName::System | RegisterName::Selection) {
+            write_system_clipboard(selected, &reg.text());
+        }
+        if selected != RegisterName::Unnamed {
+            self.registers.set(selected, reg.clone());
+        }
+        self.registers.set(RegisterName::Unnamed, reg);
+        true
+    }
+
+    fn selected_register(&self) -> Option<Register> {
+        let selected = self.current_register.get();
+        let stored = self.registers.get(selected).cloned().unwrap_or_default();
+        if matches!(selected, RegisterName::System | RegisterName::Selection) {
+            if let Some(text) = read_system_clipboard(selected) {
+                return Some(Register::new(vec![text], stored.kind));
+            }
+        }
+        self.registers.get(selected).cloned()
+    }
+
+    pub fn set(&mut self, text: impl Into<String>, kind: ClipboardKind) {
+        self.write_selected(Register::new(vec![text.into()], kind));
     }
 
     pub fn set_text(&mut self, text: impl Into<String>) {
@@ -47,15 +181,48 @@ impl Clipboard {
         self.set(text, ClipboardKind::Line);
     }
 
+    pub fn set_yank(&mut self, text: impl Into<String>, kind: ClipboardKind) {
+        let reg = Register::new(vec![text.into()], kind);
+        if self.write_selected(reg.clone()) {
+            self.registers.set(RegisterName::Numbered(0), reg);
+        }
+    }
+
+    pub fn set_yank_text(&mut self, text: impl Into<String>) {
+        self.set_yank(text, ClipboardKind::Character);
+    }
+
+    pub fn set_yank_lines(&mut self, text: impl Into<String>) {
+        self.set_yank(text, ClipboardKind::Line);
+    }
+
+    pub fn set_delete(&mut self, text: impl Into<String>, kind: ClipboardKind) {
+        let reg = Register::new(vec![text.into()], kind);
+        if !self.write_selected(reg.clone()) {
+            return;
+        }
+        if kind == ClipboardKind::Line || reg.text().contains('\n') {
+            self.registers.push_delete(reg);
+        } else {
+            self.registers.set(RegisterName::SmallDelete, reg);
+        }
+    }
+
+    pub fn set_delete_text(&mut self, text: impl Into<String>) {
+        self.set_delete(text, ClipboardKind::Character);
+    }
+
+    pub fn set_delete_lines(&mut self, text: impl Into<String>) {
+        self.set_delete(text, ClipboardKind::Line);
+    }
+
     pub fn set_block(&mut self, text: impl Into<String>) {
         self.set(text, ClipboardKind::Block);
     }
 
     pub fn text(&self) -> String {
-        let curr = self.current_register.get();
         let res = self
-            .registers
-            .get(curr)
+            .selected_register()
             .map(|r| r.text())
             .unwrap_or_default();
         self.current_register.set(RegisterName::Unnamed);
@@ -75,17 +242,15 @@ impl Clipboard {
     /// Unlike `take`, this does not clear the register's contents: a paste
     /// should be repeatable, not one-shot.
     pub fn read(&self) -> (String, ClipboardKind) {
-        let curr = self.current_register.get();
-        let reg = self.registers.get(curr);
-        let text = reg.map(|r| r.text()).unwrap_or_default();
-        let kind = reg.map(|r| r.kind).unwrap_or_default();
+        let reg = self.selected_register();
+        let text = reg.as_ref().map(|r| r.text()).unwrap_or_default();
+        let kind = reg.as_ref().map(|r| r.kind).unwrap_or_default();
         self.current_register.set(RegisterName::Unnamed);
         (text, kind)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.registers
-            .get(self.current_register.get())
+        self.selected_register()
             .map(|r| r.is_empty())
             .unwrap_or(true)
     }
@@ -265,9 +430,11 @@ impl Registers {
         }
     }
 
-    pub fn push_numbered(&mut self, reg: Register) {
-        self.numbered.insert(0, reg);
-        self.numbered.truncate(10);
+    pub fn push_delete(&mut self, reg: Register) {
+        for index in (2..=9).rev() {
+            self.numbered[index] = self.numbered[index - 1].clone();
+        }
+        self.numbered[1] = reg;
     }
 }
 
@@ -334,31 +501,59 @@ mod tests {
     }
 
     #[test]
-    fn register_fifo() {
+    fn yank_and_delete_use_vim_numbered_registers() {
         let mut clipboard = Clipboard::new();
-        // Set values repeatedly
-        for i in 0..12 {
-            clipboard.set_text(format!("val{}", i));
-        }
+        clipboard.set_yank_lines("yanked\n");
+        clipboard.set_delete_lines("first delete\n");
+        clipboard.set_delete_lines("second delete\n");
 
-        // 12 items were set. The FIFO should retain the last 10 (val2 to val11).
-        // Since push_numbered inserts at 0, the most recent "val11" should be at index 0,
-        // "val10" at index 1, ..., and "val2" at index 9.
         assert_eq!(
             clipboard
                 .registers
                 .get(RegisterName::Numbered(0))
                 .unwrap()
                 .text(),
-            "val11"
+            "yanked\n"
         );
         assert_eq!(
             clipboard
                 .registers
-                .get(RegisterName::Numbered(9))
+                .get(RegisterName::Numbered(1))
                 .unwrap()
                 .text(),
-            "val2"
+            "second delete\n"
+        );
+        assert_eq!(
+            clipboard
+                .registers
+                .get(RegisterName::Numbered(2))
+                .unwrap()
+                .text(),
+            "first delete\n"
+        );
+    }
+
+    #[test]
+    fn small_delete_does_not_rotate_numbered_delete_registers() {
+        let mut clipboard = Clipboard::new();
+        clipboard.set_delete_lines("whole line\n");
+        clipboard.set_delete_text("x");
+
+        assert_eq!(
+            clipboard
+                .registers
+                .get(RegisterName::Numbered(1))
+                .unwrap()
+                .text(),
+            "whole line\n"
+        );
+        assert_eq!(
+            clipboard
+                .registers
+                .get(RegisterName::SmallDelete)
+                .unwrap()
+                .text(),
+            "x"
         );
     }
 
@@ -379,9 +574,9 @@ mod tests {
         // text() internally resets current_register to Unnamed.
         assert_eq!(clipboard.current_register.get(), RegisterName::Unnamed);
 
-        // Unnamed should still be empty
+        // Explicit-register writes also update Vim's unnamed register.
         clipboard.grab(RegisterName::Unnamed);
-        assert!(clipboard.is_empty());
+        assert_eq!(clipboard.text(), "grabbed");
 
         // Go back and release
         clipboard.grab(RegisterName::Named('c'));

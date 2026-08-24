@@ -1,4 +1,4 @@
-use crate::search::{TextSearch, compile};
+use crate::search::TextSearch;
 use std::cmp::Ordering;
 use sum_tree::Bias;
 use text::{Anchor, Buffer, Point, Selection, SelectionGoal, ToOffset, ToPoint};
@@ -24,6 +24,34 @@ fn previous_char_boundary(text: &str, offset: usize) -> usize {
         .char_indices()
         .next_back()
         .map_or(0, |(index, _)| index)
+}
+
+/// Returns the starts of sentences following a word-ending period on `row`.
+/// A period at the end of a line starts the next sentence on the following row.
+fn sentence_starts(buffer: &Buffer, row: u32) -> Vec<Point> {
+    let text = buffer.row_text(row);
+    let mut starts = Vec::new();
+
+    for (period, ch) in text.char_indices() {
+        if ch != '.' || period == 0 {
+            continue;
+        }
+        let Some(previous) = text[..period].chars().next_back() else {
+            continue;
+        };
+        if !(previous.is_alphanumeric() || previous == '_') {
+            continue;
+        }
+
+        let after_period = period + ch.len_utf8();
+        if after_period == text.len() {
+            starts.push(Point::new(row + 1, 0));
+        } else if text[after_period..].starts_with(' ') {
+            starts.push(Point::new(row, (after_period + 1) as u32));
+        }
+    }
+
+    starts
 }
 
 impl BufferText for Buffer {
@@ -707,53 +735,31 @@ impl Motions for Selection<Anchor> {
     fn move_to_previous_sentence(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor> {
         let point = self.head().to_point(buffer);
 
-        // A sentence ends with a word immediately followed by a period and a
-        // space (`\b\w+\. `). An empty line is also treated as a sentence
+        // A sentence ends with a word-ending period followed by a space.
+        // An empty line is also treated as a sentence
         // boundary, the same way it terminates a paragraph. Every candidate
         // boundary is compared directly against the original point, so a
         // boundary is only used if it's strictly before where we started.
-        let target_point = compile(r"\b\w+\. ")
-            .and_then(|sentence_end| {
-                let mut row = point.row;
+        let mut row = point.row;
+        let target_point = loop {
+            let candidate = if buffer.line_len(row) == 0 {
+                let candidate = Point::new(row + 1, 0);
+                (candidate < point).then_some(candidate)
+            } else {
+                sentence_starts(buffer, row)
+                    .into_iter()
+                    .rev()
+                    .find(|candidate| *candidate < point)
+            };
 
-                loop {
-                    if buffer.line_len(row) == 0 {
-                        let candidate = Point::new(row + 1, 0);
-                        if candidate < point {
-                            break Some(candidate);
-                        }
-                    } else {
-                        let text = buffer.row_text(row) + " ";
-                        let real_len = buffer.line_len(row) as usize;
-
-                        let candidate = text
-                            .as_str()
-                            .find_pattern(&sentence_end)
-                            .into_iter()
-                            .rev()
-                            .filter_map(|(start, len, _)| {
-                                let end = start + len;
-                                let target = if end > real_len {
-                                    Point::new(row + 1, 0)
-                                } else {
-                                    Point::new(row, end as u32)
-                                };
-                                (target < point).then_some(target)
-                            })
-                            .next();
-
-                        if let Some(candidate) = candidate {
-                            break Some(candidate);
-                        }
-                    }
-
-                    if row == 0 {
-                        break None;
-                    }
-                    row -= 1;
-                }
-            })
-            .unwrap_or(Point::new(0, 0));
+            if let Some(candidate) = candidate {
+                break candidate;
+            }
+            if row == 0 {
+                break Point::new(0, 0);
+            }
+            row -= 1;
+        };
 
         let mut offset = target_point.to_offset(buffer);
         offset = buffer.clip_offset(offset, Bias::Right);
@@ -771,52 +777,30 @@ impl Motions for Selection<Anchor> {
         let point = self.head().to_point(buffer);
 
         // Mirrors `move_to_previous_sentence`, scanning forward instead of
-        // backward: a sentence boundary is a word immediately followed by a
-        // period and a space (`\b\w+\. `), or an empty line. Every candidate
+        // backward: a sentence boundary is a word-ending period followed by
+        // a space, or an empty line. Every candidate
         // boundary is compared directly against the original point, so a
         // boundary is only used if it's strictly after where we started.
-        let target_point = compile(r"\b\w+\. ")
-            .and_then(|sentence_end| {
-                let mut row = point.row;
+        let mut row = point.row;
+        let target_point = loop {
+            if row >= buffer.row_count() {
+                break Point::new(buffer.row_count(), 0);
+            }
 
-                loop {
-                    if row >= buffer.row_count() {
-                        break None;
-                    }
+            let candidate = if buffer.line_len(row) == 0 {
+                let candidate = Point::new(row + 1, 0);
+                (candidate > point).then_some(candidate)
+            } else {
+                sentence_starts(buffer, row)
+                    .into_iter()
+                    .find(|candidate| *candidate > point)
+            };
 
-                    if buffer.line_len(row) == 0 {
-                        let candidate = Point::new(row + 1, 0);
-                        if candidate > point {
-                            break Some(candidate);
-                        }
-                    } else {
-                        let text = buffer.row_text(row) + " ";
-                        let real_len = buffer.line_len(row) as usize;
-
-                        let candidate = text
-                            .as_str()
-                            .find_pattern(&sentence_end)
-                            .into_iter()
-                            .filter_map(|(start, len, _)| {
-                                let end = start + len;
-                                let target = if end > real_len {
-                                    Point::new(row + 1, 0)
-                                } else {
-                                    Point::new(row, end as u32)
-                                };
-                                (target > point).then_some(target)
-                            })
-                            .next();
-
-                        if let Some(candidate) = candidate {
-                            break Some(candidate);
-                        }
-                    }
-
-                    row += 1;
-                }
-            })
-            .unwrap_or(Point::new(buffer.row_count(), 0));
+            if let Some(candidate) = candidate {
+                break candidate;
+            }
+            row += 1;
+        };
 
         let offset = target_point.to_offset(buffer);
         let new_head = buffer.anchor_at(offset, Bias::Left);

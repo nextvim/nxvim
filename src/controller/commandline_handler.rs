@@ -22,7 +22,10 @@ impl CommandlineHandler {
                 | Action::Clear
                 | Action::InsertNewLine { .. }
         ) || (active_window == commandline_window
-            && matches!(action, Action::MoveUp { .. } | Action::MoveDown { .. }))
+            && matches!(
+                action,
+                Action::MoveUp { .. } | Action::MoveDown { .. } | Action::DeleteCharBefore { .. }
+            ))
     }
 
     pub fn execute(
@@ -114,6 +117,17 @@ impl CommandlineHandler {
                 outcome
             }
             Action::Clear if active_window == view_ids.commandline => {
+                model.search_pattern = None;
+                model.search_regex = None;
+                model.search_range = None;
+                model.substitute_text = None;
+                CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
+            }
+            Action::DeleteCharBefore { .. }
+                if active_window == view_ids.commandline
+                    && Self::get_commandline_text(model).is_some_and(|text| text.is_empty()) =>
+            {
+                input.set_mode(Mode::Normal);
                 model.search_pattern = None;
                 model.search_regex = None;
                 model.search_range = None;

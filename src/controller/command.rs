@@ -26,6 +26,9 @@ pub enum Command {
         path: Option<PathBuf>,
         force: bool,
     },
+    SplitNew {
+        vertical: bool,
+    },
     WriteQuit {
         path: Option<PathBuf>,
         force: bool,
@@ -99,6 +102,10 @@ impl std::fmt::Debug for Command {
                 .debug_struct("Edit")
                 .field("path", path)
                 .field("force", force)
+                .finish(),
+            Command::SplitNew { vertical } => f
+                .debug_struct("SplitNew")
+                .field("vertical", vertical)
                 .finish(),
             Command::WriteQuit { path, force } => f
                 .debug_struct("WriteQuit")

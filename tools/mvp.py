@@ -23,6 +23,25 @@ def main():
         return
 
     percentage = (checked / total) * 100
+    completion_line = (
+        f"**Estimated Completion: {percentage:.1f}%** "
+        f"({checked} / {total} checklist items completed)"
+    )
+    updated_content, replacements = re.subn(
+        r"(?m)^\*\*Estimated Completion:.*$",
+        completion_line,
+        content,
+        count=1,
+    )
+
+    if replacements != 1:
+        print("Error: Estimated Completion line not found in MVP.md")
+        return
+
+    if updated_content != content:
+        with open(mvp_path, "w", encoding="utf-8") as f:
+            f.write(updated_content)
+
     print(f"Completed: {checked}")
     print(f"Uncompleted: {unchecked}")
     print(f"Total: {total}")

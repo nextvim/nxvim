@@ -588,6 +588,18 @@ mod tests {
     }
 
     #[test]
+    fn new_and_vnew_commands_are_dispatched() {
+        for (source, vertical) in [("new", false), ("vnew", true), ("vne", true)] {
+            let mut runtime = ScriptRuntime::new();
+            runtime.execute(source).unwrap();
+            assert!(matches!(
+                runtime.try_next_command(),
+                Some(Command::SplitNew { vertical: actual }) if actual == vertical
+            ));
+        }
+    }
+
+    #[test]
     fn split_and_vsplit_commands_are_dispatched() {
         // Test :split with no file path
         let mut runtime = ScriptRuntime::new();

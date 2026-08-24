@@ -170,6 +170,29 @@ mod tests {
     }
 
     #[test]
+    fn split_new_emits_split_before_queuing_an_empty_edit() {
+        let mut app = app();
+        let main = app.view_ids.main;
+
+        let outcome = Dispatcher::dispatch(&mut app, Command::SplitNew { vertical: true });
+
+        assert_eq!(
+            outcome.view_effects,
+            vec![ViewEffect::Split {
+                source: main,
+                axis: SplitAxis::Columns,
+            }]
+        );
+        assert!(matches!(
+            app.command_queue.pop_front(),
+            Some(Command::Edit {
+                path: None,
+                force: true,
+            })
+        ));
+    }
+
+    #[test]
     fn save_command_writes_the_focused_buffer() {
         let path = std::env::temp_dir().join(format!(
             "nxvim-command-save-{}-{}",
@@ -967,7 +990,7 @@ mod tests {
         assert_eq!(app.model.search_pattern.as_deref(), Some("a"));
 
         // 6. Backspace again ('a' -> empty)
-        Dispatcher::dispatch(
+        let outcome = Dispatcher::dispatch(
             &mut app,
             Command::Editor {
                 action: Action::DeleteCharBefore { count: 1 },
@@ -976,6 +999,12 @@ mod tests {
         );
         assert_eq!(app.model.search_pattern, None);
         assert!(app.model.search_regex.is_none());
+        assert_eq!(app.controller.mode(), vim_input::Mode::Normal);
+        assert!(
+            outcome.view_effects.iter().any(
+                |effect| matches!(effect, ViewEffect::Focus(window) if *window != commandline)
+            )
+        );
     }
 
     #[test]

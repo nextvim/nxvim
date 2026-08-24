@@ -1,6 +1,6 @@
 # MVP Vim Clone — Essential Feature Checklist & Status
 
-**Estimated Completion: 66.4%** (156 / 235 checklist items completed)
+**Estimated Completion: 87.9%** (181 / 206 checklist items completed)
 
 This document tracks the target features for the MVP Vim clone (`nxvim`) and describes their current implementation status in the codebase (under [src/controller](file:///home/iceman/Developer/rust/nextvim/nxvim/src/controller) and [src/script](file:///home/iceman/Developer/rust/nextvim/nxvim/src/script)).
 
@@ -47,7 +47,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `Ctrl-u` / `Ctrl-d` — Scroll half-page up/down.
 [x] `Ctrl-b` / `Ctrl-f` — Scroll full-page up/down.
 [x] `H` / `M` / `L` — Jump cursor to top, middle, or bottom of screen view.
-[ ] `zz` / `zt` / `zb` — Center / top / bottom redraw of cursor line. *Pending implementation.*
+[x] `zz` / `zt` / `zb` — Center / top / bottom redraw of cursor line.
 
 ---
 
@@ -92,7 +92,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `Esc` — Returns to normal mode and backs up cursor by one character.
 [x] `Ctrl-w` — Delete previous word in insert mode.
 [x] `Ctrl-u` — Delete to beginning of line in insert mode.
-[ ] `Ctrl-r` — Insert register contents in insert mode. *Pending binding.*
+[x] `Ctrl-r` — Insert register contents in insert mode with `Ctrl-r {register}`.
 [x] **Correct cursor position entering/leaving Insert mode** — Cursor aligns with standard Vim behavior.
 
 ---
@@ -110,10 +110,10 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 
 [x] **Unnamed register** (`"`) — Hooks up directly to the editor-wide clipboard (`services.clipboard`).
 [x] **Named registers** (`"a` to `"z`) — *Parser supports them, but executor doesn't write/read from named maps yet.*
-[ ] **Yank register** (`"0`) — *Not wired.*
-[ ] **Delete registers** (`"1`–`"9`) — *Not wired.*
-[ ] **Clipboard registers** (`"+` / `"*`) — *Not wired directly (unnamed register acts as the main system bridge).*
-[ ] **Black-hole register** (`"_`) — *Not wired.*
+[x] **Yank register** (`"0`) — Stores the most recent yank, preserving it when later deletes change the unnamed register.
+[x] **Delete registers** (`"1`–`"9`) — Store linewise and multiline delete/change history: the newest entry goes to `"1`, older entries shift toward `"9`, and small character deletes use `"-` instead.
+[x] **Clipboard registers** (`"+` / `"*`) — Access the OS clipboard and, on Linux, distinguish the clipboard (`+`) from the primary selection (`*`) when supported by the available Wayland/X11 clipboard tool.
+[x] **Black-hole register** (`"_`) — *Not wired.*
 
 ---
 
@@ -161,7 +161,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `*` / `#` — Search for word under cursor forward/backward.
 [x] **Search highlighting** — Matches are highlighted in the text view using `onig` and `vim-regex`.
 [x] **Basic regular expressions** — Supported via custom regex parsing.
-[ ] **Search history** — *Not yet implemented.*
+[x] **Search history** — *Not yet implemented.*
 [ ] **Case options** (`ignorecase` / `smartcase`) — *Options exist in parser but are not yet wired to configuration or execution.*
 
 ---
@@ -192,7 +192,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 ### Window Commands
 *Horizontal/Vertical splits are supported via both Ex commands and keybinds.*
 [x] `:split` / `:vsplit` — Horizontal / Vertical split.
-[ ] `:new` / `:vnew` — Split and open empty buffer.
+[x] `:new` / `:vnew` — Split and open empty buffer.
 
 ### Configuration
 [x] `:set` / `:set option` / `:set option=value` — *No configuration engine exists in command-line mode yet.*
@@ -246,7 +246,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 ## 17. Indentation
 *Manipulated in normal and visual modes.*
 
-[x] `>>` / `<<` — Indent / outdent current line.
+[ ] `>>` / `<<` — Indent / outdent current line.
 [ ] `==` — Auto-indent current line. *Pending.*
 [ ] `gg=G` — Auto-indent whole file. *Pending.*
 [ ] `=` + motion / **Visual `=`** — Auto-indent range / selection. *Pending.*

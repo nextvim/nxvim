@@ -8,6 +8,7 @@ use super::commandline_handler::CommandlineHandler;
 use super::editor_handler::EditorHandler;
 use super::lifecycle_handler::LifecycleHandler;
 use super::range::RangeCommandHandler;
+use super::shared_operations::SharedOperations;
 use super::task_dispatcher::TaskDispatcher;
 use super::window_handler::WindowHandler;
 
@@ -290,6 +291,16 @@ impl Dispatcher {
                     path.as_deref(),
                     force,
                 )
+            }
+            Command::SplitNew { vertical } => {
+                let active_window = app.ui.focused_window_id();
+                app.command_queue.push_back(Command::Edit {
+                    path: None,
+                    // The current buffer remains open in the original split, so
+                    // creating the new buffer must not fail when it is modified.
+                    force: true,
+                });
+                SharedOperations::split_window(active_window, !vertical)
             }
             Command::WriteQuit { path, force } => {
                 let active_window = app.ui.focused_window_id();
