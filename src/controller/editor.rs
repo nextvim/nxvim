@@ -382,7 +382,6 @@ impl Editor {
                     for cursor in cursors.iter() {
                         let start_sel = cursor.move_to_word(false, text_buffer);
                         let end_sel = cursor.move_to_word_end(false, text_buffer);
-                        // .move_right_once(true, text_buffer);
                         let next = Selection {
                             id: cursor.id,
                             start: start_sel.head(),
@@ -406,10 +405,7 @@ impl Editor {
 
                         let next_cursor = Selection {
                             id: cursor.id,
-                            start: next_match.head(),
-                            end: next_match.tail(),
-                            reversed: false,
-                            goal: SelectionGoal::None,
+                            ..next_match
                         };
                         if buffer_display_context
                             .selections
@@ -423,10 +419,7 @@ impl Editor {
                             text_buffer,
                             &Selection {
                                 id: sel.id,
-                                start: cursor.head(),
-                                end: cursor.tail(),
-                                reversed: false,
-                                goal: SelectionGoal::None,
+                                ..cursor.clone()
                             },
                         );
                         buffer_display_context
@@ -3052,7 +3045,7 @@ mod tests {
                 .end
                 .to_point(buffer.as_text_buffer())
                 .column,
-            11
+            10
         );
 
         editor
@@ -3067,6 +3060,27 @@ mod tests {
             .unwrap();
 
         assert_eq!(window_state.selections.selections.len(), 2);
+
+        editor
+            .execute(
+                Mode::Insert,
+                &Action::InsertText("world".into()),
+                &mut buffer,
+                &mut buffer_context,
+                &mut window_state,
+                &mut services,
+            )
+            .unwrap();
+
+        let buffer_text: String = buffer.snapshot().chunks().collect();
+        assert_eq!(buffer_text, "hello world world");
+        let cursor_columns: Vec<_> = window_state
+            .selections
+            .selections
+            .iter()
+            .map(|selection| selection.head().to_point(buffer.as_text_buffer()).column)
+            .collect();
+        assert_eq!(cursor_columns, vec![17, 11]);
 
         // Test function(
         let mut buffer2 = Buffer::new(BufferId::new(2).unwrap(), ReplicaId::LOCAL, "");
@@ -3109,7 +3123,7 @@ mod tests {
             )
             .unwrap();
 
-        // Should select only "function" (length 8, indices 0..8)
+        // Selections are inclusive, so "function" spans indices 0..=7.
         assert_eq!(
             window_state2
                 .selections
@@ -3126,7 +3140,7 @@ mod tests {
                 .end
                 .to_point(buffer2.as_text_buffer())
                 .column,
-            8
+            7
         );
     }
 
