@@ -1,6 +1,6 @@
 use crate::model::{ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
-use crate::renderer::{Cell, Renderer};
+use crate::renderer::Renderer;
 use crate::window::View;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
@@ -44,11 +44,12 @@ impl View for TextView {
                 draw_scrollbar(renderer, area, model.scrollbar, viewport_row, height)?;
                 continue;
             };
+            // renderer.print(&" ".repeat(width as usize))?;
             renderer.move_to(area.x, area.y + viewport_row)?;
             let mut used = 0usize;
             if let Some(gutter) = &row.gutter {
                 renderer.set_style(gutter.style)?;
-                let text: String = gutter.text.chars().take(width as usize).collect();
+                let text = take_width(&gutter.text, width as usize);
                 used += text.width();
                 renderer.print(&text)?;
             }
@@ -57,7 +58,7 @@ impl View for TextView {
                     break;
                 }
                 renderer.set_style(span.style)?;
-                let text: String = span.text.chars().take(width as usize - used).collect();
+                let text = take_width(&span.text, width as usize - used);
                 used += text.width();
                 renderer.print(&text)?;
             }
@@ -95,6 +96,20 @@ impl View for TextView {
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
+}
+
+fn take_width(text: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut end = 0;
+    for (index, character) in text.char_indices() {
+        let character_width = character.width().unwrap_or(1);
+        if width + character_width > max_width {
+            break;
+        }
+        width += character_width;
+        end = index + character.len_utf8();
+    }
+    text.get(..end).unwrap_or_default().to_owned()
 }
 
 fn draw_scrollbar(

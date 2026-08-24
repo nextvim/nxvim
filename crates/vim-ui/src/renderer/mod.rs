@@ -110,8 +110,15 @@ pub struct BufferedRenderer {
     current_bg: Color,
 }
 
+// A NUL cell is the second screen cell occupied by a wide glyph. It is not
+// rendered independently; keeping it in the buffer prevents the next glyph
+// from being written into the wide glyph's terminal cell.
 fn cell_width(symbol: char) -> u16 {
-    symbol.width().unwrap_or(1).max(1) as u16
+    if symbol == '\0' {
+        0
+    } else {
+        symbol.width().unwrap_or(1).max(1) as u16
+    }
 }
 
 impl BufferedRenderer {
@@ -187,7 +194,7 @@ impl BufferedRenderer {
                 if display_x >= self.current.width {
                     break;
                 }
-                if display_x >= first_changed {
+                if current_cell.symbol != '\0' && display_x >= first_changed {
                     queue!(writer, MoveTo(display_x, y))?;
                     queue!(writer, SetForegroundColor(current_cell.fg.into()))?;
                     queue!(writer, SetBackgroundColor(current_cell.bg.into()))?;
@@ -225,6 +232,32 @@ impl BufferedRenderer {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffered_print_reserves_the_second_cell_of_wide_characters() {
+        let mut renderer = BufferedRenderer::new(5, 1);
+        renderer.print("a🍐b").unwrap();
+
+        assert_eq!(renderer.current.get_cell(0, 0).unwrap().symbol, 'a');
+        assert_eq!(renderer.current.get_cell(1, 0).unwrap().symbol, '🍐');
+        assert_eq!(renderer.current.get_cell(2, 0).unwrap().symbol, '\0');
+        assert_eq!(renderer.current.get_cell(3, 0).unwrap().symbol, 'b');
+        assert_eq!(renderer.current.get_cell(4, 0).unwrap().symbol, ' ');
+    }
+
+    #[test]
+    fn buffered_print_clips_wide_character_at_right_edge() {
+        let mut renderer = BufferedRenderer::new(2, 1);
+        renderer.print("a🍐").unwrap();
+
+        assert_eq!(renderer.current.get_cell(0, 0).unwrap().symbol, 'a');
+        assert_eq!(renderer.current.get_cell(1, 0).unwrap().symbol, ' ');
+    }
+}
+
 impl Renderer for BufferedRenderer {
     fn move_to(&mut self, x: u16, y: u16) -> std::io::Result<()> {
         self.cursor_x = x;
@@ -236,6 +269,27 @@ impl Renderer for BufferedRenderer {
 
     fn print(&mut self, text: &str) -> std::io::Result<()> {
         for c in text.chars() {
+            let width = c.width().unwrap_or(1).max(1) as u16;
+            if self.cursor_x >= self.current.width {
+                break;
+            }
+
+            // A wide glyph at the right edge cannot be represented without
+            // overflowing into the next window, so clip it to a blank cell.
+            if width > self.current.width.saturating_sub(self.cursor_x) {
+                self.current.set_cell(
+                    self.cursor_x,
+                    self.cursor_y,
+                    Cell {
+                        symbol: ' ',
+                        fg: self.current_fg,
+                        bg: self.current_bg,
+                    },
+                );
+                self.cursor_x += 1;
+                continue;
+            }
+
             self.current.set_cell(
                 self.cursor_x,
                 self.cursor_y,
@@ -245,7 +299,18 @@ impl Renderer for BufferedRenderer {
                     bg: self.current_bg,
                 },
             );
-            self.cursor_x += 1;
+            if width == 2 {
+                self.current.set_cell(
+                    self.cursor_x + 1,
+                    self.cursor_y,
+                    Cell {
+                        symbol: '\0',
+                        fg: self.current_fg,
+                        bg: self.current_bg,
+                    },
+                );
+            }
+            self.cursor_x += width;
         }
         Ok(())
     }
