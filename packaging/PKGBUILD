@@ -4,7 +4,7 @@
 pkgname=nxvim
 pkgver=0.1.0
 pkgrel=1
-_commit=68d767e5710bb7ab8393b4d04217ddab77236f73
+_commit=ef671afa2a7834d6b83cf402cef5a6d5ce7f1bac
 pkgdesc="A Vim-inspired terminal text editor written in Rust, powered by Zed's Rope engine"
 arch=('x86_64' 'aarch64')
 url="https://github.com/nextvim/nxvim"
@@ -12,7 +12,7 @@ license=('custom:Vim')
 depends=('gcc-libs')
 makedepends=('cargo' 'clang' 'pkgconf')
 source=("${pkgname}-${_commit}.tar.gz::https://github.com/nextvim/${pkgname}/archive/${_commit}.tar.gz")
-sha256sums=('f739dc7fb343c54978aab784d61bd9260f2886598d314d084c16661bef9fe012')
+sha256sums=('7d58abc429cdc461bdf79d9c40d32ef7be1c3c14bd63a72da639441b43291896')
 
 prepare() {
   cd "${pkgname}-${_commit}"
