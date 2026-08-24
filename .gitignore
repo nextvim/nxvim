@@ -1,4 +1,7 @@
 **/target/
+# The cc crate has real source files in a directory named target.
+!vendor/cc/src/target/
+!vendor/cc/src/target/**
 crates/zed/tooling/sum_tree_oracle/Cargo.lock
 **/.zig-cache/
 .cargo-home/
@@ -13,3 +16,11 @@ reference/
 **/__pycache__/
 *.py[cod]
 crates/zed/tooling/rope_oracle/Cargo.lock
+
+# Locally generated distribution packages and source archives.
+*.deb
+*.rpm
+*.pkg.tar.*
+*.tar.gz
+packaging/pkg/
+packaging/src/
