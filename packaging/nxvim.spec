@@ -3,7 +3,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        A Vim-inspired terminal text editor written in Rust
 
-%global commit 1ae25a2fb7dded43c5488898af6b8e9370602c65
+%global commit 68d767e5710bb7ab8393b4d04217ddab77236f73
 
 License:        VIM LICENSE, GPL-2.0-or-later
 URL:            https://github.com/nextvim/nxvim
