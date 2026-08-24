@@ -192,7 +192,10 @@ impl<'a> ExLineParser<'a> {
                     };
                     self.horizontal_space();
                     if let Some(delimiter) = self.peek() {
-                        if !delimiter.is_ascii_alphanumeric() && delimiter != ' ' && delimiter != '\t' {
+                        if !delimiter.is_ascii_alphanumeric()
+                            && delimiter != ' '
+                            && delimiter != '\t'
+                        {
                             self.bump();
                             let start = self.cursor;
                             while let Some(ch) = self.peek() {

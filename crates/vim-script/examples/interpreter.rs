@@ -51,16 +51,13 @@ fn main() {
 
     // Register host commands
     host.register_command(
-        CommandDefinition::new("set", 2)
-            .with_capabilities(vec![Capability::Settings]),
+        CommandDefinition::new("set", 2).with_capabilities(vec![Capability::Settings]),
     );
     host.register_command(
-        CommandDefinition::new("highlight", 2)
-            .with_capabilities(vec![Capability::UserInterface]),
+        CommandDefinition::new("highlight", 2).with_capabilities(vec![Capability::UserInterface]),
     );
     host.register_command(
-        CommandDefinition::new("syntax", 3)
-            .with_capabilities(vec![Capability::Editor]),
+        CommandDefinition::new("syntax", 3).with_capabilities(vec![Capability::Editor]),
     );
     host.register_command(
         CommandDefinition::new("write", 1)

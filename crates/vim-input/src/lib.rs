@@ -7,7 +7,8 @@ mod resolver;
 
 pub use action::{Action, Mode};
 pub use key::{
-    set_map_leader, map_leader, BindSequence, IntoKeySequence, Key, KeyCode, KeyParseError, KeyPattern, KeySequence, Modifiers,
+    BindSequence, IntoKeySequence, Key, KeyCode, KeyParseError, KeyPattern, KeySequence, Modifiers,
+    map_leader, set_map_leader,
 };
 pub use keymap::{BindingContext, Keymap};
 pub use resolver::{InvalidSequence, PendingInput, ResolveOutcome, ResolvedAction, Resolver};

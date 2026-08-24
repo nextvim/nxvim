@@ -1,8 +1,8 @@
+use crossterm::style::Color as CrossColor;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use serde::Deserialize;
-use crossterm::style::Color as CrossColor;
 
 mod schemes;
 
@@ -257,93 +257,138 @@ impl ColorScheme {
         let selection = parsed.ui.get("selection").and_then(|v| resolve(v));
 
         if let (Some(fg), Some(bg)) = (foreground, background) {
-            styles.insert("Normal".to_string(), Style {
-                fg: Some(fg),
-                bg: Some(bg),
-                ..Default::default()
-            });
+            styles.insert(
+                "Normal".to_string(),
+                Style {
+                    fg: Some(fg),
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
         }
 
-        let statusline_fg = parsed.ui.get("statusline_foreground").and_then(|v| resolve(v));
-        let statusline_bg = parsed.ui.get("statusline_background").and_then(|v| resolve(v));
+        let statusline_fg = parsed
+            .ui
+            .get("statusline_foreground")
+            .and_then(|v| resolve(v));
+        let statusline_bg = parsed
+            .ui
+            .get("statusline_background")
+            .and_then(|v| resolve(v));
         if statusline_fg.is_some() || statusline_bg.is_some() {
-            styles.insert("StatusLine".to_string(), Style {
-                fg: statusline_fg,
-                bg: statusline_bg,
-                ..Default::default()
-            });
+            styles.insert(
+                "StatusLine".to_string(),
+                Style {
+                    fg: statusline_fg,
+                    bg: statusline_bg,
+                    ..Default::default()
+                },
+            );
         }
 
         let tabline_fg = parsed.ui.get("tabline_foreground").and_then(|v| resolve(v));
         let tabline_bg = parsed.ui.get("tabline_background").and_then(|v| resolve(v));
         if tabline_fg.is_some() || tabline_bg.is_some() {
-            styles.insert("TabLine".to_string(), Style {
-                fg: tabline_fg,
-                bg: tabline_bg,
-                ..Default::default()
-            });
+            styles.insert(
+                "TabLine".to_string(),
+                Style {
+                    fg: tabline_fg,
+                    bg: tabline_bg,
+                    ..Default::default()
+                },
+            );
         }
 
         let tabline_fill = parsed.ui.get("tabline_fill").and_then(|v| resolve(v));
         if let Some(bg) = tabline_fill {
-            styles.insert("TabLineFill".to_string(), Style {
-                bg: Some(bg),
-                ..Default::default()
-            });
+            styles.insert(
+                "TabLineFill".to_string(),
+                Style {
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
         }
 
-        let tabline_sel_fg = parsed.ui.get("tabline_sel_foreground").and_then(|v| resolve(v));
-        let tabline_sel_bg = parsed.ui.get("tabline_sel_background").and_then(|v| resolve(v));
+        let tabline_sel_fg = parsed
+            .ui
+            .get("tabline_sel_foreground")
+            .and_then(|v| resolve(v));
+        let tabline_sel_bg = parsed
+            .ui
+            .get("tabline_sel_background")
+            .and_then(|v| resolve(v));
         if tabline_sel_fg.is_some() || tabline_sel_bg.is_some() {
-            styles.insert("TabLineSel".to_string(), Style {
-                fg: tabline_sel_fg,
-                bg: tabline_sel_bg,
-                ..Default::default()
-            });
+            styles.insert(
+                "TabLineSel".to_string(),
+                Style {
+                    fg: tabline_sel_fg,
+                    bg: tabline_sel_bg,
+                    ..Default::default()
+                },
+            );
         }
 
         let find_highlight = parsed.ui.get("find_highlight").and_then(|v| resolve(v));
-        let find_highlight_fg = parsed.ui.get("find_highlight_foreground").and_then(|v| resolve(v));
+        let find_highlight_fg = parsed
+            .ui
+            .get("find_highlight_foreground")
+            .and_then(|v| resolve(v));
         if find_highlight.is_some() || find_highlight_fg.is_some() {
-            styles.insert("Search".to_string(), Style {
-                fg: find_highlight_fg,
-                bg: find_highlight,
-                ..Default::default()
-            });
+            styles.insert(
+                "Search".to_string(),
+                Style {
+                    fg: find_highlight_fg,
+                    bg: find_highlight,
+                    ..Default::default()
+                },
+            );
         }
 
         let line_nr_fg = parsed.ui.get("gutter_foreground").and_then(|v| resolve(v));
         if let Some(fg) = line_nr_fg {
-            styles.insert("LineNr".to_string(), Style {
-                fg: Some(fg),
-                ..Default::default()
-            });
+            styles.insert(
+                "LineNr".to_string(),
+                Style {
+                    fg: Some(fg),
+                    ..Default::default()
+                },
+            );
         }
 
         let cursor_line_nr = parsed.ui.get("cursor_line_nr").and_then(|v| resolve(v));
         if let Some(fg) = cursor_line_nr {
-            styles.insert("CursorLineNr".to_string(), Style {
-                fg: Some(fg),
-                ..Default::default()
-            });
+            styles.insert(
+                "CursorLineNr".to_string(),
+                Style {
+                    fg: Some(fg),
+                    ..Default::default()
+                },
+            );
         }
 
         let cursor_line = parsed.ui.get("cursor_line").and_then(|v| resolve(v));
         if let Some(bg) = cursor_line {
-            styles.insert("CursorLine".to_string(), Style {
-                bg: Some(bg),
-                ..Default::default()
-            });
+            styles.insert(
+                "CursorLine".to_string(),
+                Style {
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
         }
 
         let border_fg = parsed.ui.get("border_foreground").and_then(|v| resolve(v));
         let border_bg = parsed.ui.get("border_background").and_then(|v| resolve(v));
         if border_fg.is_some() || border_bg.is_some() {
-            styles.insert("WinSeparator".to_string(), Style {
-                fg: border_fg,
-                bg: border_bg,
-                ..Default::default()
-            });
+            styles.insert(
+                "WinSeparator".to_string(),
+                Style {
+                    fg: border_fg,
+                    bg: border_bg,
+                    ..Default::default()
+                },
+            );
         }
 
         Ok(Self {
@@ -425,16 +470,10 @@ mod tests {
         assert_eq!(scheme.metadata.r#type.as_deref(), Some("dark"));
 
         let bg_style = scheme.styles.get("Normal").unwrap();
-        assert_eq!(
-            bg_style.bg,
-            Some(Color::Rgb(30, 30, 46))
-        );
+        assert_eq!(bg_style.bg, Some(Color::Rgb(30, 30, 46)));
 
         let keyword_style = scheme.styles.get("keyword").unwrap();
-        assert_eq!(
-            keyword_style.fg,
-            Some(Color::Rgb(203, 166, 247))
-        );
+        assert_eq!(keyword_style.fg, Some(Color::Rgb(203, 166, 247)));
         assert!(keyword_style.bold);
         assert!(keyword_style.italic);
 
@@ -458,7 +497,7 @@ mod tests {
     #[test]
     fn test_is_dark() {
         let mut scheme = ColorScheme::new(Metadata::default());
-        
+
         // Default with fallback
         assert!(scheme.is_dark());
 

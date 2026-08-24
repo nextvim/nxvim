@@ -1,5 +1,5 @@
-use crate::runtime::{RuntimeResult, Value};
 use super::type_error;
+use crate::runtime::{RuntimeResult, Value};
 
 pub fn exists_without_vm_context(args: &[Value]) -> RuntimeResult<Value> {
     if !matches!(args[0], Value::String(_)) {

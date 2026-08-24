@@ -1,6 +1,6 @@
 use crate::model::{ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
-use crate::renderer::{Renderer, Cell};
+use crate::renderer::{Cell, Renderer};
 use crate::window::View;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;

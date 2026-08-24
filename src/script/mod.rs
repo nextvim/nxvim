@@ -7,30 +7,28 @@ use text::{BufferId, BufferSnapshot};
 use vim_script::{
     compiler::Compiler,
     host::{
-        Arity, Capability, CommandDefinition, CommandRequest, Host, HostFuture, HostRequest,
-        HostRuntime,
+        Capability, CommandDefinition, CommandRequest, Host, HostFuture, HostRequest, HostRuntime,
     },
     lexer::Lexer,
     parser::Parser,
     resolver::{Resolver, ResolverConfig},
-    runtime::{RuntimeError, RuntimeErrorKind, RuntimeResult, Scheduler, Value, Vm},
+    runtime::{
+        RuntimeError, RuntimeErrorKind, RuntimeResult, Scheduler, Value, Vm,
+        builtins::BuiltinRegistry,
+    },
     source::SourceMap,
 };
 
-pub mod builtins;
 pub mod commands;
-pub mod registry;
+pub mod functions;
 
-thread_local! {
-    pub static CURRENT_STATE: std::cell::RefCell<Option<Arc<Mutex<EditorState>>>> = std::cell::RefCell::new(None);
-}
-
-use registry::COMMAND_SPECS;
+use commands::registry::COMMAND_SPECS;
 
 pub struct ScriptRuntime {
     scheduler: Scheduler,
     commands: mpsc::Receiver<Command>,
     globals: HashMap<String, Value>,
+    builtins: BuiltinRegistry,
     sources: SourceMap,
     state: Arc<Mutex<EditorState>>,
 }
@@ -44,10 +42,11 @@ impl ScriptRuntime {
             state: state.clone(),
         }));
         host.capabilities.grant(Capability::Editor);
+        host.capabilities.grant(Capability::BufferRead);
 
-        host.register_function("echo", Arity::Exact(1), vec![Capability::Editor]);
-        host.register_function("message", Arity::Exact(1), vec![Capability::Editor]);
-        host.register_function("echomsg", Arity::Exact(1), vec![Capability::Editor]);
+        functions::register(&mut host);
+
+        let builtins = BuiltinRegistry::with_defaults();
 
         for spec in COMMAND_SPECS {
             host.register_command(CommandDefinition::from(spec));
@@ -59,6 +58,7 @@ impl ScriptRuntime {
             scheduler,
             commands,
             globals: HashMap::new(),
+            builtins,
             sources: SourceMap::default(),
             state,
         }
@@ -93,9 +93,6 @@ impl ScriptRuntime {
         config
             .builtins
             .extend(host.functions.names().map(str::to_owned));
-        config
-            .builtins
-            .extend(builtins::names().map(str::to_owned));
 
         let resolved = Resolver::new(config).resolve(program);
         self.check_diagnostics(&resolved.diagnostics)?;
@@ -108,13 +105,9 @@ impl ScriptRuntime {
         let module = compiled
             .module
             .ok_or_else(|| "script compilation produced no module".to_owned())?;
-        
-        let mut vm = Vm::with_globals(module, self.globals.clone()).map_err(runtime_message)?;
-        builtins::register(&mut vm.builtins);
 
-        CURRENT_STATE.with(|cell| {
-            *cell.borrow_mut() = Some(self.state.clone());
-        });
+        let mut vm = Vm::with_globals(module, self.globals.clone()).map_err(runtime_message)?;
+        vm.builtins = self.builtins.clone();
 
         let task_res = self.scheduler.spawn(vm).map_err(runtime_message);
         let value = match task_res {
@@ -130,10 +123,6 @@ impl ScriptRuntime {
             }
             Err(e) => Err(e),
         };
-
-        CURRENT_STATE.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
 
         let value = value?;
         Ok(value)
@@ -193,16 +182,25 @@ impl ScriptRuntime {
         self.commands.try_recv().ok()
     }
 
-    pub fn update_state(&self, model: &crate::model::EditorModel) -> Result<(), String> {
-        let mut lock = match self.state.try_lock() {
-            Ok(lock) => lock,
-            Err(_) => return Ok(()), // Skip update if lock is contested
-        };
-
+    pub fn update_state(
+        &self,
+        model: &crate::model::EditorModel,
+        current_id: vim_buffer::BufferId,
+    ) -> Result<(), String> {
         let active_ids = model.buffers().list();
+        let current_buffer_id = text::BufferId::new(current_id.get())
+            .map_err(|_| format!("invalid current buffer id: {}", current_id.get()))?;
+
+        let mut lock = self
+            .state
+            .lock()
+            .map_err(|_| "Editor state lock is poisoned".to_owned())?;
+        lock.current_buffer_id = Some(current_buffer_id);
         // Remove buffers that are no longer listed/active
         lock.buffers.retain(|id, _| {
-            active_ids.iter().any(|&active_id| active_id.get() == id.to_proto())
+            active_ids
+                .iter()
+                .any(|&active_id| active_id.get() == id.to_proto())
         });
         lock.names.clear();
 
@@ -210,7 +208,7 @@ impl ScriptRuntime {
             if let Ok(buffer) = model.buffers().get(id) {
                 let text_id = text::BufferId::new(id.get()).unwrap();
                 let current_tick = buffer.changedtick().get();
-                
+
                 let needs_update = match lock.buffers.get(&text_id) {
                     Some((_, existing_tick)) => *existing_tick != current_tick,
                     None => true,
@@ -227,9 +225,6 @@ impl ScriptRuntime {
             }
         }
 
-        let current_id = model.buffers().current();
-        lock.current_buffer_id = Some(text::BufferId::new(current_id.get()).unwrap());
-
         Ok(())
     }
 
@@ -237,7 +232,10 @@ impl ScriptRuntime {
     where
         F: FnOnce(&EditorState) -> T,
     {
-        let lock = self.state.lock().map_err(|_| "Editor state lock is poisoned".to_string())?;
+        let lock = self
+            .state
+            .lock()
+            .map_err(|_| "Editor state lock is poisoned".to_string())?;
         Ok(f(&*lock))
     }
 
@@ -256,22 +254,6 @@ impl ScriptRuntime {
 impl Default for ScriptRuntime {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn expect_arity(request: &HostRequest, expected: usize) -> RuntimeResult<()> {
-    if request.arguments.len() == expected {
-        Ok(())
-    } else {
-        Err(RuntimeError::coded(
-            "E119",
-            RuntimeErrorKind::ArityError,
-            format!(
-                "{} expects {expected} argument(s), got {}",
-                request.function,
-                request.arguments.len()
-            ),
-        ))
     }
 }
 
@@ -304,7 +286,7 @@ impl Default for EditorState {
 
 struct EditorHost {
     sender: mpsc::Sender<Command>,
-    pub state: Arc<Mutex<EditorState>>,
+    state: Arc<Mutex<EditorState>>,
 }
 
 impl Host for EditorHost {
@@ -324,6 +306,7 @@ impl Host for EditorHost {
                     })?;
                     Ok(Value::Null)
                 }
+
                 name => Err(RuntimeError::coded(
                     "E117",
                     RuntimeErrorKind::NameError,
@@ -331,6 +314,10 @@ impl Host for EditorHost {
                 )),
             }
         })
+    }
+
+    fn call_sync(&self, request: HostRequest) -> Option<RuntimeResult<Value>> {
+        functions::call_sync(&self.state, &request)
     }
 
     fn execute_command(&self, request: CommandRequest) -> HostFuture {
@@ -349,19 +336,27 @@ impl Host for EditorHost {
     }
 }
 
+fn expect_arity(request: &HostRequest, expected: usize) -> RuntimeResult<()> {
+    if request.arguments.len() == expected {
+        Ok(())
+    } else {
+        Err(RuntimeError::coded(
+            "E119",
+            RuntimeErrorKind::ArityError,
+            format!(
+                "{} expects {expected} argument(s), got {}",
+                request.function,
+                request.arguments.len()
+            ),
+        ))
+    }
+}
+
 fn runtime_message(error: RuntimeError) -> String {
     match error.code {
         Some(code) => format!("{code}: {}", error.message),
         None => error.message,
     }
-}
-
-fn lock_error() -> RuntimeError {
-    RuntimeError::coded(
-        "E605",
-        RuntimeErrorKind::HostError,
-        "editor state lock is poisoned",
-    )
 }
 
 fn parse_count_and_register_helper(

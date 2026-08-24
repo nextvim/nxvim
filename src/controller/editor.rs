@@ -382,7 +382,7 @@ impl Editor {
                     for cursor in cursors.iter() {
                         let start_sel = cursor.move_to_word(false, text_buffer);
                         let end_sel = cursor.move_to_word_end(false, text_buffer);
-                            // .move_right_once(true, text_buffer);
+                        // .move_right_once(true, text_buffer);
                         let next = Selection {
                             id: cursor.id,
                             start: start_sel.head(),
@@ -1276,11 +1276,14 @@ impl Editor {
                     .move_to_start_of_line(*select, buffer.as_text_buffer());
             }
             Action::MoveToLine { line, select } => {
-                buffer_display_context
-                    .selections
-                    .move_to_line(*select, *line, buffer.as_text_buffer());
+                buffer_display_context.selections.move_to_line(
+                    *select,
+                    *line,
+                    buffer.as_text_buffer(),
+                );
                 if let Some(first) = buffer_display_context.selections.first() {
-                    buffer_display_context.selections.point = first.head().to_point(buffer.as_text_buffer());
+                    buffer_display_context.selections.point =
+                        first.head().to_point(buffer.as_text_buffer());
                 }
             }
             Action::MoveToStartOfLineNonSpace { select, .. } => {

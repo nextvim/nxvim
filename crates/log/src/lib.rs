@@ -15,11 +15,7 @@ macro_rules! log {
 pub fn write_log(args: std::fmt::Arguments) {
     #[cfg(debug_assertions)]
     {
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(LOG_FILE)
-        {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
             let _ = writeln!(file, "{}", args);
         }
     }
@@ -28,4 +24,3 @@ pub fn write_log(args: std::fmt::Arguments) {
         let _ = args;
     }
 }
-

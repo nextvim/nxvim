@@ -19,8 +19,7 @@ fn discovers_initializes_and_executes_a_tier_one_plugin() {
     host.capabilities.grant(Capability::FileSystemWrite);
     host.capabilities.grant(Capability::Settings);
     host.register_command(
-        CommandDefinition::new("set", 2)
-            .with_capabilities(vec![Capability::Settings]),
+        CommandDefinition::new("set", 2).with_capabilities(vec![Capability::Settings]),
     );
     host.register_command(
         CommandDefinition::new("write", 1)

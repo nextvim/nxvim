@@ -1,6 +1,6 @@
-use vim_buffer::{BufferManager, EditOrigin, ByteOffset};
-use display_map::{DisplayMap, Fold, Bias};
+use display_map::{Bias, DisplayMap, Fold};
 use text::{Point, ToPoint};
+use vim_buffer::{BufferManager, ByteOffset, EditOrigin};
 
 #[test]
 fn test_display_map_and_vim_buffer_integration() {
@@ -11,15 +11,17 @@ fn test_display_map_and_vim_buffer_integration() {
     // 2. Perform a Vim transaction (mutation).
     let mut transaction = buffer.transaction(EditOrigin::User);
     transaction.insert(None, ByteOffset(12), "\n[Vim Edit Insertion]");
-    transaction.commit(None).expect("Failed to commit transaction");
+    transaction
+        .commit(None)
+        .expect("Failed to commit transaction");
 
     // 3. Get the inner text snapshot and create the DisplayMap.
     let snapshot = buffer.snapshot();
     let text_snapshot = snapshot.as_inner().clone();
-    
+
     // Create a DisplayMap with soft-wrapping at 25 characters.
     let mut display_map = DisplayMap::new(text_snapshot, Some(25));
-    
+
     let snap = display_map.snapshot();
     assert_eq!(snap.line_text(0), "Hello World!");
     assert_eq!(snap.line_text(1), "[Vim Edit Insertion]");
@@ -43,7 +45,7 @@ fn test_display_map_and_vim_buffer_integration() {
     let anchor = snapshot.as_inner().anchor_before(buffer_cursor);
     let display_point_from_anchor = final_snap.anchor_to_display_point(anchor);
     assert_eq!(display_cursor, display_point_from_anchor);
-    
+
     let anchor_back = final_snap.display_point_to_anchor(display_point_from_anchor, Bias::Left);
     let mapped_back_from_anchor = anchor_back.to_point(snapshot.as_inner());
     assert_eq!(buffer_cursor, mapped_back_from_anchor);

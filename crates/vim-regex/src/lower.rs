@@ -112,16 +112,12 @@ impl Lowerer<'_> {
                 Expr::Collection(collection) => self.with_composing_marks(ir::Expr::CharacterSet(
                     lower_collection(collection, &expression.span)?,
                 )),
-                Expr::Anchor(ast::Anchor::StartOfWord) => {
-                    ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(
-                        ir::KeywordBoundary::Start,
-                    ))
-                }
-                Expr::Anchor(ast::Anchor::EndOfWord) => {
-                    ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(
-                        ir::KeywordBoundary::End,
-                    ))
-                }
+                Expr::Anchor(ast::Anchor::StartOfWord) => ir::Expr::RuntimeAssertion(
+                    ir::RuntimeAssertion::KeywordBoundary(ir::KeywordBoundary::Start),
+                ),
+                Expr::Anchor(ast::Anchor::EndOfWord) => ir::Expr::RuntimeAssertion(
+                    ir::RuntimeAssertion::KeywordBoundary(ir::KeywordBoundary::End),
+                ),
                 Expr::Anchor(anchor) => ir::Expr::Anchor(*anchor),
                 Expr::Position(position) => {
                     ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::Position(*position))
@@ -555,11 +551,15 @@ mod tests {
         assert_eq!(parts.len(), 6);
         assert!(matches!(
             parts[0],
-            ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(ir::KeywordBoundary::Start))
+            ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(
+                ir::KeywordBoundary::Start
+            ))
         ));
         assert!(matches!(
             parts[5],
-            ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(ir::KeywordBoundary::End))
+            ir::Expr::RuntimeAssertion(ir::RuntimeAssertion::KeywordBoundary(
+                ir::KeywordBoundary::End
+            ))
         ));
     }
 }

@@ -74,7 +74,16 @@ impl WindowState {
         let snapshot = buffer.snapshot().as_inner().clone();
         let mut selections = vim_buffer::SelectionSet::new();
         selections.add(buffer.as_text_buffer(), 0);
-        Self::from_parts(buffer.id(), snapshot, selections, viewport, true, true, false, true)
+        Self::from_parts(
+            buffer.id(),
+            snapshot,
+            selections,
+            viewport,
+            true,
+            true,
+            false,
+            true,
+        )
     }
 
     pub fn placeholder(buffer: &vim_buffer::Buffer) -> Self {
@@ -132,7 +141,13 @@ impl WindowState {
         self.last_version = Some(snapshot.version.clone());
         self.viewport = viewport;
 
-        let wrap_width = wrap_width(&snapshot, width, has_border, self.show_gutter, self.wrap_text);
+        let wrap_width = wrap_width(
+            &snapshot,
+            width,
+            has_border,
+            self.show_gutter,
+            self.wrap_text,
+        );
 
         self.display_map.sync_hot_window(snapshot, buffer_window);
         self.display_map.set_wrap_width(wrap_width);
@@ -209,9 +224,15 @@ impl WindowState {
         show_gutter: bool,
         show_matches: bool,
         show_cursorline: bool,
-        wrap_text: bool
+        wrap_text: bool,
     ) -> Self {
-        let wrap_width = wrap_width(&snapshot, viewport.width, viewport.has_border, show_gutter, wrap_text);
+        let wrap_width = wrap_width(
+            &snapshot,
+            viewport.width,
+            viewport.has_border,
+            show_gutter,
+            wrap_text,
+        );
         let text_width = text_width(&snapshot, viewport.width, viewport.has_border, show_gutter);
         let cursor_row = selections.primary().head().to_point(&snapshot).row;
         let buffer_window = hot_window(cursor_row, viewport.height, snapshot.row_count());

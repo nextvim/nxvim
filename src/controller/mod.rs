@@ -525,7 +525,14 @@ mod tests {
         );
 
         assert!(outcome.redraw);
-        let point = app.ui.window(main).unwrap().window_state().unwrap().selections.point;
+        let point = app
+            .ui
+            .window(main)
+            .unwrap()
+            .window_state()
+            .unwrap()
+            .selections
+            .point;
         // line 3 is row 2
         assert_eq!(point.row, 2);
     }
@@ -561,7 +568,14 @@ mod tests {
         );
 
         assert!(outcome.redraw);
-        let point = app.ui.window(main).unwrap().window_state().unwrap().selections.point;
+        let point = app
+            .ui
+            .window(main)
+            .unwrap()
+            .window_state()
+            .unwrap()
+            .selections
+            .point;
         // line 2 is row 1
         assert_eq!(point.row, 1);
     }

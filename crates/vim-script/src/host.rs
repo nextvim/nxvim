@@ -19,6 +19,10 @@ pub type HostFuture = Pin<Box<dyn Future<Output = RuntimeResult<Value>> + Send +
 pub trait Host: Send + Sync + 'static {
     fn call(&self, request: HostRequest) -> HostFuture;
 
+    fn call_sync(&self, _request: HostRequest) -> Option<RuntimeResult<Value>> {
+        None
+    }
+
     fn option(&self, request: OptionRequest) -> HostFuture {
         Box::pin(async move {
             Err(RuntimeError::coded(
@@ -544,6 +548,45 @@ impl HostRuntime {
         }
         request.target = registration.target.clone();
         Ok(self.host.call(request))
+    }
+
+    pub fn dispatch_sync(
+        &self,
+        mut request: HostRequest,
+    ) -> RuntimeResult<Option<RuntimeResult<Value>>> {
+        let Some(sync_result) = self.host.call_sync(request.clone()) else {
+            return Ok(None);
+        };
+        let registration = self.functions.get(&request.function).ok_or_else(|| {
+            RuntimeError::coded(
+                "E117",
+                RuntimeErrorKind::NameError,
+                format!("unknown host function: {}", request.function),
+            )
+        })?;
+        if !registration.arity.accepts(request.arguments.len()) {
+            return Err(RuntimeError::coded(
+                "E119",
+                RuntimeErrorKind::ArityError,
+                format!("invalid argument count for {}", request.function),
+            ));
+        }
+        if let Some(missing) = registration
+            .required_capabilities
+            .iter()
+            .find(|capability| !self.capabilities.allows(capability))
+        {
+            return Err(RuntimeError::coded(
+                "E_PERM",
+                RuntimeErrorKind::PermissionDenied,
+                format!(
+                    "host function {} requires capability {missing:?}",
+                    request.function
+                ),
+            ));
+        }
+        request.target = registration.target.clone();
+        Ok(Some(sync_result))
     }
 
     pub fn dispatch_option(&self, request: OptionRequest) -> RuntimeResult<HostFuture> {
@@ -1214,13 +1257,13 @@ pub fn resolve_range<P: RangeStateProvider>(
             _ => start,
         }
     };
-    
+
     let (final_start, final_end) = if start > end {
         (end, start)
     } else {
         (start, end)
     };
-    
+
     Ok((final_start, final_end))
 }
 
@@ -1230,14 +1273,22 @@ mod range_tests {
 
     struct MockProvider;
     impl RangeStateProvider for MockProvider {
-        fn cursor_line(&self) -> usize { 10 }
-        fn line_count(&self) -> usize { 100 }
+        fn cursor_line(&self) -> usize {
+            10
+        }
+        fn line_count(&self) -> usize {
+            100
+        }
         fn get_mark(&self, name: char) -> Option<usize> {
             if name == 'a' { Some(15) } else { None }
         }
         fn search_pattern(&self, pattern: &str, forward: bool, start_line: usize) -> Option<usize> {
             if pattern == "match" {
-                if forward { Some(start_line + 5) } else { Some(start_line - 5) }
+                if forward {
+                    Some(start_line + 5)
+                } else {
+                    Some(start_line - 5)
+                }
             } else {
                 None
             }
@@ -1261,7 +1312,10 @@ mod range_tests {
         assert_eq!(resolve_address(&addr, &provider).unwrap(), 15);
 
         // Search forward
-        let addr = crate::ast::Address::Search { pattern: "match".to_owned(), forward: true };
+        let addr = crate::ast::Address::Search {
+            pattern: "match".to_owned(),
+            forward: true,
+        };
         assert_eq!(resolve_address(&addr, &provider).unwrap(), 15);
 
         // Offset

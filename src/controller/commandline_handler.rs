@@ -154,12 +154,14 @@ impl CommandlineHandler {
                     }
 
                     let command_to_execute = if command.starts_with(':') {
-                        command 
+                        command
                     } else {
                         format!("{}{}", model.commandline_mode, command)
                     };
 
-                    command_queue.push_back(crate::controller::Command::ExecuteScript(command_to_execute));
+                    command_queue.push_back(crate::controller::Command::ExecuteScript(
+                        command_to_execute,
+                    ));
                 }
                 CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }

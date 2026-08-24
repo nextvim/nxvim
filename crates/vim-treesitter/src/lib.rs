@@ -43,7 +43,12 @@ impl TreeSitterService {
         }
     }
 
-    pub fn should_parse(&self, buffer_id: BufferId, changedtick: ChangedTick, grammar: Grammar) -> bool {
+    pub fn should_parse(
+        &self,
+        buffer_id: BufferId,
+        changedtick: ChangedTick,
+        grammar: Grammar,
+    ) -> bool {
         self.buffers.get(&buffer_id).is_none_or(|state| {
             state.grammar != grammar || state.requested_changedtick != changedtick
         })
@@ -83,11 +88,7 @@ impl TreeSitterService {
         }
     }
 
-    pub fn apply_task_result(
-        &mut self,
-        task_id: TaskId,
-        completed: ParseTaskResult,
-    ) -> bool {
+    pub fn apply_task_result(&mut self, task_id: TaskId, completed: ParseTaskResult) -> bool {
         let Some(state) = self.buffers.get_mut(&completed.buffer_id) else {
             return false;
         };
@@ -165,10 +166,7 @@ impl Default for TreeSitterService {
     }
 }
 
-pub fn parse_snapshot(
-    snapshot: BufferSnapshot,
-    grammar: Grammar,
-) -> ParseTaskResult {
+pub fn parse_snapshot(snapshot: BufferSnapshot, grammar: Grammar) -> ParseTaskResult {
     parse_snapshot_cancellable(snapshot, grammar, None, || false)
 }
 
@@ -208,18 +206,11 @@ mod tests {
     use vim_buffer::Buffer;
 
     fn parsed(buffer_id: BufferId, changedtick: ChangedTick, source: &str) -> ParseTaskResult {
-        let mut buffer = Buffer::new(
-            buffer_id,
-            ReplicaId::LOCAL,
-            source,
-        );
+        let mut buffer = Buffer::new(buffer_id, ReplicaId::LOCAL, source);
         while buffer.changedtick() != changedtick {
             buffer.increment_changedtick();
         }
-        parse_snapshot(
-            buffer.snapshot().clone(),
-            Grammar::Rust,
-        )
+        parse_snapshot(buffer.snapshot().clone(), Grammar::Rust)
     }
 
     #[test]

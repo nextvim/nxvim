@@ -1,6 +1,6 @@
+use crate::Style;
 use crate::renderer::Renderer;
 use crate::types::Color;
-use crate::Style;
 use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
     execute,

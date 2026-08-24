@@ -4,8 +4,8 @@ use std::{
     sync::{Arc, atomic::AtomicU64},
 };
 
-use vim_buffer::{BufferId, BufferSnapshot, ChangedTick, BufferOptions, SaveOutcome};
 use background_worker::TaskId;
+use vim_buffer::{BufferId, BufferOptions, BufferSnapshot, ChangedTick, SaveOutcome};
 
 #[derive(Debug, Clone)]
 pub struct SaveTaskResult {

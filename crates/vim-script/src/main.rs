@@ -103,12 +103,10 @@ fn main() {
 
     // Register host commands of MockEditor
     host.register_command(
-        CommandDefinition::new("set", 2)
-            .with_capabilities(vec![Capability::Settings]),
+        CommandDefinition::new("set", 2).with_capabilities(vec![Capability::Settings]),
     );
     host.register_command(
-        CommandDefinition::new("highlight", 2)
-            .with_capabilities(vec![Capability::UserInterface]),
+        CommandDefinition::new("highlight", 2).with_capabilities(vec![Capability::UserInterface]),
     );
     host.register_command(
         CommandDefinition::new("DeleteLines", 3)

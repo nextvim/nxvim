@@ -21,7 +21,6 @@ pub enum SizeConstraint {
     Percentage(f32),
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {
     TopLeft,

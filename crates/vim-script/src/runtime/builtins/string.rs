@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::runtime::{RuntimeResult, Value};
 use super::{error, type_error, vim_display, vim_string};
+use crate::runtime::{RuntimeResult, Value};
 
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -12,9 +12,9 @@ fn base64_encode_bytes(bytes: &[u8]) -> String {
         let b0 = bytes[i];
         let b1 = bytes.get(i + 1).cloned();
         let b2 = bytes.get(i + 2).cloned();
-        
+
         let val = ((b0 as u32) << 16) | ((b1.unwrap_or(0) as u32) << 8) | (b2.unwrap_or(0) as u32);
-        
+
         result.push(BASE64_CHARS[((val >> 18) & 63) as usize] as char);
         result.push(BASE64_CHARS[((val >> 12) & 63) as usize] as char);
         if b1.is_some() {
@@ -42,15 +42,23 @@ fn base64_decode_string(s: &str) -> Option<Vec<u8>> {
     let mut i = 0;
     while i < chars.len() {
         let c0 = chars[i];
-        let c1 = chars[i+1];
-        let c2 = chars[i+2];
-        let c3 = chars[i+3];
-        
+        let c1 = chars[i + 1];
+        let c2 = chars[i + 2];
+        let c3 = chars[i + 3];
+
         let idx0 = BASE64_CHARS.iter().position(|&x| x as char == c0)? as u32;
         let idx1 = BASE64_CHARS.iter().position(|&x| x as char == c1)? as u32;
-        let idx2 = if c2 == '=' { 0 } else { BASE64_CHARS.iter().position(|&x| x as char == c2)? as u32 };
-        let idx3 = if c3 == '=' { 0 } else { BASE64_CHARS.iter().position(|&x| x as char == c3)? as u32 };
-        
+        let idx2 = if c2 == '=' {
+            0
+        } else {
+            BASE64_CHARS.iter().position(|&x| x as char == c2)? as u32
+        };
+        let idx3 = if c3 == '=' {
+            0
+        } else {
+            BASE64_CHARS.iter().position(|&x| x as char == c3)? as u32
+        };
+
         let val = (idx0 << 18) | (idx1 << 12) | (idx2 << 6) | idx3;
         bytes.push((val >> 16) as u8);
         if c2 != '=' {
@@ -232,7 +240,7 @@ pub fn str2nr(args: &[Value]) -> RuntimeResult<Value> {
     } else {
         ("", s_trimmed)
     };
-    
+
     let is_valid_digit = |c: char| -> bool {
         match base {
             2 => c == '0' || c == '1',
@@ -241,13 +249,15 @@ pub fn str2nr(args: &[Value]) -> RuntimeResult<Value> {
             _ => c.is_digit(10),
         }
     };
-    
-    let end_idx = content.find(|c| !is_valid_digit(c)).unwrap_or(content.len());
+
+    let end_idx = content
+        .find(|c| !is_valid_digit(c))
+        .unwrap_or(content.len());
     let valid_part = &content[..end_idx];
     if valid_part.is_empty() {
         return Ok(Value::Integer(0));
     }
-    
+
     let parsed = i64::from_str_radix(valid_part, base)
         .map(|v| if prefix == "-" { -v } else { v })
         .unwrap_or(0);
@@ -274,7 +284,10 @@ pub fn str2list(args: &[Value]) -> RuntimeResult<Value> {
     let list = if utf8 {
         s.chars().map(|c| Value::Integer(c as i64)).collect()
     } else {
-        s.as_bytes().iter().map(|&b| Value::Integer(b as i64)).collect()
+        s.as_bytes()
+            .iter()
+            .map(|&b| Value::Integer(b as i64))
+            .collect()
     };
     Ok(Value::List(list))
 }
@@ -330,7 +343,10 @@ pub fn stridx(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(Value::Integer(-1));
     }
     let sub = &haystack[start..];
-    let pos = sub.find(needle.as_ref()).map(|idx| (idx + start) as i64).unwrap_or(-1);
+    let pos = sub
+        .find(needle.as_ref())
+        .map(|idx| (idx + start) as i64)
+        .unwrap_or(-1);
     Ok(Value::Integer(pos))
 }
 
@@ -347,7 +363,10 @@ pub fn strridx(args: &[Value]) -> RuntimeResult<Value> {
     };
     let limit = start.min(haystack.len());
     let sub = &haystack[..limit];
-    let pos = sub.rfind(needle.as_ref()).map(|idx| idx as i64).unwrap_or(-1);
+    let pos = sub
+        .rfind(needle.as_ref())
+        .map(|idx| idx as i64)
+        .unwrap_or(-1);
     Ok(Value::Integer(pos))
 }
 
@@ -364,7 +383,11 @@ pub fn strpart(args: &[Value]) -> RuntimeResult<Value> {
     }
     let len = match args.get(2) {
         Some(Value::Integer(l)) => {
-            if *l < 0 { 0 } else { *l as usize }
+            if *l < 0 {
+                0
+            } else {
+                *l as usize
+            }
         }
         _ => s.len() - start,
     };
@@ -386,7 +409,11 @@ pub fn strcharpart(args: &[Value]) -> RuntimeResult<Value> {
     }
     let len = match args.get(2) {
         Some(Value::Integer(l)) => {
-            if *l < 0 { 0 } else { *l as usize }
+            if *l < 0 {
+                0
+            } else {
+                *l as usize
+            }
         }
         _ => total_chars - start,
     };
@@ -426,7 +453,7 @@ pub fn tr(args: &[Value]) -> RuntimeResult<Value> {
     };
     let from_chars: Vec<char> = fromstr.chars().collect();
     let to_chars: Vec<char> = tostr.chars().collect();
-    
+
     let mut result = String::new();
     for c in src.chars() {
         if let Some(pos) = from_chars.iter().position(|&x| x == c) {
@@ -468,18 +495,26 @@ pub fn uri_decode(args: &[Value]) -> RuntimeResult<Value> {
         if c == '%' {
             let h0 = chars.next().unwrap_or('\0');
             let h1 = chars.next().unwrap_or('\0');
-            if let Some(hex) = h0.to_digit(16).and_then(|d0| h1.to_digit(16).map(|d1| (d0 << 4) | d1)) {
+            if let Some(hex) = h0
+                .to_digit(16)
+                .and_then(|d0| h1.to_digit(16).map(|d1| (d0 << 4) | d1))
+            {
                 bytes.push(hex as u8);
             } else {
                 bytes.push(b'%');
-                if h0 != '\0' { bytes.push(h0 as u8); }
-                if h1 != '\0' { bytes.push(h1 as u8); }
+                if h0 != '\0' {
+                    bytes.push(h0 as u8);
+                }
+                if h1 != '\0' {
+                    bytes.push(h1 as u8);
+                }
             }
         } else {
             bytes.push(c as u8);
         }
     }
-    let decoded = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    let decoded = String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
     Ok(Value::String(Arc::from(decoded)))
 }
 
@@ -515,7 +550,11 @@ pub fn register(registry: &mut super::BuiltinRegistry) {
     registry.register("str2list", BuiltinArity::Range { min: 1, max: 2 }, str2list);
     registry.register("str2nr", BuiltinArity::Range { min: 1, max: 2 }, str2nr);
     registry.register("strcharlen", BuiltinArity::Exact(1), strcharlen);
-    registry.register("strcharpart", BuiltinArity::Range { min: 2, max: 3 }, strcharpart);
+    registry.register(
+        "strcharpart",
+        BuiltinArity::Range { min: 2, max: 3 },
+        strcharpart,
+    );
     registry.register("strchars", BuiltinArity::Range { min: 1, max: 2 }, strchars);
     registry.register("strgetchar", BuiltinArity::Exact(2), strgetchar);
     registry.register("stridx", BuiltinArity::Range { min: 2, max: 3 }, stridx);

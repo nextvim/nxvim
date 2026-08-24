@@ -337,7 +337,11 @@ impl LayoutNode {
     pub fn set_constraint(&mut self, target_id: WindowId, new_constraint: SizeConstraint) -> bool {
         match self {
             LayoutNode::Leaf { .. } => false,
-            LayoutNode::Split { children, constraints, .. } => {
+            LayoutNode::Split {
+                children,
+                constraints,
+                ..
+            } => {
                 for (i, child) in children.iter_mut().enumerate() {
                     if let LayoutNode::Leaf { window_id } = child {
                         if *window_id == target_id {
@@ -440,7 +444,9 @@ impl SlotLayout {
             center_constraints.push(constraint);
         }
 
-        center_children.push(LayoutNode::Leaf { window_id: self.center });
+        center_children.push(LayoutNode::Leaf {
+            window_id: self.center,
+        });
         center_constraints.push(SizeConstraint::Percentage(1.0));
 
         if let Some((id, constraint)) = self.status_bar {
@@ -508,4 +514,3 @@ impl SlotLayout {
         }
     }
 }
-

@@ -277,6 +277,19 @@ impl Vm {
         Ok(())
     }
 
+    pub fn complete_host_call(&mut self, result: RuntimeResult<Value>) -> RuntimeResult<()> {
+        match result {
+            Ok(value) => self.push(value)?,
+            Err(error) if self.dispatch_catchable_error(&error)? => {}
+            Err(error) => {
+                self.status = VmStatus::Failed(error.clone());
+                return Err(error);
+            }
+        }
+        self.status = VmStatus::Ready;
+        Ok(())
+    }
+
     pub fn resume_host_call(&mut self, result: RuntimeResult<OperationId>) -> RuntimeResult<()> {
         match result {
             Ok(operation) => self.push(Value::Future(operation))?,
@@ -1297,6 +1310,10 @@ mod tests {
     fn echo_requires_scheduler_at_runtime() {
         let error = run("echo 'hello'\n").unwrap_err();
         assert!(matches!(error.kind, RuntimeErrorKind::HostError));
-        assert!(error.message.contains("requires a scheduler and host runtime"));
+        assert!(
+            error
+                .message
+                .contains("requires a scheduler and host runtime")
+        );
     }
 }

@@ -398,7 +398,8 @@ mod tests {
 
     #[test]
     fn test_find_words_vim_definition() {
-        let text = "} )( typeof window !== \"undefined\" ? window : this, function( window, noGlobal ) {";
+        let text =
+            "} )( typeof window !== \"undefined\" ? window : this, function( window, noGlobal ) {";
         let words = text.find_words();
         let word_slices: Vec<&str> = words.iter().map(|(_, _, slice)| *slice).collect();
         let expected = vec![

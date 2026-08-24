@@ -282,19 +282,21 @@ impl Scheduler {
                 self.tasks.get_mut(&id).expect("task exists").state = TaskState::Completed(value)
             }
             Ok(VmRunOutcome::HostCall(request)) => {
-                let dispatched = self
-                    .host
-                    .as_ref()
-                    .ok_or_else(|| {
-                        RuntimeError::coded(
-                            "E_HOST",
-                            RuntimeErrorKind::HostError,
-                            "no host runtime is configured",
-                        )
-                    })
-                    .and_then(|host| host.dispatch(request));
-                let result = dispatched.map(|future| self.register_boxed(future));
-                self.resume_host_call(id, result)?;
+                let host = self.host.as_ref().ok_or_else(|| {
+                    RuntimeError::coded(
+                        "E_HOST",
+                        RuntimeErrorKind::HostError,
+                        "no host runtime is configured",
+                    )
+                })?;
+                if let Some(result) = host.dispatch_sync(request.clone())? {
+                    self.complete_host_call(id, result)?;
+                } else {
+                    let result = host
+                        .dispatch(request)
+                        .map(|future| self.register_boxed(future));
+                    self.resume_host_call(id, result)?;
+                }
             }
             Ok(VmRunOutcome::OptionCall(request)) => {
                 let dispatched = self
@@ -428,6 +430,28 @@ impl Scheduler {
             }
         }
         Ok(true)
+    }
+
+    fn complete_host_call(
+        &mut self,
+        id: TaskId,
+        result: RuntimeResult<Value>,
+    ) -> RuntimeResult<()> {
+        let task = self.tasks.get_mut(&id).ok_or_else(|| {
+            RuntimeError::coded(
+                "E900",
+                RuntimeErrorKind::Internal,
+                "host-calling task disappeared",
+            )
+        })?;
+        match task.vm.complete_host_call(result) {
+            Ok(()) => {
+                task.state = TaskState::Ready;
+                self.ready_queue.push_back(id);
+            }
+            Err(error) => task.state = TaskState::Failed(error),
+        }
+        Ok(())
     }
 
     fn complete_command(&mut self, id: TaskId, result: RuntimeResult<Value>) -> RuntimeResult<()> {
@@ -847,11 +871,7 @@ mod tests {
         });
         let mut runtime = HostRuntime::new(host);
         runtime.capabilities.grant(Capability::Editor);
-        runtime.register_function(
-            "echo",
-            Arity::Exact(1),
-            vec![Capability::Editor],
-        );
+        runtime.register_function("echo", Arity::Exact(1), vec![Capability::Editor]);
         let mut scheduler = Scheduler::new(10);
         scheduler.set_host(runtime);
         let task = scheduler
@@ -861,6 +881,9 @@ mod tests {
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].function, "echo");
-        assert_eq!(requests[0].arguments[0], Value::String(Arc::from("hello world")));
+        assert_eq!(
+            requests[0].arguments[0],
+            Value::String(Arc::from("hello world"))
+        );
     }
 }

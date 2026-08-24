@@ -220,7 +220,11 @@ impl ConfigStore {
         if name == "inspect" {
             if let ConfigValue::String(ref s) = final_value {
                 let s_stripped = s.trim_matches('"').trim_matches('\'');
-                if s_stripped != "none" && s_stripped != "treesitter" && s_stripped != "textmate" && s_stripped != "indexer" {
+                if s_stripped != "none"
+                    && s_stripped != "treesitter"
+                    && s_stripped != "textmate"
+                    && s_stripped != "indexer"
+                {
                     return Err(format!("Invalid value for option inspect: {s}"));
                 }
                 final_value = ConfigValue::String(s_stripped.to_string());

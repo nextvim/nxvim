@@ -220,10 +220,7 @@ mod text_model_tests {
                         text: " 5 ".into(),
                         style: Style::default(),
                     }),
-                    spans: vec![TextSpan::new(
-                        "fn main()",
-                        Style::default(),
-                    )],
+                    spans: vec![TextSpan::new("fn main()", Style::default())],
                     fill_style: Style::default(),
                 },
                 DisplayRow {

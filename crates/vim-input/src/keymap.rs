@@ -757,24 +757,28 @@ impl Keymap {
             .expect("Valid binding");
 
         normal_actions
-            .bind("*", Action::Sequence {
-                count: 1,
-                actions: vec![
-                    Box::new(Action::SelectSimilar {
-                    }),
-                    Box::new(Action::SetToCommandSearchForward)
-                ],
-            })
+            .bind(
+                "*",
+                Action::Sequence {
+                    count: 1,
+                    actions: vec![
+                        Box::new(Action::SelectSimilar {}),
+                        Box::new(Action::SetToCommandSearchForward),
+                    ],
+                },
+            )
             .expect("Valid binding");
         normal_actions
-            .bind("#", Action::Sequence {
-                count: 1,
-                actions: vec![
-                    Box::new(Action::SelectSimilar {
-                    }),
-                    Box::new(Action::SetToCommandSearchBackward)
-                ],
-            })
+            .bind(
+                "#",
+                Action::Sequence {
+                    count: 1,
+                    actions: vec![
+                        Box::new(Action::SelectSimilar {}),
+                        Box::new(Action::SetToCommandSearchBackward),
+                    ],
+                },
+            )
             .expect("Valid binding");
 
         // Mode Change

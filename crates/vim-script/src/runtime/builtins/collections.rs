@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use super::{error, key_string, normalize_index, type_error, vim_display};
 use crate::runtime::{RuntimeResult, Value};
-use super::{error, type_error, normalize_index, key_string, vim_display};
 
 pub fn len(args: &[Value]) -> RuntimeResult<Value> {
     let length = match &args[0] {
@@ -172,7 +172,10 @@ pub fn keys(args: &[Value]) -> RuntimeResult<Value> {
     let Value::Dictionary(dict) = &args[0] else {
         return Err(type_error("keys", "Dictionary", &args[0]));
     };
-    let list = dict.keys().map(|k| Value::String(Arc::from(k.as_str()))).collect();
+    let list = dict
+        .keys()
+        .map(|k| Value::String(Arc::from(k.as_str())))
+        .collect();
     Ok(Value::List(list))
 }
 
@@ -188,7 +191,8 @@ pub fn items(args: &[Value]) -> RuntimeResult<Value> {
     let Value::Dictionary(dict) = &args[0] else {
         return Err(type_error("items", "Dictionary", &args[0]));
     };
-    let list = dict.iter()
+    let list = dict
+        .iter()
         .map(|(k, v)| Value::List(vec![Value::String(Arc::from(k.as_str())), v.clone()]))
         .collect();
     Ok(Value::List(list))
@@ -242,9 +246,7 @@ pub fn remove(args: &[Value]) -> RuntimeResult<Value> {
                     let removed = values[idx_u..=end_u].to_vec();
                     Ok(Value::List(removed))
                 }
-                _ => {
-                    Ok(values[idx_u].clone())
-                }
+                _ => Ok(values[idx_u].clone()),
             }
         }
         Value::Dictionary(dict) => {
@@ -388,7 +390,8 @@ pub fn list2str(args: &[Value]) -> RuntimeResult<Value> {
             };
             bytes.push(*nr as u8);
         }
-        result = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        result = String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
     }
     Ok(Value::String(Arc::from(result)))
 }
@@ -513,7 +516,9 @@ pub fn index(args: &[Value]) -> RuntimeResult<Value> {
                 return Ok(Value::Integer(-1));
             }
             let pos = values[start..].iter().position(|x| x == target);
-            Ok(Value::Integer(pos.map(|idx| (idx + start) as i64).unwrap_or(-1)))
+            Ok(Value::Integer(
+                pos.map(|idx| (idx + start) as i64).unwrap_or(-1),
+            ))
         }
         other => Err(type_error("index", "List", other)),
     }
@@ -528,9 +533,17 @@ pub fn register(registry: &mut super::BuiltinRegistry) {
     registry.register("deepcopy", BuiltinArity::Range { min: 1, max: 2 }, deepcopy);
     registry.register("empty", BuiltinArity::Exact(1), empty);
     registry.register("extend", BuiltinArity::Range { min: 2, max: 3 }, extend);
-    registry.register("extendnew", BuiltinArity::Range { min: 2, max: 3 }, extendnew);
+    registry.register(
+        "extendnew",
+        BuiltinArity::Range { min: 2, max: 3 },
+        extendnew,
+    );
     registry.register("flatten", BuiltinArity::Range { min: 1, max: 2 }, flatten);
-    registry.register("flattennew", BuiltinArity::Range { min: 1, max: 2 }, flattennew);
+    registry.register(
+        "flattennew",
+        BuiltinArity::Range { min: 1, max: 2 },
+        flattennew,
+    );
     registry.register("get", BuiltinArity::Range { min: 2, max: 3 }, get);
     registry.register("has_key", BuiltinArity::Exact(2), has_key);
     registry.register("index", BuiltinArity::Range { min: 2, max: 4 }, index);

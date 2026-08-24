@@ -1,5 +1,5 @@
-use crate::runtime::{RuntimeResult, Value};
 use super::{error, type_error};
+use crate::runtime::{RuntimeResult, Value};
 
 fn unary_float<F>(args: &[Value], name: &str, f: F) -> RuntimeResult<Value>
 where
@@ -241,7 +241,9 @@ pub fn srand(args: &[Value]) -> RuntimeResult<Value> {
     if s.iter().all(|&x| x == 0) {
         s[0] = 1;
     }
-    Ok(Value::List(s.iter().map(|&x| Value::Integer(x as i64)).collect()))
+    Ok(Value::List(
+        s.iter().map(|&x| Value::Integer(x as i64)).collect(),
+    ))
 }
 
 pub fn rand(args: &[Value]) -> RuntimeResult<Value> {
@@ -261,7 +263,10 @@ pub fn rand(args: &[Value]) -> RuntimeResult<Value> {
             return Err(type_error("rand", "List", &args[0]));
         };
         if list.len() != 4 {
-            return Err(error("E15", "invalid argument for rand(): seed list must have 4 elements"));
+            return Err(error(
+                "E15",
+                "invalid argument for rand(): seed list must have 4 elements",
+            ));
         }
         let mut s = [0u32; 4];
         for i in 0..4 {

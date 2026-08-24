@@ -148,7 +148,12 @@ impl std::fmt::Debug for Command {
                 .debug_struct("SearchBackward")
                 .field("pattern", pattern)
                 .finish(),
-            Command::Substitute { pattern, substitute_text, flags, range } => f
+            Command::Substitute {
+                pattern,
+                substitute_text,
+                flags,
+                range,
+            } => f
                 .debug_struct("Substitute")
                 .field("pattern", pattern)
                 .field("substitute_text", substitute_text)

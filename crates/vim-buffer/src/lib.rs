@@ -34,7 +34,10 @@ pub use callback::{Callback, CallbackContext, CallbackRegistry, VimEvent};
 pub use edit::{Edit, EditOrigin, EditSummary, PlannedEdit};
 pub use error::BufferError;
 pub use history::{ChangeEntry, ChangeList};
-pub use io::{DecodedFile, ExternalFileStatus, FileMetadata, LoadSource, decode_utf8, encode_utf8, atomic_write};
+pub use io::{
+    DecodedFile, ExternalFileStatus, FileMetadata, LoadSource, atomic_write, decode_utf8,
+    encode_utf8,
+};
 pub use manager::BufferManager;
 pub use marks::MarkSet;
 pub use movement::Motions;
@@ -44,9 +47,11 @@ pub use outcome::{ManagerOutcome, MutationOutcome, OptionsOutcome, SaveOutcome};
 pub use position::{ByteOffset, TextExtent, TextRange};
 pub use search::{TextSearch, compile};
 pub use selection::SelectionExt;
-pub use selection_set::{SelectionCellState, SelectionCollection, SelectionSet, ResolvedSelectionSet};
+pub use selection_set::{
+    ResolvedSelectionSet, SelectionCellState, SelectionCollection, SelectionSet,
+};
 pub use snapshot::{BufferSnapshot, TextChunks};
-pub use text::{OffsetUtf16, Point, PointUtf16, Selection, Anchor};
+pub use text::{Anchor, OffsetUtf16, Point, PointUtf16, Selection};
 pub use transaction::Transaction;
 pub use undo::{UndoNode, UndoTree};
 

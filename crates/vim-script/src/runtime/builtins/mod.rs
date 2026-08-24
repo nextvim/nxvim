@@ -51,7 +51,11 @@ impl BuiltinRegistry {
         math::register(&mut registry);
         string::register(&mut registry);
         collections::register(&mut registry);
-        registry.register("exists", BuiltinArity::Exact(1), state::exists_without_vm_context);
+        registry.register(
+            "exists",
+            BuiltinArity::Exact(1),
+            state::exists_without_vm_context,
+        );
         registry.register("type", BuiltinArity::Exact(1), types::value_type);
         registry
     }
@@ -162,8 +166,8 @@ pub(crate) fn vim_string(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use super::*;
+    use std::sync::Arc;
     #[test]
     fn validates_arity_and_types() {
         let registry = BuiltinRegistry::with_defaults();

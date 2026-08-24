@@ -1,3 +1,5 @@
+pub(super) mod registry;
+
 use std::path::PathBuf;
 use vim_script::host::CommandRequest;
 use vim_script::runtime::{RuntimeError, RuntimeErrorKind};
@@ -364,4 +366,3 @@ fn substitute(request: CommandRequest) -> Result<Command, RuntimeError> {
         range,
     })
 }
-

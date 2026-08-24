@@ -6,7 +6,7 @@ use crate::layout::{ComputedLayout, LayoutEngine, LayoutNode};
 use crate::overlay::OverlayManager;
 use crate::rect::Rect;
 use crate::renderer::Renderer;
-use crate::types::{FloatingConfig, NavigationDirection, SplitAxis, SizeConstraint};
+use crate::types::{FloatingConfig, NavigationDirection, SizeConstraint, SplitAxis};
 use crate::window::Window;
 use crate::window_store::WindowStore;
 use std::collections::HashSet;

@@ -1,9 +1,6 @@
+use super::super::EditorState;
 use std::path::PathBuf;
-use vim_script::runtime::{
-    builtins::{BuiltinArity, BuiltinRegistry},
-    RuntimeError, RuntimeErrorKind, RuntimeResult, Value,
-};
-use crate::script::{CURRENT_STATE, EditorState};
+use vim_script::runtime::{RuntimeError, RuntimeErrorKind, RuntimeResult, Value};
 
 fn type_error(function: &str, expected: &str, actual: &Value) -> RuntimeError {
     RuntimeError::coded(
@@ -13,44 +10,8 @@ fn type_error(function: &str, expected: &str, actual: &Value) -> RuntimeError {
     )
 }
 
-pub fn register(registry: &mut BuiltinRegistry) {
-    registry.register("bufnr", BuiltinArity::Range { min: 0, max: 1 }, bufnr);
-    registry.register("bufexists", BuiltinArity::Exact(1), bufexists);
-    registry.register("getline", BuiltinArity::Range { min: 1, max: 2 }, getline);
-    registry.register("getbufline", BuiltinArity::Range { min: 2, max: 3 }, getbufline);
-    registry.register("getbufoneline", BuiltinArity::Exact(2), getbufoneline);
-}
-
-pub fn names() -> impl Iterator<Item = &'static str> {
-    ["bufnr", "bufexists", "getline", "getbufline", "getbufoneline"].into_iter()
-}
-
-fn with_state<F, R>(f: F) -> RuntimeResult<R>
-where
-    F: FnOnce(&EditorState) -> RuntimeResult<R>,
-{
-    CURRENT_STATE.with(|cell| {
-        let borrow = cell.borrow();
-        let state_arc = borrow.as_ref().ok_or_else(|| {
-            RuntimeError::coded(
-                "E_HOST",
-                RuntimeErrorKind::HostError,
-                "editor state context is not set",
-            )
-        })?;
-        let lock = state_arc.lock().map_err(|_| {
-            RuntimeError::coded(
-                "E_HOST",
-                RuntimeErrorKind::HostError,
-                "editor state lock is poisoned",
-            )
-        })?;
-        f(&*lock)
-    })
-}
-
-pub fn bufnr(args: &[Value]) -> RuntimeResult<Value> {
-    with_state(|state| {
+pub fn bufnr(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    {
         if args.is_empty() {
             let first_id = state.buffers.keys().next().cloned();
             match first_id {
@@ -88,18 +49,19 @@ pub fn bufnr(args: &[Value]) -> RuntimeResult<Value> {
                 other => Err(type_error("bufnr", "String or Number", other)),
             }
         }
-    })
+    }
 }
 
-pub fn bufexists(args: &[Value]) -> RuntimeResult<Value> {
-    with_state(|state| {
+pub fn bufexists(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    {
         let first_arg = args.get(0).ok_or_else(|| {
             RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
         })?;
         match first_arg {
             Value::String(name) => {
                 let path = PathBuf::from(name.as_ref());
-                let exists = state.names.contains_key(&path) || state.names.keys().any(|buf_path| buf_path.ends_with(&path));
+                let exists = state.names.contains_key(&path)
+                    || state.names.keys().any(|buf_path| buf_path.ends_with(&path));
                 Ok(Value::Integer(if exists { 1 } else { 0 }))
             }
             Value::Integer(id) => {
@@ -116,7 +78,7 @@ pub fn bufexists(args: &[Value]) -> RuntimeResult<Value> {
             }
             other => Err(type_error("bufexists", "String or Number", other)),
         }
-    })
+    }
 }
 
 fn parse_lnum(val: &Value) -> Option<u32> {
@@ -129,8 +91,8 @@ fn parse_lnum(val: &Value) -> Option<u32> {
     u32::try_from(positive - 1).ok()
 }
 
-pub fn getline(args: &[Value]) -> RuntimeResult<Value> {
-    with_state(|state| {
+pub fn getline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    {
         let current_id = match state.current_buffer_id {
             Some(id) => id,
             None => return Ok(Value::String(std::sync::Arc::from(""))),
@@ -153,7 +115,8 @@ pub fn getline(args: &[Value]) -> RuntimeResult<Value> {
                 Ok(Value::String(std::sync::Arc::from("")))
             } else {
                 let start = snapshot.point_to_offset(text::Point::new(start_row, 0));
-                let end = snapshot.point_to_offset(text::Point::new(start_row, snapshot.line_len(start_row)));
+                let end = snapshot
+                    .point_to_offset(text::Point::new(start_row, snapshot.line_len(start_row)));
                 let line_text: String = snapshot.text_for_range(start..end).collect();
                 Ok(Value::String(std::sync::Arc::from(line_text)))
             }
@@ -179,10 +142,13 @@ pub fn getline(args: &[Value]) -> RuntimeResult<Value> {
             }
             Ok(Value::List(lines))
         }
-    })
+    }
 }
 
-fn find_buffer_snapshot<'a>(state: &'a EditorState, buf_expr: &Value) -> Option<&'a text::BufferSnapshot> {
+fn find_buffer_snapshot<'a>(
+    state: &'a EditorState,
+    buf_expr: &Value,
+) -> Option<&'a text::BufferSnapshot> {
     match buf_expr {
         Value::String(name) => {
             let path = PathBuf::from(name.as_ref());
@@ -209,8 +175,8 @@ fn find_buffer_snapshot<'a>(state: &'a EditorState, buf_expr: &Value) -> Option<
     }
 }
 
-pub fn getbufline(args: &[Value]) -> RuntimeResult<Value> {
-    with_state(|state| {
+pub fn getbufline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    {
         let first_arg = args.get(0).ok_or_else(|| {
             RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
         })?;
@@ -251,11 +217,11 @@ pub fn getbufline(args: &[Value]) -> RuntimeResult<Value> {
             lines.push(Value::String(std::sync::Arc::from(line_text)));
         }
         Ok(Value::List(lines))
-    })
+    }
 }
 
-pub fn getbufoneline(args: &[Value]) -> RuntimeResult<Value> {
-    with_state(|state| {
+pub fn getbufoneline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    {
         let first_arg = args.get(0).ok_or_else(|| {
             RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
         })?;
@@ -280,5 +246,5 @@ pub fn getbufoneline(args: &[Value]) -> RuntimeResult<Value> {
             let line_text: String = snapshot.text_for_range(start..end).collect();
             Ok(Value::String(std::sync::Arc::from(line_text)))
         }
-    })
+    }
 }

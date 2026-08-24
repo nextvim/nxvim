@@ -526,7 +526,10 @@ impl Resolver {
     fn declare_name(&mut self, name: &ScopedName, is_const: bool, span: Span) -> SymbolId {
         let mut name = name.clone();
         let scope = self.scope_for_name(&name, true);
-        if self.config.unqualified_is_global && name.scope == Scope::Unqualified && scope == ScopeId(0) {
+        if self.config.unqualified_is_global
+            && name.scope == Scope::Unqualified
+            && scope == ScopeId(0)
+        {
             name.scope = Scope::Global;
         }
         let key = symbol_key(name.scope, &name.name);
@@ -536,7 +539,10 @@ impl Resolver {
                     self.diagnostics.push(
                         Diagnostic::error(
                             "R003",
-                            format!("cannot assign to immutable variable {}", display_name(&name)),
+                            format!(
+                                "cannot assign to immutable variable {}",
+                                display_name(&name)
+                            ),
                             span,
                         )
                         .with_label(

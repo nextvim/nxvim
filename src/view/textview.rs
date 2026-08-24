@@ -81,7 +81,14 @@ impl<'a> vim_script::host::RangeStateProvider for ViewRangeStateProvider<'a> {
         if self.window.selections.selections.is_empty() {
             1
         } else {
-            (self.window.selections.primary().head().to_point(self.buffer.as_text_buffer()).row + 1) as usize
+            (self
+                .window
+                .selections
+                .primary()
+                .head()
+                .to_point(self.buffer.as_text_buffer())
+                .row
+                + 1) as usize
         }
     }
 
@@ -91,7 +98,8 @@ impl<'a> vim_script::host::RangeStateProvider for ViewRangeStateProvider<'a> {
 
     fn get_mark(&self, name: char) -> Option<usize> {
         use text::ToPoint;
-        self.buffer.resolve_mark(name)
+        self.buffer
+            .resolve_mark(name)
             .map(|offset| (offset.0.to_point(self.buffer.as_text_buffer()).row + 1) as usize)
     }
 
@@ -218,9 +226,7 @@ pub fn build_text(
                     let matches = line_text.find_pattern(regex);
                     match_ranges = matches
                         .iter()
-                        .map(|(byte_start, byte_len, _)| {
-                            (*byte_start, *byte_start + *byte_len)
-                        })
+                        .map(|(byte_start, byte_len, _)| (*byte_start, *byte_start + *byte_len))
                         .collect();
                 }
             }
@@ -330,18 +336,17 @@ pub fn build_text(
             let mut skipped_by_substitute = false;
             if let Some(sub_text) = substitute_text {
                 if !sub_text.is_empty() {
-                if let Some(&(start, end)) = match_ranges
-                    .iter()
-                    .find(|&&(s, e)| (point.column as usize) >= s && (point.column as usize) < e)
-                {
-                    if (point.column as usize) == start {
-                        let mut style = row_default_style.clone();
-                        style.bg = search_style.bg;
-                        style.fg = search_style.fg;
-                        spans.push(vim_ui::model::TextSpan::new(sub_text.to_string(), style));
+                    if let Some(&(start, end)) = match_ranges.iter().find(|&&(s, e)| {
+                        (point.column as usize) >= s && (point.column as usize) < e
+                    }) {
+                        if (point.column as usize) == start {
+                            let mut style = row_default_style.clone();
+                            style.bg = search_style.bg;
+                            style.fg = search_style.fg;
+                            spans.push(vim_ui::model::TextSpan::new(sub_text.to_string(), style));
+                        }
+                        skipped_by_substitute = true;
                     }
-                    skipped_by_substitute = true;
-                }
                 }
             }
             if skipped_by_substitute {

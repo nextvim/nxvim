@@ -12,7 +12,7 @@ use std::io::{Write, stdout};
 use text::ToPoint;
 use vim_ui::{BufferedRenderer, Window};
 
-/// Owns terminal lifecycle, source polling, command dispatch, and rendering.
+// Owns terminal lifecycle, source polling, command dispatch, and rendering.
 pub struct Runtime {
     terminal: TerminalSession,
     app: App,
@@ -40,6 +40,16 @@ impl Runtime {
             buffered_renderer: BufferedRenderer::new(rect.width, rect.height),
             script,
         })
+    }
+
+    fn update_script_state(&self) -> Result<(), String> {
+        let focused_window = self.app.ui.focused_window_id();
+        let current_buffer = WindowOps::window_buffer(&self.app.ui, focused_window)
+            .filter(|id| *id != self.app.model.commandline_buffer())
+            .or_else(|| WindowOps::window_buffer(&self.app.ui, self.app.view_ids.main))
+            .unwrap_or_else(|| self.app.model.buffers().current());
+
+        self.script.update_state(&self.app.model, current_buffer)
     }
 
     pub fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -117,7 +127,7 @@ impl Runtime {
             let processed_any = !commands.is_empty();
             for command in commands {
                 if let Command::ExecuteScript(ref script_str) = command {
-                    let _ = self.script.update_state(&self.app.model);
+                    let _ = self.update_script_state();
                     if let Err(err) = self.script.execute(script_str) {
                         self.app.model.status = Some(err);
                     }
@@ -132,7 +142,7 @@ impl Runtime {
                 }
             }
             if processed_any {
-                let _ = self.script.update_state(&self.app.model);
+                let _ = self.update_script_state();
             }
 
             if should_redraw {
@@ -629,14 +639,22 @@ impl Runtime {
             view.refresh(&tabs, active_index, &globals);
         }
 
-        let (buffer_name, modified, cursor, scope_path, inspect_label) = self.status_line_data(active_window);
+        let (buffer_name, modified, cursor, scope_path, inspect_label) =
+            self.status_line_data(active_window);
         if let Some(view) = self
             .app
             .ui
             .window_mut(self.app.view_ids.statusline)
             .and_then(Window::view_as_mut::<StatusLineView>)
         {
-            view.refresh(&globals, buffer_name, modified, cursor, scope_path, inspect_label);
+            view.refresh(
+                &globals,
+                buffer_name,
+                modified,
+                cursor,
+                scope_path,
+                inspect_label,
+            );
         }
     }
 
@@ -717,10 +735,16 @@ impl Runtime {
                             scope_path = vec!["indexer is not enabled".to_string()];
                         } else {
                             let files_count = self.app.services.indexer.buffer_keywords.len();
-                            let keys_count: usize = self.app.services.indexer.buffer_keywords.values()
+                            let keys_count: usize = self
+                                .app
+                                .services
+                                .indexer
+                                .buffer_keywords
+                                .values()
                                 .map(|row_map| row_map.values().map(|set| set.len()).sum::<usize>())
                                 .sum();
-                            scope_path = vec![format!("files: {}, keys: {}", files_count, keys_count)];
+                            scope_path =
+                                vec![format!("files: {}, keys: {}", files_count, keys_count)];
                             if let Ok(offset) = buffer
                                 .snapshot()
                                 .point_to_offset(vim_buffer::Point::new(point.row, point.column))
@@ -729,7 +753,9 @@ impl Runtime {
                                 use vim_buffer::TextSearch;
                                 if let Some((_, _, word)) = text.find_word(offset.0) {
                                     let results = self.app.services.indexer.query(word, None);
-                                    scope_path.extend(results.iter().map(|entry| entry.keyword.clone()).take(5));
+                                    scope_path.extend(
+                                        results.iter().map(|entry| entry.keyword.clone()).take(5),
+                                    );
                                 }
                             }
                         }

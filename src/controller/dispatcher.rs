@@ -1,6 +1,6 @@
 use crate::app::App;
-use vim_script::host::RangeStateProvider;
 use text::ToPoint;
+use vim_script::host::RangeStateProvider;
 
 use super::buffer_handler::BufferHandler;
 use super::command::{Command, CommandOutcome};
@@ -41,7 +41,11 @@ impl Dispatcher {
                     &mut app.model,
                     active_window,
                     |buffer, _context, window_state| {
-                        window_state.selections.move_to_next_match(&pattern, true, buffer.as_text_buffer());
+                        window_state.selections.move_to_next_match(
+                            &pattern,
+                            true,
+                            buffer.as_text_buffer(),
+                        );
                     },
                 );
                 CommandOutcome::redraw()
@@ -58,12 +62,21 @@ impl Dispatcher {
                     &mut app.model,
                     active_window,
                     |buffer, _context, window_state| {
-                        window_state.selections.move_to_previous_match(&pattern, true, buffer.as_text_buffer());
+                        window_state.selections.move_to_previous_match(
+                            &pattern,
+                            true,
+                            buffer.as_text_buffer(),
+                        );
                     },
                 );
                 CommandOutcome::redraw()
             }
-            Command::Substitute { pattern, substitute_text, flags, range } => {
+            Command::Substitute {
+                pattern,
+                substitute_text,
+                flags,
+                range,
+            } => {
                 app.model.search_pattern = Some(pattern.clone());
                 app.model.search_regex =
                     vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
@@ -92,17 +105,25 @@ impl Dispatcher {
                 let start_row = (start_line.saturating_sub(1)) as u32;
                 let end_row = (end_line.saturating_sub(1)) as u32;
 
-                let cursor_pos = provider.ui
+                let cursor_pos = provider
+                    .ui
                     .window(provider.window_id)
                     .and_then(vim_ui::Window::window_state)
-                    .and_then(|w| provider.model.get_buffer(w.buffer_id).ok().map(|buf| (w, buf)))
+                    .and_then(|w| {
+                        provider
+                            .model
+                            .get_buffer(w.buffer_id)
+                            .ok()
+                            .map(|buf| (w, buf))
+                    })
                     .and_then(|(w, buf)| {
                         w.selections
                             .first()
                             .map(|sel| sel.head().to_point(buf.as_text_buffer()))
                     });
 
-                let regex = vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
+                let regex =
+                    vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
                 let _ = crate::app::windows::WindowOps::edit_window(
                     &mut app.ui,
                     &mut app.model,
@@ -131,8 +152,10 @@ impl Dispatcher {
                                     let text_buf = buffer.as_text_buffer();
                                     use text::{Point, ToOffset};
                                     let start = Point::new(row, 0).to_offset(text_buf);
-                                    let end = Point::new(row, text_buf.line_len(row)).to_offset(text_buf);
-                                    let text: String = text_buf.as_rope().chunks_in_range(start..end).collect();
+                                    let end =
+                                        Point::new(row, text_buf.line_len(row)).to_offset(text_buf);
+                                    let text: String =
+                                        text_buf.as_rope().chunks_in_range(start..end).collect();
                                     let line_start_offset = Point::new(row, 0).to_offset(text_buf);
                                     (text, line_start_offset)
                                 };
@@ -142,17 +165,26 @@ impl Dispatcher {
                                 }
 
                                 if let Some(ref regex) = regex {
-                                    if let Some((start_byte, len, _)) = text[start_search_offset..].find_next_pattern_match(regex, 0) {
+                                    if let Some((start_byte, len, _)) = text[start_search_offset..]
+                                        .find_next_pattern_match(regex, 0)
+                                    {
                                         let absolute_start_byte = start_search_offset + start_byte;
                                         let range = vim_buffer::TextRange::new(
-                                            vim_buffer::ByteOffset(line_start_offset + absolute_start_byte),
-                                            vim_buffer::ByteOffset(line_start_offset + absolute_start_byte + len),
-                                        ).unwrap();
-                                        let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
+                                            vim_buffer::ByteOffset(
+                                                line_start_offset + absolute_start_byte,
+                                            ),
+                                            vim_buffer::ByteOffset(
+                                                line_start_offset + absolute_start_byte + len,
+                                            ),
+                                        )
+                                        .unwrap();
+                                        let mut tx =
+                                            buffer.transaction(vim_buffer::EditOrigin::VimScript);
                                         tx.replace(None, range, &*substitute_text);
                                         let _ = tx.commit(None);
 
-                                        start_search_offset = absolute_start_byte + substitute_text.len();
+                                        start_search_offset =
+                                            absolute_start_byte + substitute_text.len();
                                         if !flags.contains('g') {
                                             break;
                                         }
@@ -590,28 +622,31 @@ impl Dispatcher {
                                                 app.model.search_pattern = None;
                                                 app.model.search_regex = None;
                                             } else {
-                                                app.model.search_regex =
-                                                    vim_regex::Regex::compile(
-                                                        &pattern,
-                                                        vim_regex::CompileOptions::default(),
-                                                    )
-                                                    .ok();
+                                                app.model.search_regex = vim_regex::Regex::compile(
+                                                    &pattern,
+                                                    vim_regex::CompileOptions::default(),
+                                                )
+                                                .ok();
                                                 app.model.search_pattern = Some(pattern);
                                             }
                                             app.model.search_range = None;
                                             app.model.substitute_text = None;
                                         }
-                                        Command::Substitute { pattern, substitute_text, range, .. } => {
+                                        Command::Substitute {
+                                            pattern,
+                                            substitute_text,
+                                            range,
+                                            ..
+                                        } => {
                                             if pattern.is_empty() {
                                                 app.model.search_pattern = None;
                                                 app.model.search_regex = None;
                                             } else {
-                                                app.model.search_regex =
-                                                    vim_regex::Regex::compile(
-                                                        &pattern,
-                                                        vim_regex::CompileOptions::default(),
-                                                    )
-                                                    .ok();
+                                                app.model.search_regex = vim_regex::Regex::compile(
+                                                    &pattern,
+                                                    vim_regex::CompileOptions::default(),
+                                                )
+                                                .ok();
                                                 app.model.search_pattern = Some(pattern);
                                             }
                                             app.model.search_range = range;
@@ -625,7 +660,7 @@ impl Dispatcher {
                     }
                 } else {
                     // clearing required
-                    if app.model.substitute_text.is_some() {                        
+                    if app.model.substitute_text.is_some() {
                         app.model.search_pattern = None;
                         app.model.search_regex = None;
                         app.model.search_range = None;

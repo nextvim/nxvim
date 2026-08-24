@@ -11,8 +11,7 @@ fn runtime_root() -> PathBuf {
 }
 
 fn command(name: &str, minimum_abbreviation: usize, capability: Capability) -> CommandDefinition {
-    CommandDefinition::new(name, minimum_abbreviation)
-        .with_capabilities(vec![capability])
+    CommandDefinition::new(name, minimum_abbreviation).with_capabilities(vec![capability])
 }
 
 #[test]

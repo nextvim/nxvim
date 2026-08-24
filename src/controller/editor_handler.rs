@@ -67,7 +67,6 @@ impl EditorHandler {
             input.set_mode(mode);
         }
 
-
         CommandOutcome::redraw()
     }
 }
