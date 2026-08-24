@@ -1,31 +1,32 @@
 # PKGBUILD for nxvim (Arch Linux)
-# Maintainer: Maintainer <maintainer@example.com>
+# Maintainer: Maintainer <m4rvin2005@gmail.com>
 
 pkgname=nxvim
 pkgver=0.1.0
 pkgrel=1
+_commit=1486c45e042ef97a95bedae27b3dc4694b9d2d69
 pkgdesc="A Vim-inspired terminal text editor written in Rust, powered by Zed's Rope engine"
 arch=('x86_64' 'aarch64')
-url="https://github.com/user/nxvim"
-license=('GPL-3.0-or-later' 'Apache-2.0')
+url="https://github.com/nextvim/nxvim"
+license=('custom:Vim')
 depends=('gcc-libs')
-makedepends=('cargo')
-source=("${pkgname}-${pkgver}.tar.gz::https://github.com/user/${pkgname}/archive/v${pkgver}.tar.gz")
-sha256sums=('SKIP')
+makedepends=('cargo' 'clang' 'pkgconf')
+source=("${pkgname}-${_commit}.tar.gz::https://github.com/nextvim/${pkgname}/archive/${_commit}.tar.gz")
+sha256sums=('c274058a85d47ac8b8bf6766086edd7e53d66ca0108050968226740a611dec46')
 
 prepare() {
-  cd "${pkgname}-${pkgver}"
+  cd "${pkgname}-${_commit}"
   cargo fetch --locked --target "$(rustc -vV | sed -n 's|host: ||p')"
 }
 
 build() {
-  cd "${pkgname}-${pkgver}"
+  cd "${pkgname}-${_commit}"
   export RUSTUP_TOOLCHAIN=stable
   cargo build --frozen --release
 }
 
 package() {
-  cd "${pkgname}-${pkgver}"
+  cd "${pkgname}-${_commit}"
   install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

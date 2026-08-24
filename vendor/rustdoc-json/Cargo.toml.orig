@@ -1,0 +1,30 @@
+[package]
+edition = "2024"
+name = "rustdoc-json"
+version = "0.9.10"
+description = "Utilities for working with rustdoc JSON."
+homepage = "https://github.com/cargo-public-api/cargo-public-api/tree/main/rustdoc-json"
+documentation = "https://docs.rs/rustdoc-json"
+readme = "README.md"
+keywords = ["rustdoc-json", "api", "doc"]
+license = "MIT"
+repository = "https://github.com/cargo-public-api/cargo-public-api/tree/main/rustdoc-json"
+
+[dependencies]
+cargo_metadata = "0.23.1"
+cargo-manifest = "0.20.0"
+serde = { version = "1.0.179", features = ["derive"] }
+thiserror = "2.0.3"
+toml = "1.0.3"
+
+[dependencies.tracing]
+version = "0.1.43"
+features = ["attributes"]
+
+[dev-dependencies]
+assert_cmd = "2.2.0"
+tempfile = "3.19.1"
+
+[dev-dependencies.predicates]
+version = "3.1.4"
+default-features = false

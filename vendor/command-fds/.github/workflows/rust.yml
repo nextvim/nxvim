@@ -1,0 +1,53 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    permissions:
+      checks: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@nextest
+      - name: Build
+        run: cargo build
+      - name: Run tests
+        run: cargo nextest run
+      - name: Run doctests
+        run: cargo test --doc
+      - name: Run clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Format Rust code
+        run: cargo fmt --all -- --check
+
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_BOOTSTRAP: 1
+    steps:
+      - uses: actions/checkout@v6
+      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run tests with coverage
+        run: cargo llvm-cov nextest --all-features --codecov --output-path codecov-report.json
+      - name: Upload coverage to codecov.io
+        uses: codecov/codecov-action@v6
+        with:
+          fail_ci_if_error: true
+          files: codecov-report.json
+          token: ${{ secrets.CODECOV_TOKEN }}

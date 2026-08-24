@@ -24,7 +24,7 @@ A Vim-inspired terminal text editor written in Rust, powered by Zed's ultra-high
 %autosetup -n %{name}-%{commit}
 
 %build
-cargo build --release --locked
+cargo build --release --locked --offline
 
 %install
 rm -rf %{buildroot}
