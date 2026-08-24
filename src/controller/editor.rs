@@ -6,6 +6,7 @@ use sum_tree::Bias;
 use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use vim_buffer::{Buffer, Motions, SelectionSet};
 use vim_input::{Action, Mode};
+use vim_regex::{CompileOptions, Regex};
 use vim_ui::WindowState;
 
 /// The kind of case transformation to apply to a span of text.
@@ -1289,6 +1290,100 @@ impl Editor {
                     .selections
                     .move_to_end_of_line(*select, buffer.as_text_buffer());
             }
+            Action::MoveToLastNonWhitespace { count, select } => {
+                let regex = Regex::compile(r"\S\ze\s*$", CompileOptions::default())
+                    .expect("last non-whitespace regex must compile");
+                let text_buffer = buffer.as_text_buffer();
+                let last_row = text_buffer.row_count().saturating_sub(1);
+                let cursors = buffer_display_context.selections.selections.clone();
+
+                for cursor in cursors.iter() {
+                    let current_row = cursor.head().to_point(text_buffer).row;
+                    let target_row = current_row
+                        .saturating_add(count.saturating_sub(1))
+                        .min(last_row);
+                    let row_text = Self::row_text(buffer, target_row);
+                    let target_column = regex
+                        .find(&row_text)
+                        .ok()
+                        .flatten()
+                        .map_or(0, |found| found.range.start as u32);
+                    let target = text_buffer.anchor_at(
+                        Point::new(target_row, target_column).to_offset(text_buffer),
+                        Bias::Left,
+                    );
+                    let next = Selection {
+                        id: cursor.id,
+                        start: if *select {
+                            cursor.tail()
+                        } else {
+                            target.clone()
+                        },
+                        end: target.clone(),
+                        reversed: true,
+                        goal: SelectionGoal::None,
+                    };
+                    buffer_display_context.selections.point = target.to_point(text_buffer);
+                    buffer_display_context.selections.update(text_buffer, &next);
+                }
+            }
+            Action::MoveToMatchingDelimiter { select, .. } => {
+                let text_buffer = buffer.as_text_buffer();
+                let cursors = buffer_display_context.selections.selections.clone();
+
+                for cursor in cursors.iter() {
+                    let byte = text_buffer.offset_for_anchor(&cursor.head());
+                    let mut target = None;
+
+                    if let Ok(syntax_tree) = &buffer_context.treesitter {
+                        if let Some((start_node, end_node)) =
+                            syntax_tree.delimiter_boundaries_at_byte(byte)
+                        {
+                            if (start_node.byte_range.start..start_node.byte_range.end)
+                                .contains(&byte)
+                            {
+                                target = Some(end_node.byte_range.start);
+                            } else if (end_node.byte_range.start..end_node.byte_range.end)
+                                .contains(&byte)
+                            {
+                                target = Some(start_node.byte_range.start);
+                            }
+                        }
+                    }
+
+                    if target.is_none() {
+                        let current = text_buffer
+                            .as_rope()
+                            .chunks_in_range(byte..byte.saturating_add(1))
+                            .collect::<String>();
+                        if let Some(ch) = current.chars().next() {
+                            if let Some((start, end)) =
+                                scanner_delimiter_match(text_buffer, byte, ch)
+                            {
+                                target = Some(if byte <= start { end } else { start });
+                            }
+                        }
+                    }
+
+                    if let Some(target_offset) = target {
+                        let target_anchor = text_buffer.anchor_at(target_offset, Bias::Left);
+                        let next = Selection {
+                            id: cursor.id,
+                            start: if *select {
+                                cursor.tail()
+                            } else {
+                                target_anchor.clone()
+                            },
+                            end: target_anchor.clone(),
+                            reversed: true,
+                            goal: SelectionGoal::None,
+                        };
+                        buffer_display_context.selections.point =
+                            target_anchor.to_point(text_buffer);
+                        buffer_display_context.selections.update(text_buffer, &next);
+                    }
+                }
+            }
             Action::MoveToStartOfPreviousLine { select, .. } => {
                 buffer_display_context
                     .selections
@@ -1955,7 +2050,8 @@ impl Editor {
                     | Action::MoveToPreviousParagraph { select, .. }
                     | Action::MoveToNextParagraph { select, .. }
                     | Action::MoveToPreviousCharacter { select, .. }
-                    | Action::MoveToNextCharacter { select, .. } => *select = true,
+                    | Action::MoveToNextCharacter { select, .. }
+                    | Action::MoveToMatchingDelimiter { select, .. } => *select = true,
                     _ => {}
                 }
 
@@ -2434,7 +2530,8 @@ impl Editor {
             | Action::MoveToPreviousParagraph { select, .. }
             | Action::MoveToNextParagraph { select, .. }
             | Action::MoveToPreviousCharacter { select, .. }
-            | Action::MoveToNextCharacter { select, .. } => *select = true,
+            | Action::MoveToNextCharacter { select, .. }
+            | Action::MoveToMatchingDelimiter { select, .. } => *select = true,
             _ => {}
         }
 

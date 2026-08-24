@@ -186,6 +186,14 @@ pub enum Action {
         count: u32,
         select: bool,
     },
+    MoveToLastNonWhitespace {
+        count: u32,
+        select: bool,
+    },
+    MoveToMatchingDelimiter {
+        count: u32,
+        select: bool,
+    },
     MoveToStartOfPreviousLine {
         count: u32,
         select: bool,
@@ -287,6 +295,14 @@ pub enum Action {
         count: u32,
         ch: char,
         till: bool,
+        select: bool,
+    },
+    RepeatCharacterSearchForward {
+        count: u32,
+        select: bool,
+    },
+    RepeatCharacterSearchBackward {
+        count: u32,
         select: bool,
     },
 
@@ -530,6 +546,12 @@ impl std::fmt::Display for Action {
                 write!(f, "MoveToStartOfLineNonSpace({})", count)
             }
             Action::MoveToEndOfLine { count, .. } => write!(f, "MoveToEndOfLine({})", count),
+            Action::MoveToLastNonWhitespace { count, .. } => {
+                write!(f, "MoveToLastNonWhitespace({})", count)
+            }
+            Action::MoveToMatchingDelimiter { count, .. } => {
+                write!(f, "MoveToMatchingDelimiter({})", count)
+            }
             Action::MoveToStartOfPreviousLine { count, .. } => {
                 write!(f, "MoveToStartOfPrevLine({})", count)
             }
@@ -583,6 +605,12 @@ impl std::fmt::Display for Action {
                 count, ch, till, ..
             } => {
                 write!(f, "MoveToPreviousCharacter({} {} till={})", count, ch, till)
+            }
+            Action::RepeatCharacterSearchForward { count, .. } => {
+                write!(f, "RepeatCharacterSearchForward({})", count)
+            }
+            Action::RepeatCharacterSearchBackward { count, .. } => {
+                write!(f, "RepeatCharacterSearchBackward({})", count)
             }
             Action::MoveWithinCharacter { count, ch, .. } => {
                 write!(f, "MoveWithinCharacter({} {})", count, ch)
@@ -732,6 +760,12 @@ impl Action {
                 Action::MoveToStartOfLineNonSpace { count, select }
             }
             Action::MoveToEndOfLine { count, .. } => Action::MoveToEndOfLine { count, select },
+            Action::MoveToLastNonWhitespace { count, .. } => {
+                Action::MoveToLastNonWhitespace { count, select }
+            }
+            Action::MoveToMatchingDelimiter { count, .. } => {
+                Action::MoveToMatchingDelimiter { count, select }
+            }
             Action::MoveToStartOfPreviousLine { count, .. } => {
                 Action::MoveToStartOfPreviousLine { count, select }
             }
@@ -779,6 +813,12 @@ impl Action {
                 till,
                 select,
             },
+            Action::RepeatCharacterSearchForward { count, .. } => {
+                Action::RepeatCharacterSearchForward { count, select }
+            }
+            Action::RepeatCharacterSearchBackward { count, .. } => {
+                Action::RepeatCharacterSearchBackward { count, select }
+            }
             Action::MoveToNextFunction { count, .. } => {
                 Action::MoveToNextFunction { count, select }
             }
@@ -892,6 +932,14 @@ impl Action {
                 count,
                 select: false,
             },
+            Action::MoveToLastNonWhitespace { .. } => Action::MoveToLastNonWhitespace {
+                count,
+                select: false,
+            },
+            Action::MoveToMatchingDelimiter { .. } => Action::MoveToMatchingDelimiter {
+                count,
+                select: false,
+            },
             Action::MoveToStartOfPreviousLine { .. } => Action::MoveToStartOfPreviousLine {
                 count,
                 select: false,
@@ -952,6 +1000,12 @@ impl Action {
                 till,
                 select,
             },
+            Action::RepeatCharacterSearchForward { select, .. } => {
+                Action::RepeatCharacterSearchForward { count, select }
+            }
+            Action::RepeatCharacterSearchBackward { select, .. } => {
+                Action::RepeatCharacterSearchBackward { count, select }
+            }
             Action::MoveToNextFunction { select, .. } => {
                 Action::MoveToNextFunction { count, select }
             }
@@ -1143,6 +1197,8 @@ impl Action {
             Action::MoveToLine { .. } => 1,
             Action::MoveToStartOfLineNonSpace { count, .. } => *count,
             Action::MoveToEndOfLine { count, .. } => *count,
+            Action::MoveToLastNonWhitespace { count, .. } => *count,
+            Action::MoveToMatchingDelimiter { count, .. } => *count,
             Action::MoveToStartOfPreviousLine { count, .. } => *count,
             Action::MoveToEndOfPreviousLine { count, .. } => *count,
             Action::MoveToStartOfNextLine { count, .. } => *count,
@@ -1192,6 +1248,8 @@ impl Action {
             Action::InsertNewLineMotion { count, .. } => *count,
             Action::MoveToNextCharacter { count, .. } => *count,
             Action::MoveToPreviousCharacter { count, .. } => *count,
+            Action::RepeatCharacterSearchForward { count, .. } => *count,
+            Action::RepeatCharacterSearchBackward { count, .. } => *count,
             Action::MoveToNextFunction { count, .. } => *count,
             Action::MoveToPreviousFunction { count, .. } => *count,
             Action::MoveToNextBlock { count, .. } => *count,

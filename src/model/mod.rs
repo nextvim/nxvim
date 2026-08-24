@@ -10,6 +10,7 @@ mod buffer_state;
 mod buffers;
 
 use vim_buffer::BufferId;
+use vim_input::Action;
 use vim_regex::Regex;
 
 pub use buffer_state::BufferState;
@@ -21,7 +22,7 @@ pub struct EditorModel {
     pub status: Option<String>,
     pub commandline_buffer: BufferId,
     pub commandline_mode: char,
-    pub search_char: Option<char>,
+    pub last_character_search: Option<Action>,
     pub search_pattern: Option<String>,
     pub search_regex: Option<Regex>,
     pub search_range: Option<vim_script::ast::CommandRange>,
@@ -49,7 +50,7 @@ impl EditorModel {
             status: None,
             commandline_buffer,
             commandline_mode: ':',
-            search_char: None,
+            last_character_search: None,
             search_pattern: None,
             search_regex: None,
             search_range: None,

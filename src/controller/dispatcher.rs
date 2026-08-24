@@ -454,6 +454,48 @@ impl Dispatcher {
                         }
                         return CommandOutcome::redraw();
                     }
+                    vim_input::Action::RepeatCharacterSearchForward { count, select } => {
+                        if let Some(last) = app.model.last_character_search.as_ref() {
+                            let action = match last {
+                                vim_input::Action::MoveToNextCharacter { ch, till, .. }
+                                | vim_input::Action::MoveToPreviousCharacter { ch, till, .. } => {
+                                    vim_input::Action::MoveToNextCharacter {
+                                        count: *count,
+                                        ch: *ch,
+                                        till: *till,
+                                        select: *select,
+                                    }
+                                }
+                                _ => return CommandOutcome::redraw(),
+                            };
+                            app.command_queue.push_back(Command::Editor {
+                                action,
+                                register: None,
+                            });
+                        }
+                        return CommandOutcome::redraw();
+                    }
+                    vim_input::Action::RepeatCharacterSearchBackward { count, select } => {
+                        if let Some(last) = app.model.last_character_search.as_ref() {
+                            let action = match last {
+                                vim_input::Action::MoveToNextCharacter { ch, till, .. }
+                                | vim_input::Action::MoveToPreviousCharacter { ch, till, .. } => {
+                                    vim_input::Action::MoveToPreviousCharacter {
+                                        count: *count,
+                                        ch: *ch,
+                                        till: *till,
+                                        select: *select,
+                                    }
+                                }
+                                _ => return CommandOutcome::redraw(),
+                            };
+                            app.command_queue.push_back(Command::Editor {
+                                action,
+                                register: None,
+                            });
+                        }
+                        return CommandOutcome::redraw();
+                    }
                     vim_input::Action::Repeat { count } => {
                         if let Some(ref actions) = app.services.repeat_actions {
                             for _ in 0..*count {

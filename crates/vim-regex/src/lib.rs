@@ -136,6 +136,14 @@ mod public_api_tests {
     }
 
     #[test]
+    fn finds_last_non_whitespace_character_at_end_of_line() {
+        let regex = Regex::compile(r"\S\ze\s*$", CompileOptions::default()).unwrap();
+        let found = regex.find("text   ").unwrap().unwrap();
+        assert_eq!(&"text   "[found.range], "t");
+        assert!(regex.find("   ").unwrap().is_none());
+    }
+
+    #[test]
     fn adjusts_vim_match_boundaries_through_the_public_api() {
         let regex = Regex::compile(r"abc\zsdd", CompileOptions::default()).unwrap();
         let found = regex.find("ddabcddxyzt").unwrap().unwrap();

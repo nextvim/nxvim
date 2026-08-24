@@ -266,6 +266,24 @@ impl Keymap {
             .expect("Valid binding");
         motion_actions
             .bind(
+                "g_",
+                Action::MoveToLastNonWhitespace {
+                    count: 1,
+                    select: false,
+                },
+            )
+            .expect("Valid binding");
+        motion_actions
+            .bind(
+                "%",
+                Action::MoveToMatchingDelimiter {
+                    count: 1,
+                    select: false,
+                },
+            )
+            .expect("Valid binding");
+        motion_actions
+            .bind(
                 "-",
                 Action::MoveToStartOfPreviousLine {
                     count: 1,
@@ -406,6 +424,24 @@ impl Keymap {
                     select: false,
                     till: true,
                     ch: '?',
+                },
+            )
+            .expect("Valid binding");
+        motion_actions
+            .bind(
+                ";",
+                Action::RepeatCharacterSearchForward {
+                    count: 1,
+                    select: false,
+                },
+            )
+            .expect("Valid binding");
+        motion_actions
+            .bind(
+                ",",
+                Action::RepeatCharacterSearchBackward {
+                    count: 1,
+                    select: false,
                 },
             )
             .expect("Valid binding");
@@ -918,6 +954,30 @@ impl Keymap {
             .expect("Valid binding");
         insert_actions
             .bind("<Backspace>", Action::DeleteCharBefore { count: 1 })
+            .expect("Valid binding");
+        insert_actions
+            .bind(
+                "<C-w>",
+                Action::DeleteMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveToPreviousWord {
+                        count: 1,
+                        select: false,
+                    }),
+                },
+            )
+            .expect("Valid binding");
+        insert_actions
+            .bind(
+                "<C-u>",
+                Action::DeleteMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveToStartOfLine {
+                        count: 1,
+                        select: false,
+                    }),
+                },
+            )
             .expect("Valid binding");
         insert_actions
             .bind("<Delete>", Action::DeleteChar { count: 1 })

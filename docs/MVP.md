@@ -30,7 +30,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `0` — Jump to beginning of line.
 [x] `^` — Jump to first non-space character of line.
 [x] `$` — Jump to end of line.
-[ ] `g_` — Jump to last non-space character of line. *Pending implementation.*
+[x] `g_` — Jump to last non-space character of line.
 [x] `gg` — Jump to beginning of file.
 [x] `G` — Jump to end of file (or specific line with count).
 [x] `w` / `W` — Word forward / Big word forward.
@@ -39,9 +39,9 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `ge` / `gE` — End of word backward / End of big word backward.
 [x] `f{char}` / `F{char}` — Search forward/backward for `{char}` (inclusive).
 [x] `t{char}` / `T{char}` — Search forward/backward for `{char}` (exclusive).
-[ ] `;` — Repeat last character search. *Pending implementation.*
-[ ] `,` — Repeat last character search in opposite direction. *Pending implementation.*
-[ ] `%` matching `()`, `[]`, `{}` — *Bracket matching is currently out of the motion system.*
+[x] `;` — Repeat last character search.
+[x] `,` — Repeat last character search in opposite direction.
+[x] `%` — Jump to the matching `()`, `[]`, or `{}` delimiter.
 
 ### Screen Movement
 [x] `Ctrl-u` / `Ctrl-d` — Scroll half-page up/down.
@@ -71,15 +71,15 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `>` — Indent selection or range.
 [x] `<` — Unindent selection or range.
 [x] `~` — Toggle case of characters.
-[x] `gu` — Make range lowercase. *Pending integration.*
-[x] `gU` — Make range uppercase. *Pending integration.*
+[x] `gu` — Make range lowercase.
+[x] `gU` — Make range uppercase.
 
 ### Doubled Operators
 [x] `dd` / `cc` / `yy` / `>>` / `<<` — Operator acts on the current line.
 
 ### Operator + Motion
 [x] `dw` / `d$` / `dG` / `cw` / `c3w` — Combines the operator with any resolved motion.
-[ ] `y%` — *Yank matching bracket (depends on `%` motion).*
+[x] `y%` — Yank through the matching bracket.
 
 ---
 
@@ -90,8 +90,8 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `a` / `A` — Append after cursor / at end of line.
 [x] `o` / `O` — Open new line below / above.
 [x] `Esc` — Returns to normal mode and backs up cursor by one character.
-[ ] `Ctrl-w` — Delete previous word in insert mode. *Pending binding.*
-[ ] `Ctrl-u` — Delete to beginning of line in insert mode. *Pending binding.*
+[x] `Ctrl-w` — Delete previous word in insert mode.
+[x] `Ctrl-u` — Delete to beginning of line in insert mode.
 [ ] `Ctrl-r` — Insert register contents in insert mode. *Pending binding.*
 [x] **Correct cursor position entering/leaving Insert mode** — Cursor aligns with standard Vim behavior.
 
@@ -138,7 +138,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 [x] `v` / `V` / `Ctrl-v` — Enters character, line, or block visual selection.
 [x] Visual `d` / `c` / `y` / `>` / `<` / `~` — Applies operator directly on selection range.
 [x] **Visual mode + motions** — Extending visual range via movement.
-[x] **Block insert with `Ctrl-v`, `I`, `Esc`** — *Not yet implemented; entering insert mode from block visual mode acts on a single cursor.*
+[x] **Block insert with `Ctrl-v`, `I`, `Esc`**
 
 ---
 
@@ -158,7 +158,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 
 [x] `/pattern` / `?pattern` — Search forward/backward for pattern.
 [x] `n` / `N` — Repeat last search in same/opposite direction.
-[x] `*` / `#` — Search for word under cursor forward/backward. *Pending implementation.*
+[x] `*` / `#` — Search for word under cursor forward/backward.
 [x] **Search highlighting** — Matches are highlighted in the text view using `onig` and `vim-regex`.
 [x] **Basic regular expressions** — Supported via custom regex parsing.
 [ ] **Search history** — *Not yet implemented.*
@@ -170,7 +170,7 @@ This document tracks the target features for the MVP Vim clone (`nxvim`) and des
 *Not yet implemented.*
 
 [x] `:s/foo/bar/` / `:s/foo/bar/g`
-[ ] `:%s/foo/bar/g` / `:%s/foo/bar/gc`
+[ ] `:s/foo/bar/gc` / `:%s/foo/bar/gc`
 
 ---
 
