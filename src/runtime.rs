@@ -13,6 +13,27 @@ use text::ToPoint;
 use vim_ui::{BufferedRenderer, Window};
 
 // Owns terminal lifecycle, source polling, command dispatch, and rendering.
+fn prompt_choice(event: &event::Event) -> Option<crate::controller::PromptChoice> {
+    use crate::controller::PromptChoice as Choice;
+    use event::{KeyCode, KeyEventKind, KeyModifiers};
+
+    let event::Event::Key(key) = event else {
+        return None;
+    };
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('y' | 'Y') => Some(Choice::Yes),
+        KeyCode::Char('n' | 'N') => Some(Choice::No),
+        KeyCode::Char('a' | 'A') => Some(Choice::All),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Choice::Quit),
+        KeyCode::Char('q' | 'Q') | KeyCode::Esc => Some(Choice::Quit),
+        KeyCode::Char('l' | 'L') => Some(Choice::Last),
+        _ => None,
+    }
+}
+
 pub struct Runtime {
     terminal: TerminalSession,
     app: App,
@@ -95,6 +116,14 @@ impl Runtime {
                     if let event::Event::Resize(width, height) = terminal_event {
                         self.resize(vim_ui::Rect::new(0, 0, width, height));
                         should_redraw = true;
+                    } else if self.app.prompt.is_some() {
+                        if let Some(choice) = prompt_choice(&terminal_event) {
+                            if let Some(handler) =
+                                self.app.prompt.as_ref().map(|prompt| prompt.handler)
+                            {
+                                commands.push(Command::PromptChoice { handler, choice });
+                            }
+                        }
                     } else if let Some(command) = self.app.controller.feed_event(terminal_event) {
                         commands.push(command);
                     }

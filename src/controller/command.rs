@@ -4,6 +4,7 @@ use vim_input::Action;
 use vim_ui::{NavigationDirection, SplitAxis, WindowId};
 
 use super::range::RangeOperation;
+use super::substitute_handler::{PromptChoice, PromptHandler};
 
 pub enum Command {
     Editor {
@@ -12,6 +13,10 @@ pub enum Command {
     },
     PendingInput(String),
     InvalidInput,
+    PromptChoice {
+        handler: PromptHandler,
+        choice: PromptChoice,
+    },
     Save {
         path: Option<PathBuf>,
         force: bool,
@@ -91,6 +96,11 @@ impl std::fmt::Debug for Command {
                 .finish(),
             Command::PendingInput(seq) => f.debug_tuple("PendingInput").field(seq).finish(),
             Command::InvalidInput => write!(f, "InvalidInput"),
+            Command::PromptChoice { handler, choice } => f
+                .debug_struct("PromptChoice")
+                .field("handler", handler)
+                .field("choice", choice)
+                .finish(),
             Command::Save { path, force } => f
                 .debug_struct("Save")
                 .field("path", path)

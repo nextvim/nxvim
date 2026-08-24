@@ -22,12 +22,14 @@ pub(crate) mod input;
 mod lifecycle_handler;
 mod range;
 mod shared_operations;
+mod substitute_handler;
 mod task_dispatcher;
 mod window_handler;
 
 pub use command::{Command, CommandOutcome, ViewEffect};
 pub use dispatcher::Dispatcher;
 pub use range::RangeOperation;
+pub use substitute_handler::{Prompt, PromptChoice, PromptHandler, SubstituteHandler};
 
 #[cfg(test)]
 mod tests {

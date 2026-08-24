@@ -25,6 +25,7 @@ pub struct App {
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
     pub command_queue: std::collections::VecDeque<crate::controller::Command>,
+    pub prompt: Option<crate::controller::Prompt>,
     pub colorscheme: Option<vim_colorscheme::ColorScheme>,
     pub highlighter: Option<textmate::Highlighter<'static>>,
 
@@ -71,6 +72,7 @@ impl App {
             ui,
             view_ids,
             command_queue: std::collections::VecDeque::new(),
+            prompt: None,
             colorscheme: Some(colorscheme),
             highlighter: Some(highlighter),
             config: config::ConfigStore::new(),
