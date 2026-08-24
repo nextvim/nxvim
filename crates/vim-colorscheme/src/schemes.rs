@@ -7,6 +7,7 @@ pub fn get_scheme_content(name: &str) -> Option<&'static str> {
         "catppuccin" | "catppuccin-mocha" => Some(include_str!("./schemes/catppuccin.toml")),
         "dawnfox" => Some(include_str!("./schemes/dawnfox.toml")),
         "dayfox" => Some(include_str!("./schemes/dayfox.toml")),
+        "dracula" => Some(include_str!("./schemes/dracula.toml")),
         "duskfox" => Some(include_str!("./schemes/duskfox.toml")),
         "gruvbox-material" => Some(include_str!("./schemes/gruvbox-material.toml")),
         "kanagawa" => Some(include_str!("./schemes/kanagawa.toml")),
