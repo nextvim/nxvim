@@ -627,7 +627,19 @@ impl Runtime {
             .iter()
             .map(|&id| buffer_display_name(&self.app.model, id))
             .collect();
-        let active_index = WindowOps::window_buffer(&self.app.ui, active_window)
+        // The command-line buffer is intentionally unlisted, so use the
+        // editor window that was focused before entering command-line mode.
+        let tab_window = if active_window == commandline_id {
+            self.app
+                .ui
+                .focus_manager()
+                .previous_id()
+                .filter(|&id| id != commandline_id)
+                .unwrap_or(self.app.view_ids.main)
+        } else {
+            active_window
+        };
+        let active_index = WindowOps::window_buffer(&self.app.ui, tab_window)
             .and_then(|id| buffer_ids.iter().position(|&candidate| candidate == id))
             .unwrap_or(0);
         if let Some(view) = self
