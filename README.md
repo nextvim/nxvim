@@ -4,6 +4,8 @@
 
 It bridges the speed and safety of Rust, the rock-solid collaborative/concurrent editing foundation of Zed, and the extensive editing features, selection models, and scripting capabilities of Vim.
 
+![nxvim screenshot](https://raw.githubusercontent.com/nextvim/nxvim/main/screenshots/Screenshot%20from%202026-08-24%2008-59-21.png)
+
 ## Features
 
 nxvim is under active development. A lot is still missing, and the feature set is not yet intended to be a complete or drop-in replacement for Vim or Neovim. The current implementation includes:
