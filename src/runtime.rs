@@ -34,6 +34,10 @@ impl Runtime {
         let mut app = App::new(rect, args);
         let mut script = crate::script::ScriptRuntime::new();
         app.init(&mut script, pre_config_cmds, post_config_cmds, scripts);
+        app.model
+            .kernel_mut()
+            .events_mut()
+            .push(crate::kernel::EditorEvent::VimEnter);
 
         Ok(Self {
             terminal,
@@ -226,6 +230,10 @@ impl Runtime {
                 let _ = self.script.update_state(&self.app.model, current_buffer);
             }
 
+            // Deferred events are delivered only after the command batch has
+            // committed, so callbacks cannot observe an in-flight mutation.
+            self.deliver_deferred_events();
+
             let (request, invalidations, mut view_invalidations) = self.app.take_redraw();
             crate::app::services::schedule_redraw_invalidations(&mut self.app, &invalidations);
             view_invalidations.extend(self.app.take_view_invalidations());
@@ -247,6 +255,11 @@ impl Runtime {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
+        self.app
+            .model
+            .kernel_mut()
+            .events_mut()
+            .push(crate::kernel::EditorEvent::VimLeave);
         self.terminal.restore()?;
 
         Ok(())
@@ -285,6 +298,12 @@ impl Runtime {
                     );
                 }
                 crate::kernel::CommandEffect::MutationCommitted(mutation) => {
+                    self.app.model.kernel_mut().events_mut().push(
+                        crate::kernel::EditorEvent::TextChanged {
+                            buffer: mutation.buffer,
+                            tick: mutation.changed_tick,
+                        },
+                    );
                     // Older producers may not carry typed invalidations yet.
                     if outcome.invalidations.is_empty() {
                         let invalidations = mutation.invalidations();
@@ -299,6 +318,11 @@ impl Runtime {
                     log::trace!("kernel background work requested: {kind}");
                 }
                 crate::kernel::CommandEffect::CursorMoved { window } => {
+                    self.app
+                        .model
+                        .kernel_mut()
+                        .events_mut()
+                        .push(crate::kernel::EditorEvent::CursorMoved { window: *window });
                     self.app.queue_redraw(
                         crate::kernel::RedrawRequest::View,
                         &[crate::kernel::RedrawInvalidation::window(
@@ -328,6 +352,12 @@ impl Runtime {
                 | crate::kernel::CommandEffect::OptionChanged { .. }
                 | crate::kernel::CommandEffect::QuitRequested => {}
             }
+        }
+    }
+
+    fn deliver_deferred_events(&mut self) {
+        for event in self.app.model.kernel_mut().events_mut().drain_deferred() {
+            log::trace!("deferred editor event: {event:?}");
         }
     }
 

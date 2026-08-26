@@ -173,6 +173,21 @@ impl EditorState {
         Ok(outcome)
     }
 
+    /// Commits buffer options before publishing the corresponding option event.
+    pub fn set_buffer_options(
+        &mut self,
+        id: BufferId,
+        options: vim_buffer::BufferOptions,
+        name: impl Into<super::OptionName>,
+    ) -> Result<bool, vim_buffer::BufferError> {
+        let changed = self.buffers.get_mut(id)?.set_options(options)?.is_some();
+        if changed {
+            self.events
+                .push(super::EditorEvent::OptionSet { name: name.into() });
+        }
+        Ok(changed)
+    }
+
     /// Runs a coordinated buffer/analysis edit through the kernel-owned
     /// buffer store. Window presentation state is supplied by the caller so
     /// this boundary remains independent of the UI crate.
@@ -353,11 +368,17 @@ impl EditorState {
         if entering_insert {
             self.insert_session = true;
             self.insert_session_mutated = false;
+            if let Some(window) = self.current.map(|context| context.window) {
+                self.events.push(super::EditorEvent::InsertEnter { window });
+            }
             outcome.effects.push(super::CommandEffect::EventEmitted {
                 name: "InsertEnter".to_string(),
                 payload: None,
             });
         } else if leaving_insert {
+            if let Some(window) = self.current.map(|context| context.window) {
+                self.events.push(super::EditorEvent::InsertLeave { window });
+            }
             outcome.effects.push(super::CommandEffect::EventEmitted {
                 name: "InsertLeave".to_string(),
                 payload: None,

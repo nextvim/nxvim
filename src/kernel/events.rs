@@ -80,6 +80,10 @@ impl EventQueue {
         self.deferred.pop_front()
     }
 
+    pub fn drain_deferred(&mut self) -> Vec<EditorEvent> {
+        self.deferred.drain(..).collect()
+    }
+
     pub fn has_immediate(&self) -> bool {
         !self.immediate.is_empty()
     }
