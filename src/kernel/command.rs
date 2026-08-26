@@ -42,6 +42,7 @@ pub struct CommandContext {
     pub count: Option<usize>,
     pub range: Option<vim_script::ast::CommandRange>,
     pub register: Option<char>,
+    pub last_character_search: Option<vim_input::Action>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +133,10 @@ pub enum NormalCommand {
     ViewportMotion {
         action: Box<vim_input::Action>,
     },
+    StructuralMotion {
+        action: Box<vim_input::Action>,
+    },
+
     TextObject {
         action: Box<vim_input::Action>,
     },
@@ -163,6 +168,17 @@ pub enum NormalCommand {
         count: usize,
         motion: Box<vim_input::Action>,
         change: CaseChange,
+    },
+    CharacterSearchRepeat {
+        count: usize,
+        forward: bool,
+        select: bool,
+        ch: char,
+        till: bool,
+    },
+    History {
+        undo: bool,
+        count: usize,
     },
 }
 
@@ -261,10 +277,46 @@ impl CommandContext {
                 count,
                 direction: SearchDirection::Forward,
             }),
+            action @ (vim_input::Action::MoveToMatchingDelimiter { .. }
+            | vim_input::Action::MoveToColumn { .. }
+            | vim_input::Action::ScrollForward { .. }
+            | vim_input::Action::ScrollBackward { .. }
+            | vim_input::Action::ScrollLineDown { .. }
+            | vim_input::Action::ScrollLineUp { .. }) => Some(NormalCommand::StructuralMotion {
+                action: Box::new(action.clone()),
+            }),
+
             vim_input::Action::SearchBackward { .. } => Some(NormalCommand::SearchMotion {
                 count,
                 direction: SearchDirection::Backward,
             }),
+            vim_input::Action::Undo { count } => Some(NormalCommand::History {
+                undo: true,
+                count: (*count).max(1) as usize,
+            }),
+            vim_input::Action::Redo { count } => Some(NormalCommand::History {
+                undo: false,
+                count: (*count).max(1) as usize,
+            }),
+            vim_input::Action::RepeatCharacterSearchForward { select, .. }
+            | vim_input::Action::RepeatCharacterSearchBackward { select, .. } => {
+                let (vim_input::Action::MoveToNextCharacter { ch, till, .. }
+                | vim_input::Action::MoveToPreviousCharacter { ch, till, .. }) =
+                    self.last_character_search.as_ref()?
+                else {
+                    return None;
+                };
+                Some(NormalCommand::CharacterSearchRepeat {
+                    count,
+                    forward: matches!(
+                        action,
+                        vim_input::Action::RepeatCharacterSearchForward { .. }
+                    ),
+                    select: *select,
+                    ch: *ch,
+                    till: *till,
+                })
+            }
             vim_input::Action::Delete { .. } => Some(NormalCommand::Delete { count }),
             vim_input::Action::DeleteMotion { motion, .. } => Some(NormalCommand::DeleteMotion {
                 count,
@@ -314,6 +366,7 @@ impl Command {
             count,
             range,
             register,
+            last_character_search: None,
         }
     }
 

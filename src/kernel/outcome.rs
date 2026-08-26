@@ -81,6 +81,12 @@ pub enum RedrawRequest {
     Full,
 }
 
+impl Default for RedrawRequest {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// The independently invalidatable parts of the presentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RedrawInvalidationKind {

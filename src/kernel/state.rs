@@ -23,6 +23,7 @@ pub struct EditorContext {
 pub struct EditorState {
     buffers: Buffers,
     windows: Windows,
+    events: super::EventQueue,
     current: Option<EditorContext>,
     mode: vim_input::Mode,
     insert_session: bool,
@@ -30,6 +31,9 @@ pub struct EditorState {
     recording_register: Option<String>,
     last_replayed_macro: Option<String>,
     pending_command: Option<super::PendingCommandState>,
+    last_character_search: Option<vim_input::Action>,
+    repeat_actions: Option<Vec<vim_input::Action>>,
+    recording_repeat: Option<Vec<vim_input::Action>>,
 }
 
 impl EditorState {
@@ -37,6 +41,7 @@ impl EditorState {
         Self {
             buffers,
             windows: Windows::default(),
+            events: super::EventQueue::default(),
             current: None,
             mode: vim_input::Mode::Normal,
             insert_session: false,
@@ -44,6 +49,9 @@ impl EditorState {
             recording_register: None,
             last_replayed_macro: None,
             pending_command: None,
+            last_character_search: None,
+            repeat_actions: None,
+            recording_repeat: None,
         }
     }
 
@@ -57,6 +65,14 @@ impl EditorState {
 
     pub fn windows(&self) -> &Windows {
         &self.windows
+    }
+
+    pub fn events(&self) -> &super::EventQueue {
+        &self.events
+    }
+
+    pub fn events_mut(&mut self) -> &mut super::EventQueue {
+        &mut self.events
     }
 
     pub fn register_window(&mut self, id: WindowId, buffer: BufferId) {
@@ -88,15 +104,50 @@ impl EditorState {
         id: WindowId,
         buffer: BufferId,
     ) -> Result<(), &'static str> {
-        self.windows.set_buffer(id, buffer)
+        let old_buffer = self
+            .windows
+            .record(id)
+            .ok_or("unknown semantic window")?
+            .buffer;
+        if old_buffer == buffer {
+            return Ok(());
+        }
+        self.buffers
+            .get(buffer)
+            .map_err(|_| "unknown semantic buffer")?;
+        self.events.push(super::EditorEvent::BufLeave {
+            buffer: old_buffer,
+            window: id,
+        });
+        self.windows.set_buffer(id, buffer)?;
+        self.events
+            .push(super::EditorEvent::BufEnter { buffer, window: id });
+        Ok(())
     }
 
     pub fn create_buffer(&mut self, initial_text: impl Into<String>) -> BufferId {
-        self.buffers.create(initial_text)
+        let buffer = self.buffers.create(initial_text);
+        self.events.push(super::EditorEvent::BufAdd { buffer });
+        buffer
     }
 
     pub fn open_buffer(&mut self, path: impl AsRef<Path>) -> BufferId {
-        self.buffers.open_path(path)
+        let (buffer, outcome) = self
+            .buffers
+            .open_path_with_outcome(path)
+            .expect("opening a buffer path should produce a buffer");
+        match outcome {
+            vim_buffer::ManagerOutcome::Added(_) => {
+                self.events.push(super::EditorEvent::BufAdd { buffer });
+            }
+            vim_buffer::ManagerOutcome::Loaded(_) => {
+                self.events.push(super::EditorEvent::BufAdd { buffer });
+                self.events.push(super::EditorEvent::BufRead { buffer });
+            }
+            vim_buffer::ManagerOutcome::Existing(_) => {}
+            _ => {}
+        }
+        buffer
     }
 
     pub fn wipe_buffer(
@@ -104,7 +155,10 @@ impl EditorState {
         id: BufferId,
         force: bool,
     ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
-        self.buffers.wipe(id, force)
+        let outcome = self.buffers.wipe(id, force)?;
+        self.events
+            .push(super::EditorEvent::BufWipeout { buffer: id });
+        Ok(outcome)
     }
 
     pub fn save_buffer(
@@ -113,7 +167,10 @@ impl EditorState {
         path: Option<&Path>,
         force: bool,
     ) -> Result<vim_buffer::SaveOutcome, vim_buffer::BufferError> {
-        self.buffers.save(id, path, force)
+        let outcome = self.buffers.save(id, path, force)?;
+        self.events
+            .push(super::EditorEvent::BufWrite { buffer: id });
+        Ok(outcome)
     }
 
     /// Runs a coordinated buffer/analysis edit through the kernel-owned
@@ -202,6 +259,44 @@ impl EditorState {
         self.recording_register.take()
     }
 
+    pub fn repeat_actions(&self) -> Option<&[vim_input::Action]> {
+        self.repeat_actions.as_deref()
+    }
+
+    pub fn set_repeat_actions(&mut self, actions: Vec<vim_input::Action>) {
+        self.repeat_actions = Some(actions);
+    }
+
+    pub fn begin_repeat_recording(&mut self, action: vim_input::Action) {
+        self.recording_repeat = Some(vec![action]);
+    }
+
+    pub fn append_repeat_recording(&mut self, action: vim_input::Action) {
+        if let Some(recording) = &mut self.recording_repeat {
+            recording.push(action);
+        }
+    }
+
+    pub fn finish_repeat_recording(&mut self) {
+        if let Some(recording) = self.recording_repeat.take() {
+            self.repeat_actions = Some(recording);
+        }
+    }
+
+    pub fn record_character_search(&mut self, action: vim_input::Action) {
+        if matches!(
+            action,
+            vim_input::Action::MoveToNextCharacter { .. }
+                | vim_input::Action::MoveToPreviousCharacter { .. }
+        ) {
+            self.last_character_search = Some(action);
+        }
+    }
+
+    pub fn last_character_search(&self) -> Option<&vim_input::Action> {
+        self.last_character_search.as_ref()
+    }
+
     pub fn pending_command(&self) -> Option<&super::PendingCommandState> {
         self.pending_command.as_ref()
     }
@@ -283,11 +378,16 @@ impl EditorState {
             count: None,
             range: None,
             register: None,
+            last_character_search: self.last_character_search.clone(),
         })
     }
 
     pub fn command_context_for(&self, command: &Command) -> Option<CommandContext> {
-        self.current.map(|current| command.kernel_context(current))
+        self.current.map(|current| {
+            let mut context = command.kernel_context(current);
+            context.last_character_search = self.last_character_search.clone();
+            context
+        })
     }
 
     pub fn command_line_request(
@@ -334,6 +434,49 @@ mod tests {
             state.request_macro_replay("@", 3).unwrap(),
             ("a".to_string(), 3)
         );
+    }
+
+    #[test]
+    fn mode_transition_emits_ordered_insert_lifecycle_events() {
+        let mut state = EditorState::new(Buffers::new());
+        let enter = state.transition_mode(vim_input::Mode::Insert);
+        let names: Vec<_> = enter
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                super::super::CommandEffect::ModeChanged { .. } => Some("ModeChanged"),
+                super::super::CommandEffect::EventEmitted { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["ModeChanged", "InsertEnter"]);
+
+        let leave = state.transition_mode(vim_input::Mode::Normal);
+        let names: Vec<_> = leave
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                super::super::CommandEffect::ModeChanged { .. } => Some("ModeChanged"),
+                super::super::CommandEffect::EventEmitted { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["InsertLeavePre", "ModeChanged", "InsertLeave"]);
+    }
+
+    #[test]
+    fn pending_command_state_can_be_cleared_deterministically() {
+        let mut state = EditorState::new(Buffers::new());
+        state.set_pending_command(super::super::PendingCommandState {
+            count: Some(2),
+            operator: None,
+            keys: Vec::new(),
+            waiting_for_register: false,
+            display: "2d".to_string(),
+        });
+        assert!(state.pending_command().is_some());
+        state.clear_pending_command();
+        assert!(state.pending_command().is_none());
     }
 
     #[test]

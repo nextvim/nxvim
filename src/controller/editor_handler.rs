@@ -28,12 +28,7 @@ impl EditorHandler {
             return CommandOutcome::redraw();
         }
 
-        if matches!(
-            action,
-            Action::MoveToNextCharacter { .. } | Action::MoveToPreviousCharacter { .. }
-        ) {
-            model.last_character_search = Some(action.clone());
-        }
+        model.kernel_mut().record_character_search(action.clone());
 
         if let Some(reg_name) = register.and_then(vim_clipboard::RegisterName::from_char) {
             services.clipboard.grab(reg_name);

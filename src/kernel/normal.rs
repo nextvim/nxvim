@@ -18,6 +18,190 @@ struct ResolvedMotion {
     kind: MotionKind,
 }
 
+/// Applies cursor/selection normalization associated with a non-mutating mode
+/// entry command. Semantic mode ownership remains in `EditorState`; this
+/// function prepares the window-local selection state before that transition.
+pub(crate) fn execute_mode_entry(
+    action: &vim_input::Action,
+    previous_mode: Mode,
+    buffer: &text::Buffer,
+    window: &mut WindowState,
+) -> Option<Mode> {
+    if window.selections.selections.is_empty() {
+        window.selections.add(buffer, 0);
+    }
+    let next_mode = match action {
+        vim_input::Action::SetToNormal => Mode::Normal,
+        vim_input::Action::SetToInsert => Mode::Insert,
+        vim_input::Action::SetToReplace => Mode::Replace,
+        vim_input::Action::SetToVirtualReplace => Mode::VirtualReplace,
+        vim_input::Action::SetToVisual => Mode::Visual,
+        vim_input::Action::SetToVisualLine => Mode::VisualLine,
+        vim_input::Action::SetToVisualBlock => Mode::VisualBlock,
+        vim_input::Action::SetToCommand
+        | vim_input::Action::SetToCommandSearchForward
+        | vim_input::Action::SetToCommandSearchBackward => Mode::Command,
+        vim_input::Action::SetToAppend => {
+            for cursor in window.selections.selections.clone() {
+                let point = cursor.head().to_point(buffer);
+                if point.column < buffer.line_len(point.row) {
+                    let next = cursor.move_right_once(false, buffer);
+                    window.selections.update(buffer, &next);
+                }
+            }
+            Mode::Insert
+        }
+        vim_input::Action::SetToAppendEndOfLine => {
+            window.selections.move_to_end_of_line(false, buffer);
+            Mode::Insert
+        }
+        vim_input::Action::SetToInsertStartOfLineNonSpace => {
+            window
+                .selections
+                .move_to_start_of_line_non_space(false, buffer);
+            Mode::Insert
+        }
+        _ => return None,
+    };
+
+    if previous_mode == next_mode {
+        window.selections.clear_selections(buffer);
+        return Some(next_mode);
+    }
+    if previous_mode == Mode::VisualBlock {
+        window.selections.end_block();
+    }
+    if previous_mode == Mode::VisualLine {
+        window.selections.end_line();
+    }
+    if next_mode == Mode::VisualBlock {
+        window.selections.begin_block(buffer);
+    }
+    if next_mode == Mode::VisualLine {
+        window.selections.begin_line(buffer);
+    }
+    Some(next_mode)
+}
+
+/// Normalizes Visual selections after a motion or mutation and maintains Vim's
+/// `<`/`>` marks. This is semantic state maintenance, not a controller/UI job.
+pub(crate) fn normalize_visual_state(
+    mode: Mode,
+    buffer: &mut vim_buffer::Buffer,
+    window: &mut WindowState,
+) {
+    if mode == Mode::VisualBlock {
+        window.selections.sync_block(buffer.as_text_buffer());
+    }
+    if mode == Mode::VisualLine {
+        window.selections.sync_line(buffer.as_text_buffer());
+    }
+    window
+        .selections
+        .collapse_overlapping_cursors(buffer.as_text_buffer());
+    if mode.is_visual() && !window.selections.selections.is_empty() {
+        let primary = window.selections.primary();
+        let head = primary.head();
+        let tail = primary.tail();
+        let text_buf = buffer.as_text_buffer();
+        let (top, end) = if text_buf.offset_for_anchor(&head) <= text_buf.offset_for_anchor(&tail) {
+            (head, tail)
+        } else {
+            (tail, head)
+        };
+        let _ = buffer.set_mark_anchor('<', top);
+        let _ = buffer.set_mark_anchor('>', end);
+    }
+}
+
+pub(crate) fn execute_mark_selection(
+    action: &vim_input::Action,
+    buffer: &mut vim_buffer::Buffer,
+    window: &mut WindowState,
+) -> bool {
+    let text_buffer = buffer.as_text_buffer();
+    match action {
+        vim_input::Action::Clear => {
+            window.selections.clear(text_buffer);
+        }
+        vim_input::Action::SelectSimilar => {
+            if !window.selections.has_selection(text_buffer) {
+                for cursor in window.selections.selections.clone() {
+                    let start = cursor.move_to_word(false, text_buffer).head();
+                    let end = cursor.move_to_word_end(false, text_buffer).head();
+                    window.selections.update(
+                        text_buffer,
+                        &Selection {
+                            id: cursor.id,
+                            start,
+                            end,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        },
+                    );
+                }
+            } else {
+                let cursor = window.selections.primary().clone();
+                let selected = cursor.text(text_buffer);
+                if let Some(mut next) = cursor.clone().move_to_next_match_within(
+                    &selected,
+                    text_buffer,
+                    text_buffer.row_count(),
+                ) {
+                    for _ in 0..selected.len().saturating_sub(1) {
+                        next = next.move_right_once(true, text_buffer);
+                    }
+                    let next = Selection {
+                        id: cursor.id,
+                        ..next
+                    };
+                    if !window.selections.has_similar_cursor(&next, text_buffer) {
+                        let added = window.selections.add(text_buffer, 0);
+                        window.selections.update(
+                            text_buffer,
+                            &Selection {
+                                id: added.id,
+                                ..cursor
+                            },
+                        );
+                        window.selections.update(text_buffer, &next);
+                    }
+                }
+            }
+        }
+        vim_input::Action::MarkSet { ch } => {
+            let head = window.selections.primary().head();
+            let _ = buffer.set_mark_anchor(*ch, head);
+        }
+        vim_input::Action::MarkJump { ch, select } => {
+            let Some(anchor) = buffer.marks().get(*ch).cloned() else {
+                return true;
+            };
+            let primary = window.selections.primary();
+            let start = if *select {
+                primary.start.clone()
+            } else {
+                anchor.clone()
+            };
+            let reversed = *select
+                && text_buffer.offset_for_anchor(&anchor)
+                    < text_buffer.offset_for_anchor(&primary.start);
+            window.selections.update(
+                text_buffer,
+                &Selection {
+                    id: primary.id,
+                    start,
+                    end: anchor,
+                    reversed,
+                    goal: SelectionGoal::None,
+                },
+            );
+        }
+        _ => return false,
+    }
+    true
+}
+
 fn delimiter_kind(ch: char) -> Option<vim_scanner::DelimiterKind> {
     Some(match ch {
         '{' | '}' => vim_scanner::DelimiterKind::Brace,
@@ -40,6 +224,22 @@ fn enclosing_delimiter(buffer: &text::Buffer, byte: usize, ch: char) -> Option<(
         false,
     )?;
     (matched.kind == kind).then_some((matched.start, matched.end))
+}
+
+pub(crate) fn is_syntax_dependent_motion(motion: &vim_input::Action) -> bool {
+    matches!(
+        motion,
+        vim_input::Action::MoveToNextFunction { .. }
+            | vim_input::Action::MoveToPreviousFunction { .. }
+            | vim_input::Action::MoveToNextBlock { .. }
+            | vim_input::Action::MoveToPreviousBlock { .. }
+            | vim_input::Action::MoveToBlockStart { .. }
+            | vim_input::Action::MoveToBlockEnd { .. }
+            | vim_input::Action::MoveToNextClass { .. }
+            | vim_input::Action::MoveToPreviousClass { .. }
+            | vim_input::Action::MoveToNextArgument { .. }
+            | vim_input::Action::MoveToPreviousArgument { .. }
+    )
 }
 
 fn motion_kind(motion: &vim_input::Action) -> MotionKind {
@@ -142,6 +342,98 @@ fn resolve_operator_motion(
     selections: &SelectionSet,
     syntax_tree: Option<&vim_treesitter::SyntaxTree>,
 ) -> Option<ResolvedMotion> {
+    if is_syntax_dependent_motion(motion) {
+        let tree = syntax_tree?;
+        let mut resolved = selections.clone();
+        if resolved.selections.is_empty() {
+            resolved.add(buffer, 0);
+        }
+        let count = (motion.count() as usize).max(1);
+        for cursor in resolved.selections.clone() {
+            let mut current = cursor.clone();
+            for _ in 0..count {
+                let byte = buffer.offset_for_anchor(&current.head());
+                let node = match motion {
+                    vim_input::Action::MoveToNextFunction { .. } => {
+                        tree.next_function_after_byte(byte)
+                    }
+                    vim_input::Action::MoveToPreviousFunction { .. } => {
+                        tree.previous_function_before_byte(byte)
+                    }
+                    vim_input::Action::MoveToNextBlock { .. } => tree.next_block_after_byte(byte),
+                    vim_input::Action::MoveToPreviousBlock { .. } => {
+                        tree.previous_block_before_byte(byte)
+                    }
+                    vim_input::Action::MoveToBlockStart { .. } => tree.block_start_at_byte(byte),
+                    vim_input::Action::MoveToBlockEnd { .. } => tree.block_end_at_byte(byte),
+                    vim_input::Action::MoveToNextClass { .. } => tree.next_class_after_byte(byte),
+                    vim_input::Action::MoveToPreviousClass { .. } => {
+                        tree.previous_class_before_byte(byte)
+                    }
+                    vim_input::Action::MoveToNextArgument { .. } => {
+                        tree.next_argument_after_byte(byte)
+                    }
+                    vim_input::Action::MoveToPreviousArgument { .. } => {
+                        tree.previous_argument_before_byte(byte)
+                    }
+                    _ => None,
+                }?;
+                let offset = if matches!(motion, vim_input::Action::MoveToBlockEnd { .. }) {
+                    node.byte_range.end.saturating_sub(1)
+                } else {
+                    node.byte_range.start
+                };
+                let anchor = buffer.anchor_at(offset, Bias::Left);
+                current = Selection {
+                    id: current.id,
+                    start: cursor.tail(),
+                    end: anchor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                };
+            }
+            resolved.update(buffer, &current);
+        }
+        return Some(ResolvedMotion {
+            selections: resolved,
+            kind: MotionKind::Characterwise { inclusive: true },
+        });
+    }
+    if matches!(motion, vim_input::Action::MoveToMatchingDelimiter { .. }) {
+        let mut resolved = selections.clone();
+        if resolved.selections.is_empty() {
+            resolved.add(buffer, 0);
+        }
+        for cursor in resolved.selections.clone() {
+            let byte = buffer.offset_for_anchor(&cursor.head());
+            let ch = buffer
+                .as_rope()
+                .chunks_in_range(byte..byte.saturating_add(1))
+                .collect::<String>()
+                .chars()
+                .next()
+                .unwrap_or('\0');
+            let Some((opening, closing)) = enclosing_delimiter(buffer, byte, ch) else {
+                return None;
+            };
+            let target = if byte <= opening { closing } else { opening };
+            let anchor = buffer.anchor_at(target, Bias::Left);
+            resolved.update(
+                buffer,
+                &Selection {
+                    id: cursor.id,
+                    start: cursor.tail(),
+                    end: anchor,
+                    reversed: target < byte,
+                    goal: SelectionGoal::None,
+                },
+            );
+        }
+        return Some(ResolvedMotion {
+            selections: resolved,
+            kind: MotionKind::Characterwise { inclusive: true },
+        });
+    }
     if matches!(
         motion,
         vim_input::Action::MoveWithinCharacter { .. }
@@ -176,6 +468,342 @@ fn resolve_operator_motion(
 /// Executes the migrated basic-motion slice without entering the legacy action
 /// match. The window state is supplied for the duration of this command only;
 /// no reference escapes the call boundary.
+fn linewise_range(
+    buffer: &text::Buffer,
+    selections: &SelectionSet,
+    count: usize,
+) -> Option<(usize, usize)> {
+    let cursor = selections.first()?;
+    let row = cursor.head().to_point(buffer).row;
+    let end_row = row
+        .saturating_add(count.max(1) as u32)
+        .min(buffer.row_count());
+    let start = Point::new(row, 0).to_offset(buffer);
+    let end = buffer
+        .clip_point(Point::new(end_row, 0), Bias::Right)
+        .to_offset(buffer);
+    (start < end).then_some((start, end))
+}
+
+fn explicit_line_range(
+    buffer: &text::Buffer,
+    start_line: u32,
+    end_line: u32,
+) -> Option<(usize, usize)> {
+    let max = buffer.row_count().saturating_sub(1);
+    let start_row = start_line.saturating_sub(1).min(max);
+    let end_row = end_line.saturating_sub(1).min(max).max(start_row);
+    let start = Point::new(start_row, 0).to_offset(buffer);
+    let end = if end_row + 1 < buffer.row_count() {
+        Point::new(end_row + 1, 0).to_offset(buffer)
+    } else {
+        Point::new(end_row, buffer.line_len(end_row)).to_offset(buffer)
+    };
+    (start < end).then_some((start, end))
+}
+
+pub(crate) fn execute_yank_lines(
+    buffer: &text::Buffer,
+    start_line: u32,
+    end_line: u32,
+) -> Option<String> {
+    let (start, end) = explicit_line_range(buffer, start_line, end_line)?;
+    Some(buffer.as_rope().chunks_in_range(start..end).collect())
+}
+
+pub(crate) fn execute_delete_lines(
+    buffer: &mut Buffer,
+    selections: &SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+    start_line: u32,
+    end_line: u32,
+) -> Option<(String, super::MutationOutcome)> {
+    let (start, end) = explicit_line_range(buffer.as_text_buffer(), start_line, end_line)?;
+    let text = buffer
+        .as_text_buffer()
+        .as_rope()
+        .chunks_in_range(start..end)
+        .collect();
+    crate::controller::editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    let snapshot = selections.clone();
+    let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
+        tx.delete(
+            None,
+            vim_buffer::TextRange::new(vim_buffer::ByteOffset(start), vim_buffer::ByteOffset(end))
+                .expect("line range must be ordered"),
+        );
+    })
+    .ok()?;
+    Some((text, mutation))
+}
+
+pub(crate) fn execute_yank_line(
+    buffer: &text::Buffer,
+    selections: &SelectionSet,
+    count: usize,
+) -> Option<String> {
+    let (start, end) = linewise_range(buffer, selections, count)?;
+    let mut text: String = buffer.as_rope().chunks_in_range(start..end).collect();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Some(text)
+}
+
+pub(crate) fn execute_delete_line(
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+    count: usize,
+) -> Option<(String, super::MutationOutcome)> {
+    let (start, end) = linewise_range(buffer.as_text_buffer(), selections, count)?;
+    let mut text: String = buffer
+        .as_text_buffer()
+        .as_rope()
+        .chunks_in_range(start..end)
+        .collect();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    crate::controller::editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    let snapshot = selections.clone();
+    let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
+        tx.delete(
+            None,
+            vim_buffer::TextRange::new(vim_buffer::ByteOffset(start), vim_buffer::ByteOffset(end))
+                .expect("linewise range must be ordered"),
+        );
+    })
+    .ok()?;
+    Some((text, mutation))
+}
+
+pub(crate) fn execute_case_line(
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+    count: usize,
+    change: super::CaseChange,
+) -> Option<super::MutationOutcome> {
+    let (start, end) = linewise_range(buffer.as_text_buffer(), selections, count)?;
+    let source: String = buffer
+        .as_text_buffer()
+        .as_rope()
+        .chunks_in_range(start..end)
+        .collect();
+    let replacement = match change {
+        super::CaseChange::Upper => source.to_uppercase(),
+        super::CaseChange::Lower => source.to_lowercase(),
+    };
+    crate::controller::editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    let snapshot = selections.clone();
+    let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
+        tx.replace(
+            None,
+            vim_buffer::TextRange::new(vim_buffer::ByteOffset(start), vim_buffer::ByteOffset(end))
+                .expect("linewise range must be ordered"),
+            replacement.as_str(),
+        );
+    })
+    .ok()?;
+    selections.move_to_start_of_line_non_space(false, buffer.as_text_buffer());
+    Some(mutation)
+}
+
+pub(crate) fn execute_delete_before(
+    count: usize,
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+) -> Option<(String, super::MutationOutcome)> {
+    let count = count.max(1);
+    let mut ranges = Vec::new();
+    for cursor in selections.selections.clone() {
+        let end = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+        let start = end.saturating_sub(count);
+        if start < end {
+            ranges.push(
+                vim_buffer::TextRange::new(
+                    vim_buffer::ByteOffset(start),
+                    vim_buffer::ByteOffset(end),
+                )
+                .expect("backspace range must be ordered"),
+            );
+        }
+    }
+    if ranges.is_empty() {
+        return None;
+    }
+    let text: String = ranges
+        .iter()
+        .map(|range| {
+            buffer
+                .as_text_buffer()
+                .as_rope()
+                .chunks_in_range(range.start.0..range.end.0)
+                .collect::<String>()
+        })
+        .collect();
+    for range in &ranges {
+        crate::controller::editor::remove_overlapping_folds(
+            folds,
+            buffer.as_text_buffer(),
+            range.start.0,
+            range.end.0,
+        );
+    }
+    let snapshot = selections.clone();
+    let mutation = super::transaction(
+        buffer,
+        vim_buffer::EditOrigin::InsertMode,
+        Some(snapshot),
+        |tx| {
+            for range in ranges {
+                tx.delete(None, range);
+            }
+        },
+    )
+    .ok()?;
+    Some((text, mutation))
+}
+
+pub(crate) fn execute_change_selection(
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+) -> Option<(String, super::MutationOutcome)> {
+    let text = selections.text(buffer.as_text_buffer());
+    let mutation = delete_exact_selection(buffer, selections, folds)?;
+    Some((text, mutation))
+}
+
+pub(crate) fn execute_case_selection(
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+    count: usize,
+    change: super::CaseChange,
+) -> Option<super::MutationOutcome> {
+    let cursors = selections.selections.clone();
+    let mut edits = Vec::new();
+    for cursor in &cursors {
+        let a = buffer.as_text_buffer().offset_for_anchor(&cursor.tail());
+        let b = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+        let start = a.min(b);
+        let mut end = a.max(b);
+        if start == end {
+            end = buffer
+                .as_text_buffer()
+                .clip_offset(start.saturating_add(count.max(1)), Bias::Right);
+        }
+        if start == end {
+            continue;
+        }
+        let source: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(start..end)
+            .collect();
+        let replacement = match change {
+            super::CaseChange::Upper => source.to_uppercase(),
+            super::CaseChange::Lower => source.to_lowercase(),
+        };
+        edits.push((start, end, replacement));
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    for &(start, end, _) in &edits {
+        crate::controller::editor::remove_overlapping_folds(
+            folds,
+            buffer.as_text_buffer(),
+            start,
+            end,
+        );
+    }
+    let snapshot = selections.clone();
+    let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
+        for &(start, end, ref replacement) in &edits {
+            tx.replace(
+                None,
+                vim_buffer::TextRange::new(
+                    vim_buffer::ByteOffset(start),
+                    vim_buffer::ByteOffset(end),
+                )
+                .expect("selection range must be ordered"),
+                replacement.as_str(),
+            );
+        }
+    })
+    .ok()?;
+    Some(mutation)
+}
+
+pub(crate) fn execute_toggle_case(
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+    count: usize,
+) -> Option<super::MutationOutcome> {
+    let mut edits = Vec::new();
+    for cursor in selections.selections.clone() {
+        let a = buffer.as_text_buffer().offset_for_anchor(&cursor.tail());
+        let b = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+        let start = a.min(b);
+        let mut end = a.max(b);
+        if start == end {
+            end = buffer
+                .as_text_buffer()
+                .clip_offset(start.saturating_add(count.max(1)), Bias::Right);
+        }
+        if start == end {
+            continue;
+        }
+        let source: String = buffer
+            .as_text_buffer()
+            .as_rope()
+            .chunks_in_range(start..end)
+            .collect();
+        let replacement: String = source
+            .chars()
+            .flat_map(|ch| {
+                if ch.is_lowercase() {
+                    ch.to_uppercase().collect::<Vec<_>>()
+                } else {
+                    ch.to_lowercase().collect::<Vec<_>>()
+                }
+            })
+            .collect();
+        edits.push((start, end, replacement));
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    for &(start, end, _) in &edits {
+        crate::controller::editor::remove_overlapping_folds(
+            folds,
+            buffer.as_text_buffer(),
+            start,
+            end,
+        );
+    }
+    let snapshot = selections.clone();
+    super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
+        for &(start, end, ref replacement) in &edits {
+            tx.replace(
+                None,
+                vim_buffer::TextRange::new(
+                    vim_buffer::ByteOffset(start),
+                    vim_buffer::ByteOffset(end),
+                )
+                .expect("toggle range must be ordered"),
+                replacement.as_str(),
+            );
+        }
+    })
+    .ok()
+}
+
 pub(crate) fn execute_delete(
     count: usize,
     mode: Mode,
@@ -258,6 +886,14 @@ pub(crate) fn execute_delete(
         },
     )
     .ok()
+}
+
+pub(crate) fn execute_buffer_motion_on_selections(
+    action: &vim_input::Action,
+    selections: &mut SelectionSet,
+    buffer: &text::Buffer,
+) -> bool {
+    apply_buffer_motion(action, Some(false), 1, selections, buffer)
 }
 
 fn apply_buffer_motion(
@@ -735,6 +1371,29 @@ fn apply_viewport_motion(
                     .move_down(*select || mode.is_visual(), rows, buffer);
             }
         }
+        vim_input::Action::ScrollForward { count }
+        | vim_input::Action::ScrollBackward { count }
+        | vim_input::Action::ScrollLineDown { count }
+        | vim_input::Action::ScrollLineUp { count } => {
+            let rows = (*count).max(1);
+            if matches!(
+                action,
+                vim_input::Action::ScrollForward { .. } | vim_input::Action::ScrollLineDown { .. }
+            ) {
+                window.display_map.scroll_y = window.display_map.scroll_y.saturating_add(rows);
+            } else {
+                window.display_map.scroll_y = window.display_map.scroll_y.saturating_sub(rows);
+            }
+        }
+        vim_input::Action::MoveToColumn { count } => {
+            let target = count.saturating_sub(1);
+            let cursors = window.selections.selections.clone();
+            for cursor in cursors {
+                let point = cursor.head().to_point(buffer);
+                window.selections.move_to_line(false, point.row, buffer);
+                window.selections.move_right(false, target, buffer);
+            }
+        }
         vim_input::Action::ScrollHalfPageUp { count }
         | vim_input::Action::ScrollHalfPageDown { count } => {
             let rows = (window
@@ -1014,6 +1673,57 @@ pub(crate) fn move_syntax_target(
     true
 }
 
+fn execute_structural_motion(
+    action: &vim_input::Action,
+    buffer: &text::Buffer,
+    window: &mut WindowState,
+    mode: Mode,
+) -> bool {
+    if !matches!(action, vim_input::Action::MoveToMatchingDelimiter { .. }) {
+        return apply_viewport_motion(action, mode, buffer, window);
+    }
+    let select = match action {
+        vim_input::Action::MoveToMatchingDelimiter { select, .. } => *select || mode.is_visual(),
+        _ => false,
+    };
+    let cursors = window.selections.selections.clone();
+    for cursor in cursors {
+        let byte = buffer.offset_for_anchor(&cursor.head());
+
+        let pair = enclosing_delimiter(
+            buffer,
+            byte,
+            buffer
+                .as_rope()
+                .chunks_in_range(byte..byte.saturating_add(1))
+                .collect::<String>()
+                .chars()
+                .next()
+                .unwrap_or('\0'),
+        );
+        let Some((opening, closing)) = pair else {
+            continue;
+        };
+        let target_offset = if byte <= opening { closing } else { opening };
+        let target = buffer.anchor_at(target_offset, Bias::Left);
+        window.selections.update(
+            buffer,
+            &Selection {
+                id: cursor.id,
+                start: if select {
+                    cursor.tail()
+                } else {
+                    target.clone()
+                },
+                end: target,
+                reversed: true,
+                goal: SelectionGoal::None,
+            },
+        );
+    }
+    true
+}
+
 pub(crate) fn execute_motion(
     command: &NormalCommand,
     mode: Mode,
@@ -1037,13 +1747,20 @@ pub(crate) fn execute_motion(
             | vim_input::Action::MoveToScreenBottom { select, .. } => *select || mode.is_visual(),
             _ => false,
         },
+        NormalCommand::StructuralMotion { .. } | NormalCommand::CharacterSearchRepeat { .. } => {
+            false
+        }
         _ => return None,
     };
     if window.selections.selections.is_empty() {
         window.selections.add(buffer.as_text_buffer(), 0);
     }
 
-    if let NormalCommand::TextObject { action } = command {
+    if let NormalCommand::StructuralMotion { action } = command {
+        if !execute_structural_motion(action, buffer.as_text_buffer(), window, mode) {
+            return None;
+        }
+    } else if let NormalCommand::TextObject { action } = command {
         match action.as_ref() {
             vim_input::Action::MoveWithinCharacter { ch, .. }
             | vim_input::Action::MoveAroundCharacter { ch, .. }
@@ -1162,6 +1879,22 @@ pub(crate) fn execute_motion(
                 ),
             }
         }
+    } else if let NormalCommand::CharacterSearchRepeat {
+        count,
+        forward,
+        select,
+        ch,
+        till,
+    } = command
+    {
+        window.selections.find_character(
+            *select || mode.is_visual(),
+            (*count).min(u32::MAX as usize) as u32,
+            *ch,
+            *forward,
+            *till,
+            buffer.as_text_buffer(),
+        );
     } else if let NormalCommand::BufferMotion { action } = command {
         if !apply_buffer_motion(
             action,
@@ -1215,6 +1948,104 @@ pub(crate) fn execute_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linewise_yank_and_delete_share_counted_ranges() {
+        let mut buffer = Buffer::new(
+            vim_buffer::BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "one\ntwo\nthree\n",
+        );
+        let mut selections = SelectionSet::new();
+        selections.add(buffer.as_text_buffer(), 1);
+        assert_eq!(
+            execute_yank_line(buffer.as_text_buffer(), &selections, 2).as_deref(),
+            Some("one\ntwo\n")
+        );
+
+        let (deleted, mutation) =
+            execute_delete_line(&mut buffer, &mut selections, &mut Vec::new(), 2)
+                .expect("counted lines should delete");
+        assert_eq!(deleted, "one\ntwo\n");
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "three\n");
+        assert_eq!(mutation.changed_ranges.len(), 1);
+        buffer.undo().unwrap().unwrap();
+        assert_eq!(
+            buffer.as_text_buffer().as_rope().to_string(),
+            "one\ntwo\nthree\n"
+        );
+    }
+
+    #[test]
+    fn linewise_case_change_uses_one_counted_transaction() {
+        let mut buffer = Buffer::new(
+            vim_buffer::BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "One\nTwo\nThree\n",
+        );
+        let mut selections = SelectionSet::new();
+        selections.add(buffer.as_text_buffer(), 0);
+        let mutation = execute_case_line(
+            &mut buffer,
+            &mut selections,
+            &mut Vec::new(),
+            2,
+            super::super::CaseChange::Lower,
+        );
+        assert!(mutation.is_some());
+        assert_eq!(
+            buffer.as_text_buffer().as_rope().to_string(),
+            "one\ntwo\nThree\n"
+        );
+    }
+
+    #[test]
+    fn mode_entry_normalizes_window_selections_without_legacy_dispatch() {
+        let buffer = Buffer::new(
+            vim_buffer::BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "abc\ndef",
+        );
+        let mut window = WindowState::new(&buffer, vim_ui::Viewport::default());
+        window.selections.selections.clear();
+        window.selections.add(buffer.as_text_buffer(), 0);
+
+        assert_eq!(
+            execute_mode_entry(
+                &vim_input::Action::SetToAppend,
+                Mode::Normal,
+                buffer.as_text_buffer(),
+                &mut window,
+            ),
+            Some(Mode::Insert)
+        );
+        assert_eq!(
+            buffer
+                .as_text_buffer()
+                .offset_for_anchor(&window.selections.first().unwrap().head()),
+            1
+        );
+
+        assert_eq!(
+            execute_mode_entry(
+                &vim_input::Action::SetToVisualLine,
+                Mode::Normal,
+                buffer.as_text_buffer(),
+                &mut window,
+            ),
+            Some(Mode::VisualLine)
+        );
+        assert!(window.selections.has_selection(buffer.as_text_buffer()));
+        assert_eq!(
+            execute_mode_entry(
+                &vim_input::Action::SetToNormal,
+                Mode::VisualLine,
+                buffer.as_text_buffer(),
+                &mut window,
+            ),
+            Some(Mode::Normal)
+        );
+    }
 
     #[test]
     fn yank_motion_resolves_a_pure_buffer_range_without_mutating() {

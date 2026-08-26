@@ -3,9 +3,9 @@ use vim_ui::LayoutNode;
 
 /// Semantic ownership of one Vim-style tab page.
 ///
-/// The layout is copied from the UI during the compatibility migration. The
-/// eventual Phase 2 endpoint will make this store authoritative and ask the
-/// UI to project it, rather than mirroring UI mutations back into the kernel.
+/// This store is authoritative for tab identity, membership, active window,
+/// and the layout restored when a tab is activated. `vim-ui` remains the
+/// concrete geometry and presentation owner.
 #[derive(Debug, Clone)]
 pub struct TabPage {
     pub id: TabPageId,
@@ -127,8 +127,8 @@ impl TabPages {
         self.active
     }
 
-    /// Updates the compatibility projection after a structural UI operation.
-    pub fn project_layout(&mut self, layout: LayoutNode, active_window: WindowId) {
+    /// Commits a structural layout change to the active semantic tab.
+    pub fn update_active_layout(&mut self, layout: LayoutNode, active_window: WindowId) {
         let page = self.active_mut();
         if page.active_window != active_window {
             page.previous_window = Some(page.active_window);

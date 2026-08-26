@@ -11,6 +11,21 @@ pub mod windows;
 
 use windows::WindowOps;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ViewInvalidationTarget {
+    Window(vim_ui::WindowId),
+    Statusline,
+    Tabline,
+    Overlay,
+    Layout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ViewInvalidation {
+    pub target: ViewInvalidationTarget,
+    pub kind: crate::kernel::RedrawInvalidationKind,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectKind {
     None,
@@ -29,6 +44,10 @@ pub struct App {
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
     pub command_queue: std::collections::VecDeque<crate::controller::Command>,
+    /// Typed invalidations accumulated until the next render boundary.
+    pub pending_invalidations: Vec<crate::kernel::RedrawInvalidation>,
+    pub pending_redraw: crate::kernel::RedrawRequest,
+    pub pending_view_invalidations: Vec<ViewInvalidation>,
     pub prompt: Option<crate::controller::Prompt>,
     pub colorscheme: Option<vim_colorscheme::ColorScheme>,
     pub highlighter: Option<textmate::Highlighter<'static>>,
@@ -78,6 +97,9 @@ impl App {
             ui,
             view_ids,
             command_queue: std::collections::VecDeque::new(),
+            pending_invalidations: Vec::new(),
+            pending_redraw: crate::kernel::RedrawRequest::None,
+            pending_view_invalidations: Vec::new(),
             prompt: None,
             colorscheme: Some(colorscheme),
             highlighter: Some(highlighter),
@@ -97,9 +119,9 @@ impl App {
         app
     }
 
-    /// Reconciles semantic window identities with the current UI projection.
-    /// The UI remains the compatibility layout owner until its projection is
-    /// reversed in a later migration slice.
+    /// Reconciles concrete UI windows with kernel-owned semantic identities.
+    /// This is projection bookkeeping; tab membership and activation remain
+    /// authoritative in `TabPages`.
     pub fn sync_kernel_windows(&mut self) {
         let window_buffers = WindowOps::window_buffers(&self.ui);
         let active_members: Vec<_> = self
@@ -158,6 +180,47 @@ impl App {
                 window,
                 buffer,
             });
+    }
+
+    /// Accumulates typed presentation work until the runtime reaches a
+    /// render boundary. Exact duplicate invalidations are intentionally
+    /// coalesced; range union remains the responsibility of the owning map.
+    pub fn queue_redraw(
+        &mut self,
+        request: crate::kernel::RedrawRequest,
+        invalidations: &[crate::kernel::RedrawInvalidation],
+    ) {
+        self.pending_redraw = self.pending_redraw.max(request);
+        for invalidation in invalidations {
+            if !self.pending_invalidations.contains(invalidation) {
+                self.pending_invalidations.push(invalidation.clone());
+            }
+        }
+    }
+
+    pub fn queue_view_invalidation(&mut self, invalidation: ViewInvalidation) {
+        if !self.pending_view_invalidations.contains(&invalidation) {
+            self.pending_view_invalidations.push(invalidation);
+        }
+    }
+
+    /// Takes all pending presentation work at one render boundary.
+    pub fn take_redraw(
+        &mut self,
+    ) -> (
+        crate::kernel::RedrawRequest,
+        Vec<crate::kernel::RedrawInvalidation>,
+        Vec<ViewInvalidation>,
+    ) {
+        (
+            std::mem::take(&mut self.pending_redraw),
+            std::mem::take(&mut self.pending_invalidations),
+            std::mem::take(&mut self.pending_view_invalidations),
+        )
+    }
+
+    pub fn take_view_invalidations(&mut self) -> Vec<ViewInvalidation> {
+        std::mem::take(&mut self.pending_view_invalidations)
     }
 
     pub fn current_context(&self) -> Option<crate::kernel::EditorContext> {
@@ -282,9 +345,8 @@ impl App {
         Ok(survivor)
     }
 
-    /// Projects the current UI layout into the active semantic tab during the
-    /// migration. Phase 2 will reverse this direction once tab pages are the
-    /// authoritative layout owners.
+    /// Commits the concrete result of a structural UI operation to the active
+    /// semantic tab. Tab activation projects this stored layout back to `vim-ui`.
     pub fn sync_kernel_layout(&mut self) {
         self.sync_kernel_windows();
         let layout = self.ui.layout().clone();
@@ -298,7 +360,7 @@ impl App {
         } else {
             focused
         };
-        self.tabs.project_layout(layout, active_window);
+        self.tabs.update_active_layout(layout, active_window);
         self.sync_kernel_context();
     }
 

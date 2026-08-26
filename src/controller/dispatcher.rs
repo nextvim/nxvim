@@ -30,7 +30,7 @@ impl Dispatcher {
         app.sync_kernel_context();
         let Some(context) = app.model.kernel().command_context_for(&command) else {
             app.model.status = Some("No current editor context".to_string());
-            return CommandOutcome::redraw();
+            return CommandOutcome::statusline();
         };
         if !matches!(&command, Command::PendingInput(_)) {
             app.model.kernel_mut().clear_pending_command();
@@ -47,7 +47,7 @@ impl Dispatcher {
             Command::PendingInput(pending) => {
                 app.model.status = Some(format!("Pending sequence: {}", pending.display));
                 app.model.kernel_mut().set_pending_command(pending);
-                CommandOutcome::redraw()
+                CommandOutcome::statusline()
             }
             Command::ExecuteScript(_) | Command::CommandLine(_) => CommandOutcome::redraw(),
             Command::SearchForward { pattern } => {
@@ -111,7 +111,7 @@ impl Dispatcher {
             },
             Command::InvalidInput => {
                 app.model.status = Some("Invalid sequence".to_string());
-                CommandOutcome::redraw()
+                CommandOutcome::statusline()
             }
             Command::Save { path, force } => {
                 let active_window = app.ui.focused_window_id();
@@ -124,7 +124,7 @@ impl Dispatcher {
                                 "Save failed: ReadOnly (buffer {})",
                                 buffer_id.get()
                             ));
-                            return CommandOutcome::redraw();
+                            return CommandOutcome::statusline();
                         }
                         let path_buf = match path {
                             Some(p) => p,
@@ -135,7 +135,7 @@ impl Dispatcher {
                                         "Save failed: No file name (buffer {})",
                                         buffer_id.get()
                                     ));
-                                    return CommandOutcome::redraw();
+                                    return CommandOutcome::statusline();
                                 }
                             },
                         };
@@ -210,7 +210,7 @@ impl Dispatcher {
                     None => app.model.create(""),
                 };
                 match app.new_tab(buffer) {
-                    Ok(_) => CommandOutcome::redraw(),
+                    Ok(_) => CommandOutcome::layout(),
                     Err(error) => {
                         app.model.status = Some(error);
                         CommandOutcome::redraw()
@@ -221,19 +221,19 @@ impl Dispatcher {
                 if let Err(error) = app.next_tab(count) {
                     app.model.status = Some(error);
                 }
-                CommandOutcome::redraw()
+                CommandOutcome::layout()
             }
             Command::TabPrevious { count } => {
                 if let Err(error) = app.previous_tab(count) {
                     app.model.status = Some(error);
                 }
-                CommandOutcome::redraw()
+                CommandOutcome::layout()
             }
             Command::TabClose => {
                 if let Err(error) = app.close_active_tab() {
                     app.model.status = Some(error);
                 }
-                CommandOutcome::redraw()
+                CommandOutcome::layout()
             }
             Command::BufferNext { count } => {
                 let active = app.ui.focused_window_id();
@@ -306,25 +306,29 @@ impl Dispatcher {
             Command::Syntax { enable } => {
                 app.syntax_highlight = enable;
                 app.model.invalidate_all_highlights();
-                CommandOutcome::redraw()
+                CommandOutcome::global_redraw(
+                    crate::kernel::RedrawInvalidationKind::SyntaxHighlighting,
+                )
             }
             Command::Treesitter { enable } => {
                 app.treesitter_enabled = enable;
-                CommandOutcome::redraw()
+                CommandOutcome::global_redraw(
+                    crate::kernel::RedrawInvalidationKind::SyntaxHighlighting,
+                )
             }
             Command::Indexer { enable } => {
                 app.indexer_enabled = enable;
-                CommandOutcome::redraw()
+                CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
             }
             Command::Inspect { enable } => {
                 app.inspect = enable;
-                CommandOutcome::redraw()
+                CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
             }
             Command::Echo { message } => {
                 app.model.status = Some(message.clone());
                 app.message = message.clone();
                 app.messages.push(message);
-                CommandOutcome::redraw()
+                CommandOutcome::statusline()
             }
             Command::RangeOp {
                 operation,
@@ -366,22 +370,22 @@ impl Dispatcher {
                             .begin_macro_recording(register.clone())
                         {
                             app.model.status = Some(error.to_string());
-                            return CommandOutcome::redraw();
+                            return CommandOutcome::statusline();
                         }
                         app.services.macros.begin(register.clone());
                         app.controller.set_in_recording(true);
                         app.model.status = Some(format!("recording @{register}"));
-                        return CommandOutcome::redraw();
+                        return CommandOutcome::statusline();
                     }
                     vim_input::Action::EndMacro => {
                         let Some(register) = app.model.kernel_mut().end_macro_recording() else {
                             app.model.status = Some("macro recording is not active".to_string());
-                            return CommandOutcome::redraw();
+                            return CommandOutcome::statusline();
                         };
                         app.services.macros.end();
                         app.controller.set_in_recording(false);
                         app.model.status = Some(format!("macro @{register} recorded"));
-                        return CommandOutcome::redraw();
+                        return CommandOutcome::statusline();
                     }
                     vim_input::Action::ReplayMacro { count, register } => {
                         let (register, count) = match app
@@ -392,7 +396,7 @@ impl Dispatcher {
                             Ok(request) => request,
                             Err(error) => {
                                 app.model.status = Some(error.to_string());
-                                return CommandOutcome::redraw();
+                                return CommandOutcome::statusline();
                             }
                         };
                         let replay_actions = app.services.macros.replay(&register, count);
@@ -416,7 +420,7 @@ impl Dispatcher {
                             Ok(s) => s,
                             Err(err) => {
                                 app.model.status = Some(format!("Key sequence error: {err}"));
-                                return CommandOutcome::redraw();
+                                return CommandOutcome::statusline();
                             }
                         };
                         for _ in 0..*count {
@@ -441,50 +445,9 @@ impl Dispatcher {
                         }
                         return CommandOutcome::redraw();
                     }
-                    vim_input::Action::RepeatCharacterSearchForward { count, select } => {
-                        if let Some(last) = app.model.last_character_search.as_ref() {
-                            let action = match last {
-                                vim_input::Action::MoveToNextCharacter { ch, till, .. }
-                                | vim_input::Action::MoveToPreviousCharacter { ch, till, .. } => {
-                                    vim_input::Action::MoveToNextCharacter {
-                                        count: *count,
-                                        ch: *ch,
-                                        till: *till,
-                                        select: *select,
-                                    }
-                                }
-                                _ => return CommandOutcome::redraw(),
-                            };
-                            app.command_queue.push_back(Command::Editor {
-                                action,
-                                register: None,
-                            });
-                        }
-                        return CommandOutcome::redraw();
-                    }
-                    vim_input::Action::RepeatCharacterSearchBackward { count, select } => {
-                        if let Some(last) = app.model.last_character_search.as_ref() {
-                            let action = match last {
-                                vim_input::Action::MoveToNextCharacter { ch, till, .. }
-                                | vim_input::Action::MoveToPreviousCharacter { ch, till, .. } => {
-                                    vim_input::Action::MoveToPreviousCharacter {
-                                        count: *count,
-                                        ch: *ch,
-                                        till: *till,
-                                        select: *select,
-                                    }
-                                }
-                                _ => return CommandOutcome::redraw(),
-                            };
-                            app.command_queue.push_back(Command::Editor {
-                                action,
-                                register: None,
-                            });
-                        }
-                        return CommandOutcome::redraw();
-                    }
+
                     vim_input::Action::Repeat { count } => {
-                        if let Some(ref actions) = app.services.repeat_actions {
+                        if let Some(actions) = app.model.kernel().repeat_actions() {
                             for _ in 0..*count {
                                 for act in actions {
                                     app.command_queue.push_back(Command::Editor {
@@ -565,27 +528,28 @@ impl Dispatcher {
 
                         if mode_before == vim_input::Mode::Normal || mode_before.is_visual() {
                             if is_insert_entering {
-                                app.services.recording_repeat = Some(vec![action.clone()]);
+                                app.model
+                                    .kernel_mut()
+                                    .begin_repeat_recording(action.clone());
                             } else {
-                                app.services.repeat_actions = Some(vec![action.clone()]);
-                                app.services.recording_repeat = None;
+                                app.model
+                                    .kernel_mut()
+                                    .set_repeat_actions(vec![action.clone()]);
                             }
                         } else if mode_before.is_insert() {
-                            if let Some(ref mut rec) = app.services.recording_repeat {
-                                rec.push(action.clone());
-                            }
+                            app.model
+                                .kernel_mut()
+                                .append_repeat_recording(action.clone());
                         }
                     } else if mode_before.is_insert() {
-                        if let Some(ref mut rec) = app.services.recording_repeat {
-                            rec.push(action.clone());
-                        }
+                        app.model
+                            .kernel_mut()
+                            .append_repeat_recording(action.clone());
                     }
                 }
 
                 if mode_after == vim_input::Mode::Normal {
-                    if let Some(rec) = app.services.recording_repeat.take() {
-                        app.services.repeat_actions = Some(rec);
-                    }
+                    app.model.kernel_mut().finish_repeat_recording();
                 }
 
                 if BufferHandler::handles(&action) {

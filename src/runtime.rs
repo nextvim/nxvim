@@ -47,7 +47,7 @@ impl Runtime {
         let mut out = stdout();
         crate::app::services::schedule_state_updates(&mut self.app, None);
 
-        let mut should_redraw = true;
+        let mut should_redraw = crate::kernel::RedrawRequest::Full;
         let mut last_command_time = std::time::Instant::now();
         let mut is_idle = false;
         let mut idle_since: Option<std::time::Instant> = None;
@@ -57,7 +57,7 @@ impl Runtime {
             if let Ok(new_rect) = self.terminal.size() {
                 if new_rect != current_rect {
                     self.resize(new_rect);
-                    should_redraw = true;
+                    should_redraw = crate::kernel::RedrawRequest::View;
                 }
             }
 
@@ -87,7 +87,7 @@ impl Runtime {
                     let terminal_event = event::read()?;
                     if let event::Event::Resize(width, height) = terminal_event {
                         self.resize(vim_ui::Rect::new(0, 0, width, height));
-                        should_redraw = true;
+                        should_redraw = crate::kernel::RedrawRequest::View;
                     } else if self.app.prompt.is_some() {
                         if let Some(choice) = crate::controller::prompt_choice(&terminal_event) {
                             if let Some(handler) =
@@ -119,7 +119,7 @@ impl Runtime {
                     idle_since = None;
                     if self.app.model.status.as_deref() == Some("idle") {
                         self.app.model.status = None;
-                        should_redraw = true;
+                        should_redraw = crate::kernel::RedrawRequest::View;
                     }
                 }
             } else if is_idle == false
@@ -128,7 +128,7 @@ impl Runtime {
                 is_idle = true;
                 idle_since = Some(std::time::Instant::now());
                 self.app.model.status = Some("idle".to_string());
-                should_redraw = true;
+                should_redraw = crate::kernel::RedrawRequest::View;
             }
 
             let processed_any = !commands.is_empty();
@@ -146,7 +146,7 @@ impl Runtime {
                         emitted.command,
                     ) {
                         Ok(outcome) => {
-                            should_redraw |= outcome.redraw;
+                            should_redraw = should_redraw.max(outcome.redraw);
                             self.apply_outcome(&outcome);
                             self.app.sync_kernel_layout();
                             if outcome.quit {
@@ -155,7 +155,7 @@ impl Runtime {
                         }
                         Err(error) => {
                             self.app.model.status = Some(error);
-                            should_redraw = true;
+                            should_redraw = crate::kernel::RedrawRequest::View;
                         }
                     }
                     continue;
@@ -186,7 +186,7 @@ impl Runtime {
                         self.app.model.status = Some(err);
                     }
                     self.app.sync_kernel_context();
-                    should_redraw = true;
+                    should_redraw = crate::kernel::RedrawRequest::View;
                     continue;
                 }
                 if let Command::ExecuteScript(ref script_str) = command {
@@ -202,7 +202,7 @@ impl Runtime {
                     if let Err(err) = self.app.validate_kernel_context() {
                         log::warn!("invalid kernel context after script: {err}");
                     }
-                    should_redraw = true;
+                    should_redraw = crate::kernel::RedrawRequest::View;
                     continue;
                 }
                 if let Err(err) = self.app.validate_kernel_context() {
@@ -210,7 +210,7 @@ impl Runtime {
                     self.app.sync_kernel_context();
                 }
                 let outcome = Dispatcher::dispatch(&mut self.app, command);
-                should_redraw |= outcome.redraw;
+                should_redraw = should_redraw.max(outcome.redraw);
                 self.apply_outcome(&outcome);
                 self.app.sync_kernel_layout();
                 if let Err(err) = self.app.validate_kernel_context() {
@@ -226,10 +226,15 @@ impl Runtime {
                 let _ = self.script.update_state(&self.app.model, current_buffer);
             }
 
-            if should_redraw {
+            let (request, invalidations, mut view_invalidations) = self.app.take_redraw();
+            crate::app::services::schedule_redraw_invalidations(&mut self.app, &invalidations);
+            view_invalidations.extend(self.app.take_view_invalidations());
+            should_redraw = should_redraw.max(request);
+
+            if should_redraw != crate::kernel::RedrawRequest::None {
                 let active_rect = self.app.ui.screen_rect();
-                self.redraw(active_rect, &mut out)?;
-                should_redraw = false;
+                self.redraw(active_rect, &view_invalidations, &mut out)?;
+                should_redraw = crate::kernel::RedrawRequest::None;
             }
         }
 
@@ -248,7 +253,21 @@ impl Runtime {
     }
 
     fn apply_outcome(&mut self, outcome: &CommandOutcome) {
-        crate::app::services::schedule_redraw_invalidations(&mut self.app, &outcome.invalidations);
+        self.app
+            .queue_redraw(outcome.redraw, &outcome.invalidations);
+        if outcome.invalidations.is_empty()
+            && matches!(
+                outcome.redraw,
+                crate::kernel::RedrawRequest::Layout | crate::kernel::RedrawRequest::Full
+            )
+        {
+            self.app.queue_redraw(
+                outcome.redraw,
+                &[crate::kernel::RedrawInvalidation::global(
+                    crate::kernel::RedrawInvalidationKind::CompleteLayout,
+                )],
+            );
+        }
         for effect in &outcome.view_effects {
             self.apply_view_effect(*effect);
         }
@@ -258,11 +277,19 @@ impl Runtime {
                     self.app.model.status = Some(message.clone());
                     self.app.message = message.clone();
                     self.app.messages.push(message.clone());
+                    self.app.queue_redraw(
+                        crate::kernel::RedrawRequest::View,
+                        &[crate::kernel::RedrawInvalidation::global(
+                            crate::kernel::RedrawInvalidationKind::Statusline,
+                        )],
+                    );
                 }
                 crate::kernel::CommandEffect::MutationCommitted(mutation) => {
                     // Older producers may not carry typed invalidations yet.
                     if outcome.invalidations.is_empty() {
-                        crate::app::services::schedule_mutation_updates(&mut self.app, mutation);
+                        let invalidations = mutation.invalidations();
+                        self.app
+                            .queue_redraw(crate::kernel::RedrawRequest::View, &invalidations);
                     }
                 }
                 crate::kernel::CommandEffect::EventEmitted { name, payload } => {
@@ -271,12 +298,34 @@ impl Runtime {
                 crate::kernel::CommandEffect::BackgroundWorkRequested { kind } => {
                     log::trace!("kernel background work requested: {kind}");
                 }
-                crate::kernel::CommandEffect::CursorMoved { .. }
-                | crate::kernel::CommandEffect::BufferMutated { .. }
+                crate::kernel::CommandEffect::CursorMoved { window } => {
+                    self.app.queue_redraw(
+                        crate::kernel::RedrawRequest::View,
+                        &[crate::kernel::RedrawInvalidation::window(
+                            crate::kernel::RedrawInvalidationKind::Cursor,
+                            *window,
+                        )],
+                    );
+                }
+                crate::kernel::CommandEffect::TabChanged { .. } => {
+                    self.app.queue_redraw(
+                        crate::kernel::RedrawRequest::View,
+                        &[crate::kernel::RedrawInvalidation::global(
+                            crate::kernel::RedrawInvalidationKind::Tabline,
+                        )],
+                    );
+                }
+                crate::kernel::CommandEffect::ModeChanged { .. } => {
+                    self.app.queue_redraw(
+                        crate::kernel::RedrawRequest::View,
+                        &[crate::kernel::RedrawInvalidation::global(
+                            crate::kernel::RedrawInvalidationKind::Statusline,
+                        )],
+                    );
+                }
+                crate::kernel::CommandEffect::BufferMutated { .. }
                 | crate::kernel::CommandEffect::WindowChanged { .. }
-                | crate::kernel::CommandEffect::TabChanged { .. }
                 | crate::kernel::CommandEffect::OptionChanged { .. }
-                | crate::kernel::CommandEffect::ModeChanged { .. }
                 | crate::kernel::CommandEffect::QuitRequested => {}
             }
         }
@@ -302,6 +351,7 @@ impl Runtime {
     fn redraw(
         &mut self,
         rect: vim_ui::Rect,
+        view_invalidations: &[crate::app::ViewInvalidation],
         out: &mut impl Write,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let status_height = if self.app.inspect { 2 } else { 1 };
@@ -317,9 +367,17 @@ impl Runtime {
             &layout,
         );
 
+        let targeted_windows: std::collections::HashSet<_> = view_invalidations
+            .iter()
+            .filter_map(|invalidation| match invalidation.target {
+                crate::app::ViewInvalidationTarget::Window(window_id) => Some(window_id),
+                _ => None,
+            })
+            .collect();
         let window_ids: Vec<_> = WindowOps::window_buffers(&self.app.ui)
             .into_iter()
             .map(|(window_id, _)| window_id)
+            .filter(|window_id| targeted_windows.is_empty() || targeted_windows.contains(window_id))
             .collect();
         for window_id in window_ids {
             crate::app::services::schedule_window_highlight(&mut self.app, window_id, 0, 0);

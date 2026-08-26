@@ -493,6 +493,23 @@ impl DisplaySnapshot {
             .map(DisplayPoint)
     }
 
+    /// Returns the display-row span affected by a buffer-row span. A cold
+    /// display-map region returns `None`, allowing callers to retain their
+    /// existing expansion fallback instead of guessing coordinates.
+    pub fn try_display_rows_for_buffer_rows(&self, rows: Range<u32>) -> Option<Range<u32>> {
+        let row_count = self.original_buffer.row_count();
+        let start = rows.start.min(row_count);
+        let end = rows.end.max(start).min(row_count);
+        let first = self.try_point_to_display_point(Point::new(start, 0))?.0.row;
+        let last_row = end.saturating_sub(1);
+        let last = self
+            .try_point_to_display_point(Point::new(last_row, u32::MAX))?
+            .0
+            .row
+            .saturating_add(1);
+        Some(first..last.max(first.saturating_add(1)))
+    }
+
     pub fn point_to_display_point(&self, point: Point) -> DisplayPoint {
         self.try_point_to_display_point(point)
             .expect("accessed cold display-map region")
@@ -666,6 +683,25 @@ mod tests {
         );
         assert!(map.covers_buffer_rows(&(1..2)));
         assert!(!map.covers_buffer_rows(&(0..2)));
+    }
+
+    #[test]
+    fn maps_buffer_rows_to_wrapped_display_rows() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "abcdef\nsecond",
+        );
+        let display = DisplayMap::new(buffer.snapshot().clone(), Some(3)).snapshot();
+
+        assert_eq!(
+            display.try_display_rows_for_buffer_rows(0..1).unwrap(),
+            0..2
+        );
+        assert_eq!(
+            display.try_display_rows_for_buffer_rows(1..2).unwrap(),
+            2..4
+        );
     }
 
     #[test]

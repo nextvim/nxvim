@@ -62,12 +62,19 @@ impl Buffers {
     /// buffer that is currently displayed. The caller decides which window
     /// should display the returned buffer.
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> BufferId {
+        self.open_path_with_outcome(path)
+            .map(|(buffer_id, _)| buffer_id)
+            .expect("opening a buffer path should produce a buffer")
+    }
+
+    pub fn open_path_with_outcome(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<(BufferId, vim_buffer::ManagerOutcome), vim_buffer::BufferError> {
         let path = path.as_ref();
         self.inner
             .load(path)
             .or_else(|_| self.inner.create_named(path, ""))
-            .map(|(buffer_id, _)| buffer_id)
-            .expect("opening a buffer path should produce a buffer")
     }
 
     pub fn current(&self) -> BufferId {

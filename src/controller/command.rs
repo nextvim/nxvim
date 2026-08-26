@@ -229,7 +229,7 @@ pub enum ViewEffect {
 
 #[derive(Debug, Default)]
 pub struct CommandOutcome {
-    pub redraw: bool,
+    pub redraw: crate::kernel::RedrawRequest,
     pub quit: bool,
     pub view_effects: Vec<ViewEffect>,
     pub kernel_effects: Vec<crate::kernel::CommandEffect>,
@@ -243,7 +243,7 @@ impl CommandOutcome {
             .iter()
             .any(|effect| matches!(effect, crate::kernel::CommandEffect::QuitRequested));
         Self {
-            redraw: outcome.redraw != crate::kernel::RedrawRequest::None,
+            redraw: outcome.redraw,
             quit,
             invalidations: outcome.invalidations,
             kernel_effects: outcome.effects,
@@ -253,14 +253,47 @@ impl CommandOutcome {
 
     pub fn redraw() -> Self {
         Self {
-            redraw: true,
+            redraw: crate::kernel::RedrawRequest::View,
             ..Self::default()
         }
     }
 
+    pub fn layout() -> Self {
+        Self {
+            redraw: crate::kernel::RedrawRequest::Layout,
+            invalidations: vec![crate::kernel::RedrawInvalidation::global(
+                crate::kernel::RedrawInvalidationKind::CompleteLayout,
+            )],
+            ..Self::default()
+        }
+    }
+
+    pub fn window_redraw(
+        window: crate::kernel::WindowId,
+        kind: crate::kernel::RedrawInvalidationKind,
+    ) -> Self {
+        Self {
+            redraw: crate::kernel::RedrawRequest::View,
+            invalidations: vec![crate::kernel::RedrawInvalidation::window(kind, window)],
+            ..Self::default()
+        }
+    }
+
+    pub fn global_redraw(kind: crate::kernel::RedrawInvalidationKind) -> Self {
+        Self {
+            redraw: crate::kernel::RedrawRequest::View,
+            invalidations: vec![crate::kernel::RedrawInvalidation::global(kind)],
+            ..Self::default()
+        }
+    }
+
+    pub fn statusline() -> Self {
+        Self::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
+    }
+
     pub fn quit() -> Self {
         Self {
-            redraw: true,
+            redraw: crate::kernel::RedrawRequest::View,
             quit: true,
             ..Self::default()
         }
@@ -268,14 +301,14 @@ impl CommandOutcome {
 
     pub fn with_effect(effect: ViewEffect) -> Self {
         Self {
-            redraw: true,
+            redraw: crate::kernel::RedrawRequest::Layout,
             view_effects: vec![effect],
             ..Self::default()
         }
     }
 
     pub fn merge(&mut self, mut other: Self) {
-        self.redraw |= other.redraw;
+        self.redraw = self.redraw.max(other.redraw);
         self.quit |= other.quit;
         self.invalidations.append(&mut other.invalidations);
         self.view_effects.append(&mut other.view_effects);
@@ -295,9 +328,10 @@ mod tests {
                 crate::kernel::CommandEffect::QuitRequested,
             ],
             redraw: crate::kernel::RedrawRequest::View,
+            invalidations: Vec::new(),
         };
         let outcome = CommandOutcome::from_kernel(kernel);
-        assert!(outcome.redraw);
+        assert_eq!(outcome.redraw, crate::kernel::RedrawRequest::View);
         assert!(outcome.quit);
         assert_eq!(outcome.kernel_effects.len(), 2);
     }

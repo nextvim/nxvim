@@ -235,7 +235,10 @@ impl CommandlineHandler {
                         }
                     }
                 }
-                CommandOutcome::redraw()
+                CommandOutcome::window_redraw(
+                    view_ids.commandline,
+                    crate::kernel::RedrawInvalidationKind::TextRows,
+                )
             }
             Action::MoveDown { .. } if active_window == view_ids.commandline => {
                 let history = if model.commandline_mode == '/' || model.commandline_mode == '?' {
@@ -274,7 +277,10 @@ impl CommandlineHandler {
                         }
                     }
                 }
-                CommandOutcome::redraw()
+                CommandOutcome::window_redraw(
+                    view_ids.commandline,
+                    crate::kernel::RedrawInvalidationKind::TextRows,
+                )
             }
             _ => CommandOutcome::default(),
         }

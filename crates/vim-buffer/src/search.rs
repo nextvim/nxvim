@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn find_next_pattern_match_returns_first_match_at_or_after_position() {
         let text = "foo1 bar foo22 baz foo333";
-        let re = compile(r"foo\d+").unwrap();
+        let re = compile(r"foo\d\+").unwrap();
         // matches: (0, 4, "foo1"), (9, 5, "foo22"), (19, 6, "foo333")
 
         assert_eq!(text.find_next_pattern_match(&re, 0), Some((0, 4, "foo1")));
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn find_previous_pattern_match_returns_closest_match_strictly_before_position() {
         let text = "foo1 bar foo22 baz foo333";
-        let re = compile(r"foo\d+").unwrap();
+        let re = compile(r"foo\d\+").unwrap();
         // matches: (0, 4, "foo1"), (9, 5, "foo22"), (19, 6, "foo333")
 
         assert_eq!(

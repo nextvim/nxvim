@@ -396,7 +396,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert_eq!(app.model.status.as_deref(), Some("hello"));
         assert_eq!(app.messages.last().map(String::as_str), Some("hello"));
     }

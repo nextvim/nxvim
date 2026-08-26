@@ -81,9 +81,18 @@ impl TaskDispatcher {
             TaskResult::SaveFile {
                 task_id,
                 buffer_id,
-                revision: _,
+                revision,
                 result,
             } => {
+                // A save completion is tied to the buffer revision captured
+                // when the task was spawned. Do not clear modified state or
+                // publish a stale completion after a newer edit.
+                if !model
+                    .buffer_state(buffer_id)
+                    .is_some_and(|state| state.revision == revision)
+                {
+                    return CommandOutcome::default();
+                }
                 if !services.files.apply_task_result(task_id, &result) {
                     return CommandOutcome::default();
                 }
@@ -212,7 +221,7 @@ mod tests {
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
-        assert!(!outcome.redraw);
+        assert_eq!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let window = ui.window(main).unwrap().window_state().unwrap();
         assert!(window.display_map.covers_exactly(200..300));
         assert!(window.pending_display_map.is_none());
@@ -239,6 +248,6 @@ mod tests {
             display_map_expansion(main, buffer_id, revision, expansion),
         );
 
-        assert!(!outcome.redraw);
+        assert_eq!(outcome.redraw, crate::kernel::RedrawRequest::None);
     }
 }

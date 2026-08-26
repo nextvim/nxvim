@@ -86,7 +86,7 @@ mod tests {
                 display: "g".to_string(),
             }),
         );
-        assert!(pending.redraw);
+        assert_ne!(pending.redraw, crate::kernel::RedrawRequest::None);
         assert_eq!(app.model.status.as_deref(), Some("Pending sequence: g"));
         assert_eq!(
             app.model
@@ -97,7 +97,7 @@ mod tests {
         );
 
         let invalid = Dispatcher::dispatch(&mut app, Command::InvalidInput);
-        assert!(invalid.redraw);
+        assert_ne!(invalid.redraw, crate::kernel::RedrawRequest::None);
         assert_eq!(app.model.status.as_deref(), Some("Invalid sequence"));
         assert!(app.model.kernel().pending_command().is_none());
 
@@ -260,7 +260,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
 
         // Wait and poll the background task to complete
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -306,7 +306,7 @@ mod tests {
         );
 
         let edited = window_buffer(&app, main).unwrap();
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert_ne!(edited, original);
         assert!(app.model.list().contains(&original));
         assert_eq!(app.model.list().len(), 2);
@@ -620,8 +620,8 @@ mod tests {
         );
 
         // Verify it was recorded as the last change
-        assert_eq!(app.services.repeat_actions.as_ref().unwrap().len(), 1);
-        assert_eq!(app.services.repeat_actions.as_ref().unwrap()[0], delete);
+        assert_eq!(app.model.kernel().repeat_actions().unwrap().len(), 1);
+        assert_eq!(app.model.kernel().repeat_actions().unwrap()[0], delete);
 
         // 2. Dispatch repeat command
         Dispatcher::dispatch(
@@ -677,7 +677,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let buffer = app.model.get_buffer(buffer_id).unwrap();
         let text_buffer = buffer.as_text_buffer();
         let text: String = text_buffer
@@ -709,7 +709,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let buffer = app.model.get_buffer(buffer_id).unwrap();
         let text_buffer = buffer.as_text_buffer();
         let text: String = text_buffer
@@ -745,7 +745,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let point = app
             .ui
             .window(main)
@@ -788,7 +788,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let point = app
             .ui
             .window(main)
@@ -827,7 +827,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let buffer = app.model.get_buffer(buffer_id).unwrap();
         let text_buffer = buffer.as_text_buffer();
         let text: String = text_buffer
@@ -906,7 +906,7 @@ mod tests {
                 register: Some('a'),
             },
         );
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
 
         let buffer = app.model.get_buffer(buffer_id).unwrap();
         let text_buffer = buffer.as_text_buffer();
@@ -958,7 +958,7 @@ mod tests {
             },
         );
 
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         let buffer = app.model.get_buffer(buffer_id).unwrap();
         let text_buffer = buffer.as_text_buffer();
         let text: String = text_buffer
@@ -1220,7 +1220,7 @@ mod tests {
         // 3. Verify it is cleared
         assert_eq!(app.model.search_pattern, None);
         assert!(app.model.search_regex.is_none());
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
     }
 
     #[test]
@@ -1327,7 +1327,7 @@ mod tests {
                 name: Some("kanagawa".to_string()),
             },
         );
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert_eq!(
             app.colorscheme.as_ref().map(|c| c.metadata.name.as_str()),
             Some("kanagawa")
@@ -1353,12 +1353,12 @@ mod tests {
 
         // Turn syntax off
         let outcome = Dispatcher::dispatch(&mut app, Command::Syntax { enable: false });
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert!(!app.syntax_highlight);
 
         // Turn syntax on
         let outcome = Dispatcher::dispatch(&mut app, Command::Syntax { enable: true });
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert!(app.syntax_highlight);
     }
 
@@ -1369,12 +1369,12 @@ mod tests {
 
         // Turn treesitter on
         let outcome = Dispatcher::dispatch(&mut app, Command::Treesitter { enable: true });
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert!(app.treesitter_enabled);
 
         // Turn treesitter off
         let outcome = Dispatcher::dispatch(&mut app, Command::Treesitter { enable: false });
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert!(!app.treesitter_enabled);
     }
 
@@ -1385,12 +1385,12 @@ mod tests {
 
         // Turn indexer on
         let outcome = Dispatcher::dispatch(&mut app, Command::Indexer { enable: true });
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert!(app.indexer_enabled);
 
         // Turn indexer off
         let outcome = Dispatcher::dispatch(&mut app, Command::Indexer { enable: false });
-        assert!(outcome.redraw);
+        assert_ne!(outcome.redraw, crate::kernel::RedrawRequest::None);
         assert!(!app.indexer_enabled);
     }
 

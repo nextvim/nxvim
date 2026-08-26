@@ -71,8 +71,6 @@ pub struct Services {
     pub treesitter: treesitter::TreeSitterService,
     raw_results: Vec<background_worker::BackgroundResult>,
     task_metadata: Mutex<HashMap<background_worker::TaskId, TaskMetadata>>,
-    pub repeat_actions: Option<Vec<vim_input::Action>>,
-    pub recording_repeat: Option<Vec<vim_input::Action>>,
 }
 
 impl Services {
@@ -111,8 +109,6 @@ impl Services {
             treesitter: treesitter::TreeSitterService::new(),
             raw_results: Vec::new(),
             task_metadata: Mutex::new(HashMap::new()),
-            repeat_actions: None,
-            recording_repeat: None,
         }
     }
 
@@ -266,6 +262,7 @@ pub fn schedule_redraw_invalidations(
     invalidations: &[crate::kernel::RedrawInvalidation],
 ) {
     for invalidation in invalidations {
+        route_view_invalidation(app, invalidation);
         let windows: Vec<_> = WindowOps::window_buffers(&app.ui)
             .into_iter()
             .filter(|(window_id, buffer_id)| {
@@ -282,16 +279,56 @@ pub fn schedule_redraw_invalidations(
         for window_id in windows {
             match invalidation.kind {
                 crate::kernel::RedrawInvalidationKind::TextRows => {
-                    schedule_window_display_map(app, window_id);
-                    schedule_window_highlight(app, window_id, 0, 0);
+                    if invalidation.ranges.is_empty()
+                        || invalidation_shifts_or_intersects_visible_rows(
+                            app,
+                            window_id,
+                            &invalidation.ranges,
+                        )
+                    {
+                        schedule_window_display_map(app, window_id);
+                    }
+                    if invalidation.ranges.is_empty()
+                        || invalidation_intersects_visible_rows(
+                            app,
+                            window_id,
+                            &invalidation.ranges,
+                        )
+                    {
+                        if invalidation.ranges.is_empty() {
+                            schedule_window_highlight(app, window_id, 0, 0);
+                        } else {
+                            schedule_window_highlight_ranges(app, window_id, &invalidation.ranges);
+                        }
+                    }
                     schedule_window_treesitter(app, window_id);
                     schedule_window_indexer(app, window_id);
                 }
                 crate::kernel::RedrawInvalidationKind::DisplayMapTransforms => {
-                    schedule_window_display_map(app, window_id);
+                    if invalidation.ranges.is_empty()
+                        || invalidation_shifts_or_intersects_visible_rows(
+                            app,
+                            window_id,
+                            &invalidation.ranges,
+                        )
+                    {
+                        schedule_window_display_map(app, window_id);
+                    }
                 }
                 crate::kernel::RedrawInvalidationKind::SyntaxHighlighting => {
-                    schedule_window_highlight(app, window_id, 0, 0);
+                    if invalidation.ranges.is_empty()
+                        || invalidation_intersects_visible_rows(
+                            app,
+                            window_id,
+                            &invalidation.ranges,
+                        )
+                    {
+                        if invalidation.ranges.is_empty() {
+                            schedule_window_highlight(app, window_id, 0, 0);
+                        } else {
+                            schedule_window_highlight_ranges(app, window_id, &invalidation.ranges);
+                        }
+                    }
                     schedule_window_treesitter(app, window_id);
                     schedule_window_indexer(app, window_id);
                 }
@@ -302,6 +339,139 @@ pub fn schedule_redraw_invalidations(
             }
         }
     }
+}
+
+fn route_view_invalidation(app: &mut App, invalidation: &crate::kernel::RedrawInvalidation) {
+    use crate::app::{ViewInvalidation, ViewInvalidationTarget};
+    let target_for_window = |window_id| ViewInvalidationTarget::Window(window_id);
+    match invalidation.kind {
+        crate::kernel::RedrawInvalidationKind::Cursor
+        | crate::kernel::RedrawInvalidationKind::Selection
+        | crate::kernel::RedrawInvalidationKind::Gutter
+        | crate::kernel::RedrawInvalidationKind::TextRows
+        | crate::kernel::RedrawInvalidationKind::DisplayMapTransforms
+        | crate::kernel::RedrawInvalidationKind::SyntaxHighlighting => {
+            let windows = WindowOps::window_buffers(&app.ui)
+                .into_iter()
+                .filter(|(window_id, buffer_id)| {
+                    invalidation
+                        .window
+                        .is_none_or(|target| target == *window_id)
+                        && invalidation
+                            .buffer
+                            .is_none_or(|target| target.get() == buffer_id.get())
+                })
+                .map(|(window_id, _)| target_for_window(window_id));
+            for target in windows {
+                app.queue_view_invalidation(ViewInvalidation {
+                    target,
+                    kind: invalidation.kind,
+                });
+            }
+        }
+        crate::kernel::RedrawInvalidationKind::Statusline => {
+            app.queue_view_invalidation(ViewInvalidation {
+                target: ViewInvalidationTarget::Statusline,
+                kind: invalidation.kind,
+            });
+        }
+        crate::kernel::RedrawInvalidationKind::Tabline => {
+            app.queue_view_invalidation(ViewInvalidation {
+                target: ViewInvalidationTarget::Tabline,
+                kind: invalidation.kind,
+            });
+        }
+        crate::kernel::RedrawInvalidationKind::Overlays => {
+            app.queue_view_invalidation(ViewInvalidation {
+                target: ViewInvalidationTarget::Overlay,
+                kind: invalidation.kind,
+            });
+        }
+        crate::kernel::RedrawInvalidationKind::CompleteLayout => {
+            app.queue_view_invalidation(ViewInvalidation {
+                target: ViewInvalidationTarget::Layout,
+                kind: invalidation.kind,
+            });
+        }
+    }
+}
+
+/// Determines whether changed byte ranges can affect the currently visible
+/// display rows. Cold mappings conservatively return `true`, preserving the
+/// expansion/rebuild fallback until the map is warm.
+fn invalidation_rows(
+    app: &App,
+    window_id: vim_ui::WindowId,
+    ranges: &[vim_buffer::TextRange],
+) -> Option<(std::ops::Range<u32>, std::ops::Range<u32>)> {
+    let buffer_id = WindowOps::window_buffer(&app.ui, window_id)?;
+    let buffer = app.model.get_buffer(buffer_id).ok()?;
+    let snapshot = buffer.snapshot().as_inner().clone();
+    let window = app.ui.window(window_id).and_then(Window::window_state)?;
+    let display = window.display_map.snapshot();
+
+    let mut buffer_rows: Option<std::ops::Range<u32>> = None;
+    let mut display_rows: Option<std::ops::Range<u32>> = None;
+    for range in ranges {
+        let start = snapshot.offset_to_point(range.start.0).row;
+        let end = snapshot.offset_to_point(range.end.0).row.saturating_add(1);
+        let rows = start..end;
+        let mapped = display.try_display_rows_for_buffer_rows(rows.clone())?;
+        buffer_rows = Some(match buffer_rows {
+            Some(existing) => existing.start.min(rows.start)..existing.end.max(rows.end),
+            None => rows,
+        });
+        display_rows = Some(match display_rows {
+            Some(existing) => existing.start.min(mapped.start)..existing.end.max(mapped.end),
+            None => mapped,
+        });
+    }
+    Some((buffer_rows?, display_rows?))
+}
+
+fn invalidation_intersects_visible_rows(
+    app: &App,
+    window_id: vim_ui::WindowId,
+    ranges: &[vim_buffer::TextRange],
+) -> bool {
+    let Some((_, display_rows)) = invalidation_rows(app, window_id, ranges) else {
+        return true;
+    };
+    let Some(window) = app.ui.window(window_id).and_then(Window::window_state) else {
+        return false;
+    };
+    let visible = {
+        let display = window.display_map.snapshot();
+        display.scroll_y
+            ..display
+                .scroll_y
+                .saturating_add(window.viewport.height as u32)
+    };
+    display_rows.start < visible.end && visible.start < display_rows.end
+}
+
+fn invalidation_shifts_or_intersects_visible_rows(
+    app: &App,
+    window_id: vim_ui::WindowId,
+    ranges: &[vim_buffer::TextRange],
+) -> bool {
+    let Some((buffer_rows, display_rows)) = invalidation_rows(app, window_id, ranges) else {
+        return true;
+    };
+    let Some(window) = app.ui.window(window_id).and_then(Window::window_state) else {
+        return false;
+    };
+    let display = window.display_map.snapshot();
+    let visible = display.scroll_y
+        ..display
+            .scroll_y
+            .saturating_add(window.viewport.height as u32);
+    let visible_buffer_start = display
+        .try_buffer_row_for_display_row(visible.start)
+        .unwrap_or(0);
+    let intersects = display_rows.start < visible.end && visible.start < display_rows.end;
+    let shifts_visible_coordinates = buffer_rows.start < visible_buffer_start;
+    intersects || shifts_visible_coordinates
 }
 
 pub fn schedule_state_updates(app: &mut App, idle_elapsed: Option<std::time::Duration>) {
@@ -394,6 +564,27 @@ pub fn schedule_window_highlight(
     expand_before: u32,
     expand_after: u32,
 ) -> Option<()> {
+    schedule_window_highlight_inner(app, window_id, None, expand_before, expand_after)
+}
+
+fn schedule_window_highlight_ranges(
+    app: &mut App,
+    window_id: vim_ui::WindowId,
+    ranges: &[vim_buffer::TextRange],
+) -> Option<()> {
+    let Some((buffer_rows, _)) = invalidation_rows(app, window_id, ranges) else {
+        return schedule_window_highlight(app, window_id, 0, 0);
+    };
+    schedule_window_highlight_inner(app, window_id, Some(buffer_rows), 0, 0)
+}
+
+fn schedule_window_highlight_inner(
+    app: &mut App,
+    window_id: vim_ui::WindowId,
+    requested_rows: Option<std::ops::Range<u32>>,
+    expand_before: u32,
+    expand_after: u32,
+) -> Option<()> {
     if !app.syntax_highlight {
         return Some(());
     }
@@ -406,14 +597,23 @@ pub fn schedule_window_highlight(
     let display_map_snapshot = window.display_map.snapshot();
     let scroll_y = display_map_snapshot.scroll_y;
     let viewport_height = window.viewport.height as u32;
-    let start_row = display_map_snapshot
-        .try_buffer_row_for_display_row(scroll_y)
-        .unwrap_or(0);
-    let end_row = display_map_snapshot
-        .try_buffer_row_for_display_row(
-            (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
+    let (start_row, end_row) = if let Some(rows) = requested_rows {
+        (
+            rows.start.min(snapshot.max_point().row),
+            rows.end.min(snapshot.max_point().row.saturating_add(1)),
         )
-        .unwrap_or_else(|| display_map_snapshot.buffer_snapshot().max_point().row);
+    } else {
+        (
+            display_map_snapshot
+                .try_buffer_row_for_display_row(scroll_y)
+                .unwrap_or(0),
+            display_map_snapshot
+                .try_buffer_row_for_display_row(
+                    (scroll_y + viewport_height).min(display_map_snapshot.row_count()),
+                )
+                .unwrap_or_else(|| display_map_snapshot.buffer_snapshot().max_point().row),
+        )
+    };
 
     let colorscheme = app.colorscheme.as_ref();
     let fallback_colorscheme;

@@ -1,4 +1,4 @@
-use text::{Bias, Selection, SelectionGoal, ToPoint};
+use text::{Bias, Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use unicode_width::UnicodeWidthChar;
 use vim_buffer::{Buffer, SelectionSet};
 
@@ -12,6 +12,82 @@ fn display_width(text: &str, column: usize) -> usize {
         };
     }
     width
+}
+
+/// Opens lines above or below the primary cursor in one insert-mode
+/// transaction and places the cursor at the first opened line.
+pub(crate) fn execute_open_line(
+    buffer: &mut Buffer,
+    selections: &mut SelectionSet,
+    folds: &mut Vec<display_map::Fold>,
+    count: usize,
+    above: bool,
+) -> Option<super::MutationOutcome> {
+    if selections.selections.is_empty() {
+        selections.add(buffer.as_text_buffer(), 0);
+    }
+    let count = count.max(1);
+    let cursor = selections.primary().clone();
+    let point = cursor.head().to_point(buffer.as_text_buffer());
+    let insertion_point = if above {
+        Point {
+            row: point.row,
+            column: 0,
+        }
+    } else {
+        Point {
+            row: point.row,
+            column: buffer.as_text_buffer().line_len(point.row),
+        }
+    };
+    let insertion_offset = insertion_point.to_offset(buffer.as_text_buffer());
+    crate::controller::editor::remove_overlapping_folds(
+        folds,
+        buffer.as_text_buffer(),
+        insertion_offset,
+        insertion_offset,
+    );
+    let text = "\n".repeat(count);
+    let selection_snapshot = selections.clone();
+    let outcome = super::transaction(
+        buffer,
+        vim_buffer::EditOrigin::InsertMode,
+        Some(selection_snapshot),
+        |tx| {
+            tx.replace(
+                None,
+                vim_buffer::TextRange {
+                    start: vim_buffer::ByteOffset(insertion_offset),
+                    end: vim_buffer::ByteOffset(insertion_offset),
+                },
+                text.as_str(),
+            );
+        },
+    )
+    .ok()?;
+
+    let target_offset = if above {
+        insertion_offset
+    } else {
+        insertion_offset.saturating_add(1)
+    };
+    let target = buffer.as_text_buffer().anchor_at(target_offset, Bias::Left);
+    selections.clear(buffer.as_text_buffer());
+    let primary = selections
+        .first()
+        .expect("clear retains a primary cursor")
+        .clone();
+    selections.update(
+        buffer.as_text_buffer(),
+        &Selection {
+            id: primary.id,
+            start: target.clone(),
+            end: target,
+            reversed: false,
+            goal: SelectionGoal::None,
+        },
+    );
+    Some(outcome)
 }
 
 fn virtual_replace_end(buffer: &text::Buffer, start: usize, width: usize) -> usize {
@@ -140,6 +216,31 @@ pub(crate) fn execute_insert_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_line_uses_one_transaction_and_positions_insert_cursor() {
+        let mut buffer = Buffer::new(
+            vim_buffer::BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "one\ntwo",
+        );
+        let mut selections = SelectionSet::new();
+        selections.add(buffer.as_text_buffer(), 1);
+        let mutation = execute_open_line(&mut buffer, &mut selections, &mut Vec::new(), 2, false);
+        assert!(mutation.is_some());
+        assert_eq!(
+            buffer.as_text_buffer().as_rope().to_string(),
+            "one\n\n\ntwo"
+        );
+        assert_eq!(
+            buffer
+                .as_text_buffer()
+                .offset_for_anchor(&selections.first().unwrap().head()),
+            4
+        );
+        buffer.undo().unwrap().unwrap();
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "one\ntwo");
+    }
 
     #[test]
     fn virtual_replace_consumes_display_cells_not_bytes_or_characters() {

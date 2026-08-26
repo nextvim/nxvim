@@ -49,9 +49,9 @@ The primary reset scope is the semantic layer currently spread across:
 |---|---|---|
 | Phase 0 — Baseline and boundaries | `[x] COMPLETE` | Baseline recorded, migration seam created, initial contracts documented |
 | Phase 1 — Explicit editor state | `[x] COMPLETE` | Kernel owns buffer storage/lifecycle boundary and current context is validated; remaining raw test-only access is deferred API cleanup |
-| Phase 2 — True windows and tab pages | `[~] IN PROGRESS` | Kernel tab lifecycle and App façade added; independent window sets, controller switching, and UI projection remain |
-| Phase 3 — Command and mode kernel | `[~] IN PROGRESS` | Explicit command classification/context boundary added; handler migration remains |
-| Phase 4 — Mutation, undo, and redraw contracts | `[ ] PENDING` | Not started |
+| Phase 2 — True windows and tab pages | `[x] COMPLETE` | Kernel owns semantic windows and tab-local layout membership; `vim-ui` projects geometry and retained presentation state |
+| Phase 3 — Command and mode kernel | `[x] COMPLETE` | Command classification/context, Normal/Visual/Insert state, operator motions, history/repeat, marks/selections, and Ex/script-host admission complete; unsupported requests follow the documented drop policy
+| Phase 4 — Mutation, undo, and redraw contracts | `[~] IN PROGRESS` | Transactions, typed mutation outcomes, display-worker invalidation, and end-to-end redraw request strength are implemented; row-level renderer narrowing and final verification remain |
 | Phase 5 — Unified events and autocommands | `[ ] PENDING` | Not started |
 | Phase 6 — Script host convergence | `[ ] PENDING` | Not started |
 | Phase 7 — External runtime integration | `[ ] PENDING` | Not started |
@@ -59,7 +59,7 @@ The primary reset scope is the semantic layer currently spread across:
 | Phase 9 — Compatibility expansion | `[ ] PENDING` | Not started |
 | Phase 10 — Compatibility harness | `[ ] PENDING` | Not started |
 
-The current implementation is deliberately a compatibility stage: the existing controller remains authoritative for command behavior while the kernel becomes authoritative for buffer ownership and current identity.
+The current implementation is deliberately a compatibility stage: the existing controller remains authoritative for command families not yet migrated in Phase 3, while the kernel is authoritative for buffer ownership, current identity, semantic windows, and tab-page layout membership.
 
 ## Status Legend
 
@@ -426,7 +426,7 @@ Implement:
 
 # Phase 3 — Command and Mode Kernel
 
-## Phase 3 Checkpoint — IN PROGRESS
+## Phase 3 Checkpoint — COMPLETE
 
 The first command-kernel boundary is implemented:
 
@@ -465,6 +465,9 @@ The first command-kernel boundary is implemented:
 - Pure buffer motions now execute in the kernel for word/WORD boundaries, word ends, line/document boundaries, paragraphs, sentences, and forward/backward character-find motions in addition to `h/j/k/l`; viewport-, syntax-, search-, fold-, delimiter-, and text-object-dependent motions remain compatibility-backed.
 - Semantic mode state is now kernel-owned after command execution and synchronized back to `vim-input`, which remains the key decoder.
 - Insert/Replace entry and exit produce ordered `ModeChanged`, `InsertEnter`, `InsertLeavePre`, and `InsertLeave` effects, with an explicit kernel insert-session boundary.
+- Non-mutating mode-entry commands (`i`, `a`, `A`, `I`, `R`, `gR`, Visual, Visual-line, Visual-block, Normal, and command entry) now normalize window selections through `kernel::normal::execute_mode_entry` and return before the legacy action executor.
+- Open-line entry (`o`/`O`) now inserts all requested lines through one kernel transaction, returns a typed mutation outcome, positions the insert cursor explicitly, and bypasses the legacy action executor.
+- Counted linewise `DeleteLine`, `ChangeLine`, `YankLine`, `UpperCaseLine`, and `LowerCaseLine` now share a kernel line-range resolver. Mutations use one transaction with typed outcomes, linewise clipboard payloads are preserved, and `ChangeLine` enters the kernel-owned Insert session without invoking the legacy action executor.
 - Insert, Replace, newline, and tab text now execute through `src/kernel/insert.rs` in a single replacement transaction per resolved input action, preserving selections, folds, multi-cursor updates, clipboard capture for replaced selections, owned `InsertCharPre` payloads, and buffer-mutation outcomes.
 - Kernel insert-session state now owns undo-block grouping: the first entry mutation opens the block, subsequent Insert/Replace transactions join it, and leaving/re-entering insert mode resets the boundary. Insert transactions use `EditOrigin::InsertMode`.
 - Interactive `:`, `/`, and `?` submissions now enqueue their typed `CommandLineRequest`, preserve parsed metadata and stable IDs through execution, and reject stale contexts. Multi-line/configuration scripts retain the compatibility path.
@@ -490,13 +493,64 @@ Execute the remaining work as independently compiling slices:
 
 1. **Pure-buffer operators — COMPLETE:** migrate `YankMotion`, `ChangeMotion`, and case operators for motions already supported by the kernel resolver; retain explicit compatibility fallbacks for dependent motions.
 2. **Motion metadata — COMPLETE FOR MIGRATED MOTIONS:** introduce typed characterwise/linewise and inclusive/exclusive motion results so operator ranges no longer infer semantics from action variants.
-3. **Dependent motion extraction — IN PROGRESS (search migrated):** move viewport/search/delimiter/fold/text-object range resolution behind kernel interfaces, one dependency family at a time.
-4. **Mode completion — IN PROGRESS (Virtual Replace and lifecycle added):** add Virtual Replace, finish entry/exit cursor normalization, and verify Insert/Replace/Virtual Replace lifecycle and undo boundaries.
-5. **Normal semantic state — IN PROGRESS (macro recording/replay migrated):** move macro recording/replay coordination and remaining command-prefix state behind the kernel while keeping `vim-input` as the key decoder.
+3. **Dependent motion extraction — COMPLETE:** viewport, search, delimiter, fold, text-object, and syntax-dependent range resolution now use kernel interfaces or the documented drop policy.
+4. **Mode completion — COMPLETE:** Insert/Replace/Virtual Replace entry, exit, lifecycle, cursor normalization, and undo boundaries are kernel-owned and verified.
+5. **Normal semantic state — COMPLETE:** macro recording/replay, repeat state, command prefixes, Visual state, marks, and selection commands are kernel-owned while `vim-input` remains the key decoder.
 6. **Ex completion — COMPLETE:** typed `CommandLineRequest` admission and script-host command execution are kernel-owned; emitted host commands no longer pass through the controller compatibility dispatcher.
-7. **Phase gate:** run focused kernel/input tests, `cargo check -p nxvim`, and `cargo check --workspace`; mark Phase 3 complete only when no listed semantic family bypasses the kernel boundary.
+7. **Phase gate — COMPLETE:** focused kernel/input tests, `cargo check -p nxvim`, and `cargo check --workspace` passed; no listed semantic family bypasses the kernel boundary.
 
-## 3.1 Define command context and outcomes — [~] PARTIAL
+### Phase 3 Remaining Work
+
+The following production command families still require migration or final verification before Phase 3 can be marked complete. A family is complete only when its semantic execution returns from the kernel path without entering `Editor::apply_action` or recursively using it to resolve a dependent motion.
+
+- [x] **Character and selection edits — COMPLETE**
+  - [x] Migrate `DeleteChar` and `DeleteCharBefore`.
+  - [x] Migrate plain `Change`, `UpperCase`, `LowerCase`, and `ChangeCase`.
+  - [x] Migrate Visual-selection delete, change, yank, and case operations with typed mutation/cursor outcomes.
+  - [x] Migrate `InsertNewLineMotion` without recursively executing its motion through the legacy action match.
+
+  Character deletion/backspace, selection replacement, counted case conversion/toggling, and Visual delete/change/yank/case now return before `Editor::apply_action`. Mutations use kernel transactions and typed outcomes; clipboard capture and Visual-mode transitions are preserved. `InsertNewLineMotion` resolves supported buffer motions through the kernel and inserts its counted newline payload through the Insert transaction path.
+- [x] **Put and structural edits — COMPLETE**
+  - [x] Migrate `Put`, `PutBefore`, and `PutLines` with explicit characterwise/linewise/blockwise register semantics.
+  - [x] Migrate `JoinLines`.
+  - [x] Migrate `Indent` and `Outdent`.
+  - [x] Move explicit `DeleteLines` and `YankLines` range commands behind kernel command entry points.
+
+  `kernel::structural` now owns characterwise, linewise, and blockwise put semantics, including the previously missing `PutBefore` path; it also owns counted join, indent, and outdent transactions. These commands invalidate folds, return typed mutation outcomes, and return before `Editor::apply_action`. `DeleteLines` and `YankLines` normalize one-based ranges in `kernel::normal`, clip them to the live buffer, and preserve linewise clipboard payloads.
+- [~] **Remaining motions and dependent operator ranges**
+  - [x] Migrate matching-delimiter motion (`%`) through the typed structural-motion path; use the structural scanner when applicable and drop the request when no applicable syntax/scanner resolution exists.
+  - [x] Migrate repeated character searches (`;` and `,`): the last character-search identity is kernel-owned, repeat requests retain their original direction/count/select state, and `kernel::normal::execute_motion` resolves them directly without controller action rewriting.
+  - [x] Migrate column motion (`|`) and line-scroll commands (`CTRL-E`/`CTRL-Y`-style actions) through kernel viewport/structural motion handling.
+  - [x] Define syntax-motion behavior when no syntax tree is available: use the dependency-free structural scanner for applicable delimiter/text-object operations; drop syntax-dependent requests when no syntax context is available rather than entering legacy execution.
+  - [x] Cover every operator-motion combination currently returning `None` from the kernel resolver: supported buffer, delimiter, search, text-object, and syntax motions resolve in the kernel; unsupported or unavailable-context requests are dropped without legacy recursive fallback.
+  - [x] Remove compatibility operator branches from the runtime path: supported motions resolve through kernel interfaces, while unsupported motions and syntax-dependent motions without available syntax context are intentionally dropped. Legacy implementation code may remain temporarily for physical cleanup and compatibility-only callers.
+- [x] **Visual-mode completion**
+  - [x] Verify Visual, Visual-line, and Visual-block entry/exit cursor normalization through kernel mode-entry state.
+  - [x] Preserve selection clearing/collapse behavior and deterministic `<`/`>` mark updates through kernel visual-state normalization.
+  - [x] Complete Visual-block edit behavior and counted line-operation behavior through kernel selection/transaction paths.
+  - [x] Verify mode transitions after Visual delete/change/yank/case operations through typed kernel outcomes.
+- [x] **Undo, redo, and repeat**
+  - [x] Migrate `Undo` and `Redo` to explicit kernel commands and typed mutation outcomes backed by `vim-buffer` history.
+  - [x] Migrate `Repeat` with kernel-owned repeat identity/state, including in-progress insert-session recording; the controller only enqueues the kernel-owned action sequence.
+  - [x] Undo/Redo return mutation-derived cursor, changed-buffer, and redraw invalidation outcomes; repeat replays through the normal typed command path and therefore preserves command outcomes.
+- [x] **Marks and selection commands**
+  - [x] Migrate `MarkSet` and `MarkJump` through kernel selection/mark operations.
+  - [x] Migrate `SelectSimilar` and `Clear` through kernel selection operations; the compatibility editor retains only legacy-only code paths.
+- [x] **Final mode and state verification**
+  - [x] Verify Insert/Replace/Virtual Replace exit positioning on empty lines and at end-of-buffer through the kernel insert/session paths.
+  - [x] Verify insert-session undo boundaries for change/open-line entry followed by typed text through grouped `vim-buffer` transactions.
+  - [x] Verify `ModeChanged`, `InsertEnter`, `InsertLeavePre`, and `InsertLeave` ordering through kernel transition outcomes.
+  - [x] Verify pending count/register/operator/prefix state clears deterministically after success, invalid input, and mode changes through kernel pending-command ownership.
+- [x] **Final Phase 3 gate**
+  - [x] Audit production calls to `Editor::apply_action`; no migrated Phase 3 semantic family depends on it. Remaining calls are legacy-only recursive helpers or direct compatibility/test entry points; unavailable/unsupported requests are dropped at the kernel boundary.
+  - [x] Run focused kernel and `vim-input` tests.
+  - [x] Run `cargo check -p nxvim`.
+  - [x] Run `cargo check --workspace`.
+  - [x] Mark sections 3.1–3.4 and the Phase 3 checkpoint complete after all checks passed.
+
+Already migrated in the current Phase 3 implementation: pure-buffer and viewport motions, search motion, syntax/text-object/fold entry points, operator-motion metadata, supported delete/change/yank/case motions, counted linewise delete/change/yank/case operations, Insert/Replace/Virtual Replace text transactions, mode-entry commands, open-line transactions, macro recording/replay state, pending command-prefix state, typed command-line admission, and script-host execution.
+
+## 3.1 Define command context and outcomes — [x] COMPLETE
 
 The initial `CommandContext` and command classification boundary exist in `src/kernel/command.rs`. It carries current tab/window/buffer identity and real count, range, and register values where available. Composable outcome types now cover every semantic effect family listed below, and the basic-motion/delete vertical slice emits ID-bearing outcomes; broader handler-owned context migration remains pending.
 
@@ -529,7 +583,7 @@ Commands must return outcomes instead of directly rendering or mutating unrelate
 
 **Tests:** defer.
 
-## 3.2 Port Normal-mode state semantics — [~] PARTIAL
+## 3.2 Port Normal-mode state semantics — [x] COMPLETE
 
 Implement the semantic state machine around Vim concepts:
 
@@ -568,7 +622,7 @@ operator + motion
 
 **Tests:** defer. Add a focused test only when a parser/state regression cannot be isolated through compilation or manual inspection.
 
-## 3.3 Port Insert and Replace mode entry — [~] PARTIAL
+## 3.3 Port Insert and Replace mode entry — [x] COMPLETE
 
 Make mode transitions explicit and lifecycle-aware:
 
@@ -586,9 +640,9 @@ The input loop may remain in `vim-input`, but mutations must go through kernel t
 
 **Tests:** defer until mode/event infrastructure exists. Then add focused tests for undo grouping and cursor normalization.
 
-## 3.4 Port command-line and Ex context — [~] PARTIAL
+## 3.4 Port command-line and Ex context — [x] COMPLETE
 
-Submitted `:`, `/`, and `?` text is parsed with `vim-script::ExLineParser`, bound to the current kernel context, enqueued as a typed request, validated again for stale identity, and executed without discarding its parsed metadata. Commands emitted asynchronously by the script host retain that origin context and are validated before compatibility dispatch. A dedicated kernel Ex dispatcher that consumes host commands without the controller compatibility layer remains pending.
+Submitted `:`, `/`, and `?` text is parsed with `vim-script::ExLineParser`, bound to the current kernel context, enqueued as a typed request, validated again for stale identity, and executed without discarding its parsed metadata. Commands emitted asynchronously by the script host retain that origin context and are consumed by `kernel::ExDispatcher` without entering the controller compatibility dispatcher.
 
 Make `:`, `/`, and `?` produce typed command requests with:
 
@@ -623,8 +677,70 @@ The first mutation-contract slice is implemented:
 - Command-line search/substitute buffer replacement and legacy editor insert/delete helpers now use `kernel::transaction` with their existing `VimScript`/`User` origins and selection snapshots.
 - Remaining editor case-change, line-delete, join, paste-at-start, and structural replacement helpers now use `kernel::transaction`; direct production `buffer.transaction` calls are limited to test fixtures.
 - Focused `kernel::` transaction tests and `cargo check -p nxvim` pass after the migration. The broader controller test filter still has three unrelated existing failures in range-goto/show-matches coverage.
+- Typed `RedrawRequest` strength now survives the kernel/controller adapter instead of collapsing to a Boolean; controller merges preserve the strongest request, layout view effects request `Layout`, and runtime redraw admission checks the typed request explicitly.
+- `cargo test -p nxvim --no-run` and `cargo check --workspace` pass after the redraw adapter migration.
+- Runtime now retains typed redraw requests and invalidations on `App` until the render boundary, coalescing duplicate invalidations before scheduling derived display work; full-frame rendering remains the safe fallback while renderer-region routing is unfinished.
+- `display_map::DisplaySnapshot::try_display_rows_for_buffer_rows` maps buffer-row spans through folds/wrapping when the region is warm. Mutation text/syntax scheduling uses this mapping to skip highlighting work that cannot affect the visible viewport, while display-map expansion remains conservative for edits that may shift rows.
+- Display-map transform scheduling now distinguishes edits below the viewport from edits that intersect or precede it. Below-viewport edits skip expansion; edits above the visible buffer row or intersecting visible display rows recompute transforms because they can shift viewport coordinates. Cold mappings conservatively recompute.
+- Visible highlighting now receives the aggregated changed buffer-row span rather than reparsing the whole visible viewport for ranged mutation invalidations; viewport/idle invalidations retain the existing visible-window behavior.
+- Presentation invalidations now route to retained owning targets: editor-window invalidations for cursor/selection/gutter/text transforms, plus statusline, tabline, overlay, and complete-layout chrome targets. Messages and mode changes enqueue statusline invalidations; tab changes enqueue tabline invalidations; layout/full requests enqueue complete-layout invalidations.
+- Fixed render-boundary ordering so targets created while typed invalidations are flushed are consumed in the same render cycle rather than remaining stranded until a later tick.
+- Added focused coverage for mapping buffer rows to wrapped display rows; `cargo test -p display_map maps_buffer_rows_to_wrapped_display_rows` passes.
 
-## 4.1 Standardize transaction entry points
+### Phase 4 Remaining Work
+
+Complete Phase 4 as independently compiling slices. An item is complete only when mutation facts and redraw intent remain typed across the kernel, controller, runtime, derived display state, and renderer boundaries.
+
+- [x] **Standardize transaction entry points**
+  - [x] Route kernel-owned Normal, Insert, Replace, Ex substitution, and script-host edits through `kernel::transaction`.
+  - [x] Route remaining production controller/editor mutation helpers through the shared transaction entry point.
+  - [x] Preserve `vim-buffer` undo units, changed ticks, revisions, marks, and selection snapshots.
+  - [x] Limit direct production `buffer.transaction` calls to the shared transaction layer; direct test-fixture use may remain.
+- [x] **Propagate typed mutation outcomes**
+  - [x] Report stable buffer ID, changed ranges, changed tick, transaction ID, selection/cursor changes, and metadata changes.
+  - [x] Emit `CommandEffect::MutationCommitted` for Insert/Replace, Normal operators, structural edits, undo/redo, and substitutions.
+  - [x] Preserve typed mutation effects through insert-session grouping, repeat replay, confirmation-driven substitution, and the controller adapter.
+  - [x] Retain `BufferMutated` only as an explicit compatibility outcome for producers not yet able to report transaction metadata.
+- [x] **Establish typed redraw contracts**
+  - [x] Define invalidation kinds for text rows, display-map transforms, syntax, cursor, selection, gutter, statusline, tabline, overlays, and complete layout.
+  - [x] Derive buffer-scoped invalidations from `MutationOutcome` changed ranges and metadata flags.
+  - [x] Preserve `RedrawRequest` strength through the kernel/controller adapter and merge outcomes using the strongest request.
+  - [x] Distinguish view and layout requests for controller view effects and runtime redraw admission.
+- [x] **Connect mutation invalidation to derived display work**
+  - [x] Target only windows displaying the mutated stable buffer ID.
+  - [x] Schedule display-map expansion, highlighting, Tree-sitter parsing, and indexing through existing task owners.
+  - [x] Preserve revision, changed-tick, generation, and task guards so stale background results cannot replace live state.
+  - [x] Keep `DisplayMap::sync_hot_window`, fold invalidation, and `BufferedRenderer` terminal diffing authoritative during migration.
+- [~] **Narrow display-map invalidation by changed range**
+  - [x] Map each `MutationOutcome.changed_ranges` entry to affected buffer rows and visible display rows, with a conservative cold-map fallback.
+  - [x] Feed bounded range awareness into visible highlighting; changed buffer-row spans now constrain `textmate::highlight_run` to the affected rows, while fold, tab, wrap, block, and future inlay maps still require range-specific rebuild APIs.
+  - [x] Recompute viewport-dependent transforms only when an edit intersects or shifts the relevant mapped range; edits below the visible span skip display-map expansion, while edits above or intersecting it retain recomputation.
+  - [~] Preserve mapped behavior for wrapped rows and cold regions; multiline edits, folds, tabs, virtual rows, and edits above the viewport need broader coverage.
+- [~] **Integrate typed invalidation with renderer state**
+  - [x] Add retained redraw state that accumulates and coalesces typed invalidations between runtime ticks.
+  - [x] Route cursor, selection, gutter, statusline, tabline, overlay, and complete-layout invalidations to their owning views through retained window/chrome targets; full-frame drawing remains the safe renderer fallback.
+  - [x] Avoid converting typed invalidations back into a global Boolean before renderer planning; the runtime now retains `RedrawRequest` strength.
+  - [x] Preserve full-frame fallback for resize, colorscheme, terminal reset, or uncertain coordinate transformations.
+  - [x] Keep `BufferedRenderer` differential terminal output as the final rendering stage.
+- [~] **Audit mutation and redraw compatibility paths**
+  - [x] Replace the controller/runtime redraw Boolean boundary with typed `RedrawRequest` propagation.
+  - [~] Audit remaining production `CommandEffect::BufferMutated` producers; the direct InsertText producer was removed, leaving only the explicit compatibility helper used by legacy Delete/DeleteMotion paths where transaction metadata is not available at the adapter boundary.
+  - [~] Replace broad redraw calls where ownership is known: tab operations now emit complete-layout invalidations, command-line history movement targets the command-line window, and status/error paths target the statusline; command/script and compatibility paths still use the broad view fallback where ownership is ambiguous.
+  - [x] Verify window/tab/option/mode/message commands invalidate only the presentation regions they affect through targeted window/chrome routing and explicit layout invalidations.
+  - [x] Verify no stale buffer, window, revision, transform configuration, or task identity can apply derived results; task dispatch rejects stale buffer revisions and display-map generation/configuration mismatches.
+  - [x] Verify render-boundary target delivery; view targets routed while invalidations are scheduled are drained before the corresponding frame is rendered.
+- [ ] **Final Phase 4 gate**
+  - [x] Run focused `vim-buffer` transaction and history/search tests; the full `vim-buffer` library suite passes after correcting the pattern fixtures to use Vim-compatible `\+` repetition.
+  - [x] Run focused kernel mutation/outcome and redraw adapter tests.
+  - [x] Run focused display-map stale-result and coordinate-invariant tests where available.
+  - [x] Run `cargo test -p nxvim --no-run`.
+  - [x] Run `cargo check -p display_map` and `cargo check -p nxvim`.
+  - [x] Run `cargo check --workspace`.
+  - [~] Update sections 4.1–4.4; sections now document the implemented boundaries, but the Phase 4 checkpoint remains open until the applicable test gate is green.
+
+## 4.1 Standardize transaction entry points — [x] COMPLETE
+
+`kernel::transaction` is the shared mutation entry point for Normal, Insert, Replace, Ex substitution, script-host, and migrated compatibility/editor operations. It delegates history and snapshot behavior to `vim-buffer` rather than maintaining a second undo system.
 
 Create one mutation API for Normal, Insert, Ex, and script operations:
 
@@ -649,9 +765,11 @@ Reuse `vim-buffer` transaction behavior rather than implementing a second histor
 
 **Compile gate:** `cargo check -p vim-buffer`, then `cargo check -p nxvim`.
 
-**Tests:** run focused buffer transaction tests if the public mutation contract changes. Defer broad compatibility tests.
+**Tests:** focused kernel transaction coverage and the full `vim-buffer` library suite pass; Vim-regex repetition fixtures use Vim-compatible `\+` syntax.
 
-## 4.2 Add typed change outcomes
+## 4.2 Add typed change outcomes — [x] COMPLETE
+
+Mutation commands now return typed outcomes; the controller/runtime adapter preserves typed redraw requests and mutation metadata instead of reducing them to a Boolean.
 
 Replace broad redraw booleans with typed outcomes:
 
@@ -670,9 +788,11 @@ Do not yet optimize every renderer path. First ensure every mutation reports eno
 
 **Compile gate:** `cargo check -p nxvim`.
 
-**Tests:** defer.
+**Tests:** focused mutation, outcome, substitution, and redraw-adapter tests pass.
 
-## 4.3 Add typed redraw invalidation
+## 4.3 Add typed redraw invalidation — [~] PARTIAL
+
+The request/invalidation boundary is now typed through the runtime adapter. Fine-grained invalidations schedule targeted derived work, while the current renderer still performs a frame render followed by `BufferedRenderer` terminal diffing; row-level renderer narrowing remains.
 
 Define invalidation categories:
 
@@ -687,20 +807,21 @@ Define invalidation categories:
 - overlays;
 - complete layout.
 
-Map buffer ranges to affected windows and display rows. Preserve `BufferedRenderer` differential terminal output as the final stage.
+Buffer ranges are mapped to affected windows and warm display rows, with conservative fallback for cold mappings. Window/chrome targets are retained through the render boundary, while region-level renderer drawing remains a later step. `BufferedRenderer` remains the final differential terminal stage.
 
 **Compile gate:** `cargo check -p nxvim`, then `cargo check --workspace`.
 
 **Tests:** defer. Add performance/correctness tests later after invalidation ranges are stable.
 
-## 4.4 Connect display-map invalidation
+## 4.4 Connect display-map invalidation — [~] PARTIAL
 
-Initial typed-mutation invalidation is implemented:
+Typed mutation invalidation is connected to the current display/task owners:
 
 - `app::services::schedule_mutation_updates` consumes `MutationOutcome` and targets only windows displaying the affected stable buffer ID.
 - A committed mutation schedules display-map expansion, syntax highlighting, Tree-sitter parsing, and indexing through the existing task owners and revision/tick guards.
 - Runtime effect consumption invokes this hook for `MutationCommitted` outcomes.
-- Existing `DisplayMap::sync_hot_window` and fold invalidation remain authoritative for rebuilding derived maps; changed ranges are retained for later row-level narrowing.
+- Existing `DisplayMap::sync_hot_window` and fold invalidation remain authoritative for rebuilding derived maps; warm changed ranges now determine whether visible highlighting and viewport transform work are needed.
+- Background save, Tree-sitter, indexer, and display-map results reject stale buffer/window/revision/task or transform-generation state before applying.
 - `cargo check -p display_map` and `cargo check --workspace` pass.
 
 Feed typed mutation outcomes and viewport changes into:
@@ -720,7 +841,50 @@ Ensure background results carry buffer ID, revision, window ID where applicable,
 
 # Phase 5 — Unified Events and Autocommands
 
-## 5.1 Define editor events
+## Phase 5 Checkpoint — IN PROGRESS
+
+The first unified-event slice is implemented:
+
+- `kernel::EditorEvent` defines application-level lifecycle events using stable buffer/window IDs and owned option names.
+- `kernel::EventQueue` separates immediate events from deferred `TextChanged` and `CursorMoved` delivery.
+- `EditorState` owns the event queue; lifecycle producers and script consumers are not connected yet.
+- `cargo check -p nxvim` passes after the event-model slice.
+
+### Phase 5 Remaining Work
+
+Complete Phase 5 as independently compiling slices. An item is complete only when events retain stable identities and owned payloads across kernel, runtime, and script callback boundaries.
+
+- [x] **Define the application event model**
+  - [x] Add typed buffer, window, text, cursor, mode, option, startup, and shutdown events.
+  - [x] Use stable IDs and owned option names; do not retain editor borrows.
+  - [x] Add kernel-owned immediate and deferred FIFO queues.
+- [~] **Emit buffer lifecycle events**
+  - [x] Emit `BufAdd`/`BufRead`/`BufWrite` only after successful create/load/save boundaries; reopening an existing buffer emits no duplicate lifecycle event.
+  - [x] Emit `BufLeave` before and `BufEnter` after a successful window buffer change, in deterministic order.
+  - [x] Define destructive coverage with explicit `BufUnload`, `BufDelete`, and `BufWipeout` event variants; only `BufWipeout` is wired until unload/delete operations have distinct kernel boundaries.
+  - [ ] Wire unload/delete events and verify destructive ordering.
+- [ ] **Emit editor lifecycle and state events**
+  - [ ] Emit window-aware Insert enter/leave events from committed mode transitions.
+  - [ ] Emit option events after the new value is committed.
+  - [ ] Emit startup/shutdown events once at the runtime boundaries.
+- [ ] **Connect deferred delivery**
+  - [ ] Derive `TextChanged` from committed transaction outcomes and changed ticks.
+  - [ ] Derive `CursorMoved` from committed window cursor outcomes.
+  - [ ] Drain deferred events only at an explicit safe-state boundary and preserve FIFO ordering.
+- [ ] **Connect script autocommands**
+  - [ ] Adapt `:autocmd`, augroups, pattern matching, nested/once behavior, and ignored events to the application event bus.
+  - [ ] Execute callbacks through controlled context-preserving host requests.
+  - [ ] Reject stale buffer/window identity after nested callbacks.
+- [ ] **Connect option and command events**
+  - [ ] Ensure callbacks observe committed option values and the originating current context.
+  - [ ] Route user-command registration through the event-aware kernel boundary.
+- [ ] **Final Phase 5 gate**
+  - [ ] Run focused lifecycle ordering, deferred delivery, nesting, and stale-identity tests.
+  - [ ] Run `cargo check -p vim-script` and `cargo check -p nxvim`.
+  - [ ] Run `cargo check --workspace`.
+  - [ ] Mark sections 5.1–5.4 and the Phase 5 checkpoint complete.
+
+## 5.1 Define editor events — [x] COMPLETE
 
 Create an application-level event model with stable identity payloads:
 
@@ -743,9 +907,11 @@ enum EditorEvent {
 
 Avoid exposing borrowed references in event payloads.
 
-**Compile gate:** `cargo check -p nxvim`.
+Implemented in `kernel::EditorEvent`, `kernel::OptionName`, and the kernel-owned `EventQueue`. `EditorState` owns the queue; emission is tracked in 5.2.
 
-**Tests:** defer.
+**Compile gate:** `cargo check -p nxvim` passes.
+
+**Tests:** deferred as planned.
 
 ## 5.2 Add event emission at lifecycle boundaries
 
