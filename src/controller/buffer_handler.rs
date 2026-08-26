@@ -14,7 +14,7 @@ impl BufferHandler {
 
     pub fn execute(
         ui: &mut Ui,
-        model: &EditorModel,
+        model: &mut EditorModel,
         active_window: WindowId,
         action: &Action,
     ) -> CommandOutcome {

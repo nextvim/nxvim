@@ -192,6 +192,22 @@ impl LayoutNode {
         }
     }
 
+    pub fn replace_leaf(&mut self, target_id: WindowId, replacement: WindowId) -> bool {
+        match self {
+            LayoutNode::Leaf { window_id } => {
+                if *window_id == target_id {
+                    *window_id = replacement;
+                    true
+                } else {
+                    false
+                }
+            }
+            LayoutNode::Split { children, .. } => children
+                .iter_mut()
+                .any(|child| child.replace_leaf(target_id, replacement)),
+        }
+    }
+
     pub fn remove_leaf(&mut self, target_id: WindowId) -> (bool, Option<WindowId>) {
         match self {
             LayoutNode::Leaf { window_id } => {

@@ -41,9 +41,14 @@ impl ViewSynchronizer {
     ) -> bool {
         match effect {
             crate::controller::ViewEffect::Focus(window_id) => {
-                ui.window(window_id)
+                let focused = ui
+                    .window(window_id)
                     .is_some_and(vim_ui::Window::has_content)
-                    && ui.focus(window_id).is_ok()
+                    && ui.focus(window_id).is_ok();
+                if focused {
+                    let _ = model.kernel_mut().focus_window(window_id);
+                }
+                focused
             }
             crate::controller::ViewEffect::FocusDirection(direction) => {
                 let Some(window_id) = ui
@@ -52,7 +57,11 @@ impl ViewSynchronizer {
                 else {
                     return false;
                 };
-                ui.focus(window_id).is_ok()
+                let focused = ui.focus(window_id).is_ok();
+                if focused {
+                    let _ = model.kernel_mut().focus_window(window_id);
+                }
+                focused
             }
             crate::controller::ViewEffect::Split { source, axis } => {
                 if source == view_ids.commandline {
@@ -61,9 +70,14 @@ impl ViewSynchronizer {
                 Self::split(ui, model, source, axis)
             }
             crate::controller::ViewEffect::Close(window_id) => {
-                ui.window(window_id)
+                let closed = ui
+                    .window(window_id)
                     .is_some_and(vim_ui::Window::has_content)
-                    && ui.close_window(window_id).is_ok()
+                    && ui.close_window(window_id).is_ok();
+                if closed {
+                    model.kernel_mut().close_window(window_id);
+                }
+                closed
             }
             crate::controller::ViewEffect::Hide(window_id) => ui.hide_window(window_id).is_ok(),
             crate::controller::ViewEffect::Resize { width, height } => {
@@ -146,6 +160,17 @@ impl ViewSynchronizer {
         window.set_title("MAIN WINDOW".to_string());
         window.set_draw_border(false);
         window.set_view(Box::new(crate::view::TextView::new()));
+        if model
+            .kernel_mut()
+            .split_window(source, new_window_id)
+            .is_err()
+            && let Some(buffer) = WindowOps::window_buffer(ui, new_window_id)
+        {
+            // Compatibility recovery for callers that created the source UI
+            // window before registering it semantically.
+            model.kernel_mut().register_window(new_window_id, buffer);
+            let _ = model.kernel_mut().focus_window(new_window_id);
+        }
         true
     }
 }
@@ -247,25 +272,23 @@ pub fn refresh_views(app: &mut crate::app::App, layout: &LayoutSnapshot) {
         }
     }
 
-    let buffer_ids = app.model.list();
-    let tabs: Vec<String> = buffer_ids
+    // Vim tab pages are window-layout containers, not buffers. A tab label
+    // uses its active window's buffer name when that association is available,
+    // while identity and selection come exclusively from the tab-page store.
+    let tabs: Vec<String> = app
+        .tabs
         .iter()
-        .map(|&id| buffer_display_name(&app.model, id))
+        .enumerate()
+        .map(|(index, page)| {
+            app.model
+                .kernel()
+                .windows()
+                .record(page.active_window)
+                .map(|window| buffer_display_name(&app.model, window.buffer))
+                .unwrap_or_else(|| format!("Tab {}", index + 1))
+        })
         .collect();
-    // The command-line buffer is intentionally unlisted, so use the
-    // editor window that was focused before entering command-line mode.
-    let tab_window = if active_window == commandline_id {
-        app.ui
-            .focus_manager()
-            .previous_id()
-            .filter(|&id| id != commandline_id)
-            .unwrap_or(app.view_ids.main)
-    } else {
-        active_window
-    };
-    let active_index = WindowOps::window_buffer(&app.ui, tab_window)
-        .and_then(|id| buffer_ids.iter().position(|&candidate| candidate == id))
-        .unwrap_or(0);
+    let active_index = app.tabs.active_index();
     if let Some(view) = app
         .ui
         .window_mut(app.view_ids.tabline)

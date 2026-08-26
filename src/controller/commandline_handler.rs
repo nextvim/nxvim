@@ -81,7 +81,8 @@ impl CommandlineHandler {
                         model.search_regex = None;
                     }
                 }
-                input.set_mode(Mode::Insert);
+                let _ = model.kernel_mut().transition_mode(Mode::Insert);
+                input.set_mode(model.kernel().mode());
                 let _ = WindowOps::edit_window(
                     ui,
                     model,
@@ -93,15 +94,17 @@ impl CommandlineHandler {
                             vim_buffer::ByteOffset(len),
                         )
                         .unwrap();
-                        let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-
                         let content = if !selection_text.is_empty() {
                             format!("\\<{selection_text}\\>")
                         } else {
                             "".to_string()
                         };
-                        tx.replace(None, range, content.as_str());
-                        let _ = tx.commit(None);
+                        let _ = crate::kernel::transaction(
+                            buffer,
+                            vim_buffer::EditOrigin::VimScript,
+                            None,
+                            |tx| tx.replace(None, range, content.as_str()),
+                        );
 
                         window_state.selections.selections.clear();
                         window_state
@@ -127,7 +130,8 @@ impl CommandlineHandler {
                 if active_window == view_ids.commandline
                     && Self::get_commandline_text(model).is_some_and(|text| text.is_empty()) =>
             {
-                input.set_mode(Mode::Normal);
+                let _ = model.kernel_mut().transition_mode(Mode::Normal);
+                input.set_mode(model.kernel().mode());
                 model.search_pattern = None;
                 model.search_regex = None;
                 model.search_range = None;
@@ -139,7 +143,8 @@ impl CommandlineHandler {
                     && WindowOps::window_buffer(ui, active_window)
                         == Some(model.commandline_buffer()) =>
             {
-                input.set_mode(Mode::Normal);
+                let _ = model.kernel_mut().transition_mode(Mode::Normal);
+                input.set_mode(model.kernel().mode());
                 if let Some(command) = Self::current_command(ui, model, active_window) {
                     if !command.is_empty() {
                         if model.commandline_mode == '/' || model.commandline_mode == '?' {
@@ -173,9 +178,25 @@ impl CommandlineHandler {
                         format!("{}{}", model.commandline_mode, command)
                     };
 
-                    command_queue.push_back(crate::controller::Command::ExecuteScript(
-                        command_to_execute,
-                    ));
+                    let target_window = Self::editor_focus(ui, view_ids);
+                    let target_context = model.kernel().current().and_then(|current| {
+                        WindowOps::window_buffer(ui, target_window).map(|buffer| {
+                            crate::kernel::EditorContext {
+                                tab: current.tab,
+                                window: target_window,
+                                buffer,
+                            }
+                        })
+                    });
+                    match target_context
+                        .ok_or_else(|| "No editor context for command-line request".to_string())
+                        .and_then(|current| {
+                            crate::kernel::CommandLineRequest::parse(current, command_to_execute)
+                        }) {
+                        Ok(request) => command_queue
+                            .push_back(crate::controller::Command::CommandLine(request)),
+                        Err(err) => model.status = Some(err),
+                    }
                 }
                 CommandOutcome::with_effect(ViewEffect::Focus(Self::editor_focus(ui, view_ids)))
             }
@@ -307,9 +328,12 @@ impl CommandlineHandler {
                     vim_buffer::ByteOffset(len),
                 )
                 .unwrap();
-                let mut tx = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-                tx.replace(None, range, text);
-                let _ = tx.commit(None);
+                let _ = crate::kernel::transaction(
+                    buffer,
+                    vim_buffer::EditOrigin::VimScript,
+                    None,
+                    |tx| tx.replace(None, range, text),
+                );
 
                 let text_len = buffer.as_text_buffer().len();
                 window_state.selections.selections.clear();

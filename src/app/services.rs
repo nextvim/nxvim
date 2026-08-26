@@ -249,6 +249,61 @@ impl Services {
 /// bounded step every ~50ms tick keeps each synchronous parse small
 /// while still reaching full prefetch coverage within about half a
 /// second of going idle.
+/// Schedule all display-dependent work affected by a committed mutation.
+///
+/// The mutation carries a stable kernel buffer ID; windows are selected from
+/// the current UI projection rather than from borrowed window state. This
+/// keeps background work scoped to views that can actually observe the edit.
+pub fn schedule_mutation_updates(app: &mut App, mutation: &crate::kernel::MutationOutcome) {
+    let invalidations = mutation.invalidations();
+    schedule_redraw_invalidations(app, &invalidations);
+}
+
+/// Routes typed invalidations to the windows and task owners that can observe
+/// them. Terminal diffing remains a later renderer concern.
+pub fn schedule_redraw_invalidations(
+    app: &mut App,
+    invalidations: &[crate::kernel::RedrawInvalidation],
+) {
+    for invalidation in invalidations {
+        let windows: Vec<_> = WindowOps::window_buffers(&app.ui)
+            .into_iter()
+            .filter(|(window_id, buffer_id)| {
+                invalidation
+                    .window
+                    .is_none_or(|target| target == *window_id)
+                    && invalidation
+                        .buffer
+                        .is_none_or(|target| target.get() == buffer_id.get())
+            })
+            .map(|(window_id, _)| window_id)
+            .collect();
+
+        for window_id in windows {
+            match invalidation.kind {
+                crate::kernel::RedrawInvalidationKind::TextRows => {
+                    schedule_window_display_map(app, window_id);
+                    schedule_window_highlight(app, window_id, 0, 0);
+                    schedule_window_treesitter(app, window_id);
+                    schedule_window_indexer(app, window_id);
+                }
+                crate::kernel::RedrawInvalidationKind::DisplayMapTransforms => {
+                    schedule_window_display_map(app, window_id);
+                }
+                crate::kernel::RedrawInvalidationKind::SyntaxHighlighting => {
+                    schedule_window_highlight(app, window_id, 0, 0);
+                    schedule_window_treesitter(app, window_id);
+                    schedule_window_indexer(app, window_id);
+                }
+                crate::kernel::RedrawInvalidationKind::Gutter => {
+                    schedule_window_highlight(app, window_id, 0, 0);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub fn schedule_state_updates(app: &mut App, idle_elapsed: Option<std::time::Duration>) {
     const IDLE_EXPAND_STEP_BEFORE: u32 = 100;
     const IDLE_EXPAND_STEP_AFTER: u32 = 50;

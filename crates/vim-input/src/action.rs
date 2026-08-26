@@ -3,6 +3,7 @@ pub enum Mode {
     Normal,
     Insert,
     Replace,
+    VirtualReplace,
     Visual,
     VisualLine,
     VisualBlock,
@@ -15,7 +16,7 @@ impl Mode {
     }
 
     pub fn is_insert(&self) -> bool {
-        matches!(self, Mode::Insert | Mode::Replace)
+        matches!(self, Mode::Insert | Mode::Replace | Mode::VirtualReplace)
     }
 
     pub fn is_normal(&self) -> bool {
@@ -33,6 +34,7 @@ impl std::fmt::Display for Mode {
             Mode::Normal => "Normal",
             Mode::Insert => "Insert",
             Mode::Replace => "Replace",
+            Mode::VirtualReplace => "V-Replace",
             Mode::Visual => "Visual",
             Mode::VisualLine => "V-Line",
             Mode::VisualBlock => "V-Block",
@@ -442,6 +444,7 @@ pub enum Action {
     SetToCommandSearchBackward,
     SetToInsert,
     SetToReplace,
+    SetToVirtualReplace,
     SetToVisual,
     SetToVisualLine,
     SetToVisualBlock,
@@ -678,6 +681,7 @@ impl std::fmt::Display for Action {
             Action::SetToNormal => write!(f, "SetNormal"),
             Action::SetToInsert => write!(f, "SetInsert"),
             Action::SetToReplace => write!(f, "SetReplace"),
+            Action::SetToVirtualReplace => write!(f, "SetVirtualReplace"),
             Action::SetToAppend => write!(f, "SetAppend"),
             Action::SetToAppendEndOfLine => write!(f, "SetAppendEOL"),
             Action::SetToVisual => write!(f, "SetVisual"),
@@ -1106,6 +1110,7 @@ impl Action {
             Action::SetToNormal => Action::SetToNormal,
             Action::SetToInsert => Action::SetToInsert,
             Action::SetToReplace => Action::SetToReplace,
+            Action::SetToVirtualReplace => Action::SetToVirtualReplace,
             Action::SetToAppend => Action::SetToAppend,
             Action::SetToAppendEndOfLine => Action::SetToAppendEndOfLine,
             Action::SetToVisual => Action::SetToVisual,

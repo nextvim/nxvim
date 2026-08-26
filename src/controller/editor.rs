@@ -7,7 +7,7 @@ use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use vim_buffer::{Buffer, Motions, SelectionSet};
 use vim_input::{Action, Mode};
 use vim_regex::{CompileOptions, Regex};
-use vim_ui::WindowState;
+use vim_ui::{WindowId, WindowState};
 
 /// The kind of case transformation to apply to a span of text.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -150,7 +150,7 @@ fn scanner_delimiter_match(buffer: &text::Buffer, byte: usize, ch: char) -> Opti
 /// one-byte tolerance on either edge), so that a pending buffer edit over that
 /// range can never leave a fold pointing at text that no longer exists (which
 /// would otherwise panic once the fold is rendered against the edited buffer).
-fn remove_overlapping_folds(
+pub(crate) fn remove_overlapping_folds(
     folds: &mut Vec<display_map::Fold>,
     buffer: &text::Buffer,
     start: usize,
@@ -203,6 +203,419 @@ pub struct Editor;
 impl Editor {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Executes an action after validating the kernel identity boundary.
+    ///
+    /// The existing action implementation remains below this adapter while
+    /// individual command families migrate to explicit contexts.
+    pub fn execute_in_context(
+        &self,
+        command_context: &crate::kernel::CommandContext,
+        window_id: WindowId,
+        mode: Mode,
+        action: &Action,
+        buffer: &mut Buffer,
+        buffer_context: &mut BufferState,
+        buffer_display_context: &mut WindowState,
+        services: &mut crate::app::services::Services,
+        join_insert_transaction: bool,
+    ) -> Result<(Option<Mode>, crate::kernel::CommandOutcome), Box<dyn std::error::Error>> {
+        if command_context.current.buffer != buffer.id() {
+            return Err(format!(
+                "command buffer {} does not match edited buffer {}",
+                command_context.current.buffer.get(),
+                buffer.id().get()
+            )
+            .into());
+        }
+        if command_context.current.window != window_id {
+            return Err(format!(
+                "command window {} does not match edited window {}",
+                command_context.current.window.get(),
+                window_id.get()
+            )
+            .into());
+        }
+        if let Action::InsertText(text) = action {
+            let mutation = crate::kernel::insert::execute_insert_text(
+                buffer,
+                &mut buffer_display_context.selections,
+                &mut buffer_display_context.folds,
+                text,
+                mode == Mode::Replace || mode == Mode::VirtualReplace,
+                mode == Mode::VirtualReplace,
+                join_insert_transaction,
+            );
+            self.sync(mode, buffer, buffer_context, buffer_display_context);
+            let mut outcome = crate::kernel::CommandOutcome::with_effect(
+                crate::kernel::CommandEffect::EventEmitted {
+                    name: "InsertCharPre".to_string(),
+                    payload: Some(text.clone()),
+                },
+                crate::kernel::RedrawRequest::View,
+            );
+            if let Some(mutation) = mutation {
+                outcome.merge(crate::kernel::CommandOutcome::mutation_committed(mutation));
+            }
+            return Ok((None, outcome));
+        }
+        if matches!(action, Action::InsertNewLine { .. } | Action::InsertTab) {
+            let text = match action {
+                Action::InsertNewLine { count } => self.new_line(buffer).repeat(*count as usize),
+                Action::InsertTab => "    ".to_string(),
+                _ => unreachable!(),
+            };
+            let replaced = buffer_display_context
+                .selections
+                .text(buffer.as_text_buffer());
+            if !replaced.is_empty() {
+                services.clipboard.set_delete_text(replaced);
+            }
+            let mutation = crate::kernel::insert::execute_insert_text(
+                buffer,
+                &mut buffer_display_context.selections,
+                &mut buffer_display_context.folds,
+                &text,
+                mode == Mode::Replace || mode == Mode::VirtualReplace,
+                mode == Mode::VirtualReplace,
+                join_insert_transaction,
+            );
+            self.sync(mode, buffer, buffer_context, buffer_display_context);
+            let outcome = mutation.map_or_else(
+                || crate::kernel::CommandOutcome::no_redraw(),
+                crate::kernel::CommandOutcome::mutation_committed,
+            );
+            return Ok((None, outcome));
+        }
+        if let Some(normal_command) = command_context.normal_command(action) {
+            if let crate::kernel::NormalCommand::Fold { count } = normal_command {
+                let changed = crate::kernel::normal::execute_fold(
+                    count,
+                    buffer.as_text_buffer(),
+                    buffer_display_context,
+                    buffer_context.treesitter.as_ref().ok(),
+                );
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                return Ok((
+                    None,
+                    crate::kernel::CommandOutcome::with_effect(
+                        crate::kernel::CommandEffect::WindowChanged {
+                            window: command_context.current.window,
+                        },
+                        crate::kernel::RedrawRequest::View,
+                    ),
+                ));
+            }
+            if let crate::kernel::NormalCommand::Unfold { count } = normal_command {
+                let changed = if count > 0 {
+                    crate::kernel::normal::execute_unfold(
+                        buffer.as_text_buffer(),
+                        buffer_display_context,
+                    )
+                } else {
+                    false
+                };
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                return Ok((
+                    None,
+                    if changed {
+                        crate::kernel::CommandOutcome::with_effect(
+                            crate::kernel::CommandEffect::WindowChanged {
+                                window: command_context.current.window,
+                            },
+                            crate::kernel::RedrawRequest::View,
+                        )
+                    } else {
+                        crate::kernel::CommandOutcome::no_redraw()
+                    },
+                ));
+            }
+            if let crate::kernel::NormalCommand::SyntaxMotion {
+                action: syntax_motion,
+            } = &normal_command
+                && let Ok(syntax_tree) = &buffer_context.treesitter
+                && crate::kernel::normal::move_syntax_target(
+                    syntax_motion,
+                    buffer.as_text_buffer(),
+                    buffer_display_context,
+                    syntax_tree,
+                )
+            {
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                return Ok((
+                    None,
+                    crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+                ));
+            }
+            if let crate::kernel::NormalCommand::TextObject {
+                action: text_object,
+            } = &normal_command
+                && let Ok(syntax_tree) = &buffer_context.treesitter
+                && crate::kernel::normal::execute_syntax_text_object(
+                    text_object,
+                    buffer.as_text_buffer(),
+                    buffer_display_context,
+                    syntax_tree,
+                )
+            {
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                return Ok((
+                    None,
+                    crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+                ));
+            }
+            if let Some(outcome) = crate::kernel::normal::execute_motion(
+                &normal_command,
+                mode,
+                window_id,
+                buffer,
+                buffer_display_context,
+            ) {
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                return Ok((None, outcome));
+            }
+            if let crate::kernel::NormalCommand::YankMotion { count, ref motion } = normal_command
+                && let Some((text, kind)) = crate::kernel::normal::execute_yank_motion_with_syntax(
+                    count,
+                    motion,
+                    buffer.as_text_buffer(),
+                    &buffer_display_context.selections,
+                    buffer_context.treesitter.as_ref().ok(),
+                )
+            {
+                match kind {
+                    crate::kernel::normal::MotionKind::Linewise => {
+                        services.clipboard.set_yank_lines(text)
+                    }
+                    crate::kernel::normal::MotionKind::Characterwise { .. } => {
+                        services.clipboard.set_yank_text(text)
+                    }
+                }
+                return Ok((None, crate::kernel::CommandOutcome::no_redraw()));
+            }
+            if let crate::kernel::NormalCommand::CaseMotion {
+                count,
+                ref motion,
+                change,
+            } = normal_command
+                && let Some(mutation) = crate::kernel::normal::execute_case_motion_with_syntax(
+                    count,
+                    motion,
+                    change,
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                    buffer_context.treesitter.as_ref().ok(),
+                )
+            {
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                let outcome = mutation.map_or_else(
+                    crate::kernel::CommandOutcome::no_redraw,
+                    crate::kernel::CommandOutcome::mutation_committed,
+                );
+                return Ok((Some(Mode::Normal), outcome));
+            }
+            if let crate::kernel::NormalCommand::ChangeMotion { count, ref motion } = normal_command
+                && let Some((text, mutation)) =
+                    crate::kernel::normal::execute_delete_motion_with_syntax(
+                        count,
+                        motion,
+                        buffer,
+                        &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
+                        buffer_context.treesitter.as_ref().ok(),
+                    )
+            {
+                if !text.is_empty() {
+                    services.clipboard.set_delete_text(text);
+                }
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                let outcome = mutation.map_or_else(
+                    crate::kernel::CommandOutcome::no_redraw,
+                    crate::kernel::CommandOutcome::mutation_committed,
+                );
+                return Ok((Some(Mode::Insert), outcome));
+            }
+            if let crate::kernel::NormalCommand::DeleteMotion { count, ref motion } = normal_command
+                && let Some((text, mutation)) =
+                    crate::kernel::normal::execute_delete_motion_with_syntax(
+                        count,
+                        motion,
+                        buffer,
+                        &mut buffer_display_context.selections,
+                        &mut buffer_display_context.folds,
+                        buffer_context.treesitter.as_ref().ok(),
+                    )
+            {
+                if !text.is_empty() {
+                    services.clipboard.set_delete_text(text);
+                }
+                self.sync(mode, buffer, buffer_context, buffer_display_context);
+                let outcome = mutation.map_or_else(
+                    crate::kernel::CommandOutcome::no_redraw,
+                    crate::kernel::CommandOutcome::mutation_committed,
+                );
+                return Ok((None, outcome));
+            }
+            if let crate::kernel::NormalCommand::Delete { count } = normal_command {
+                let text = if buffer_display_context
+                    .selections
+                    .has_selection(buffer.as_text_buffer())
+                {
+                    buffer_display_context
+                        .selections
+                        .text(buffer.as_text_buffer())
+                } else {
+                    let primary = buffer_display_context.selections.first().unwrap();
+                    let start = buffer.as_text_buffer().offset_for_anchor(&primary.head());
+                    let end = buffer
+                        .as_text_buffer()
+                        .clip_offset(start.saturating_add(count), Bias::Right);
+                    buffer
+                        .as_text_buffer()
+                        .as_rope()
+                        .chunks_in_range(start..end)
+                        .collect()
+                };
+                services.clipboard.set_delete_text(&text);
+                if let Some(mutation) = crate::kernel::normal::execute_delete(
+                    count,
+                    mode,
+                    buffer,
+                    &mut buffer_display_context.selections,
+                    &mut buffer_display_context.folds,
+                ) {
+                    self.sync(mode, buffer, buffer_context, buffer_display_context);
+                    return Ok((
+                        None,
+                        crate::kernel::CommandOutcome::mutation_committed(mutation),
+                    ));
+                }
+            }
+        }
+
+        let (action, outcome) = match command_context.normal_command(action) {
+            Some(crate::kernel::NormalCommand::MoveLeft { count, select }) => (
+                Action::MoveLeft {
+                    count: count.min(u32::MAX as usize) as u32,
+                    select,
+                },
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::MoveRight { count, select }) => (
+                Action::MoveRight {
+                    count: count.min(u32::MAX as usize) as u32,
+                    select,
+                },
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::MoveUp { count, select }) => (
+                Action::MoveUp {
+                    count: count.min(u32::MAX as usize) as u32,
+                    select,
+                },
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::MoveDown { count, select }) => (
+                Action::MoveDown {
+                    count: count.min(u32::MAX as usize) as u32,
+                    select,
+                },
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::BufferMotion { action }) => (
+                *action,
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::ViewportMotion { action }) => (
+                *action,
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::TextObject { action }) => (
+                *action,
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::SyntaxMotion { action }) => (
+                *action,
+                crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+            ),
+            Some(crate::kernel::NormalCommand::Fold { .. })
+            | Some(crate::kernel::NormalCommand::Unfold { .. }) => {
+                (action.clone(), crate::kernel::CommandOutcome::no_redraw())
+            }
+            Some(crate::kernel::NormalCommand::SearchMotion { count, direction }) => {
+                let action = match direction {
+                    crate::kernel::SearchDirection::Forward => Action::SearchForward {
+                        count: count.min(u32::MAX as usize) as u32,
+                    },
+                    crate::kernel::SearchDirection::Backward => Action::SearchBackward {
+                        count: count.min(u32::MAX as usize) as u32,
+                    },
+                };
+                (
+                    action,
+                    crate::kernel::CommandOutcome::cursor_moved(command_context.current.window),
+                )
+            }
+            Some(crate::kernel::NormalCommand::Delete { count }) => (
+                Action::Delete {
+                    count: count.min(u32::MAX as usize) as u32,
+                },
+                crate::kernel::CommandOutcome::buffer_mutated(command_context.current.buffer),
+            ),
+            Some(crate::kernel::NormalCommand::DeleteMotion { count, motion }) => (
+                Action::DeleteMotion {
+                    count: count.min(u32::MAX as usize) as u32,
+                    motion,
+                },
+                crate::kernel::CommandOutcome::buffer_mutated(command_context.current.buffer),
+            ),
+            // Unsupported yank motions fall through to the compatibility
+            // implementation; pure-buffer yank motions return above.
+            Some(crate::kernel::NormalCommand::YankMotion { .. })
+            | Some(crate::kernel::NormalCommand::ChangeMotion { .. })
+            | Some(crate::kernel::NormalCommand::CaseMotion { .. }) => {
+                (action.clone(), crate::kernel::CommandOutcome::no_redraw())
+            }
+            None => {
+                let outcome = match action {
+                    Action::InsertText(text) => crate::kernel::CommandOutcome {
+                        effects: vec![
+                            crate::kernel::CommandEffect::EventEmitted {
+                                name: "InsertCharPre".to_string(),
+                                payload: Some(text.clone()),
+                            },
+                            crate::kernel::CommandEffect::BufferMutated {
+                                buffer: command_context.current.buffer,
+                            },
+                        ],
+                        redraw: crate::kernel::RedrawRequest::View,
+                        invalidations: vec![crate::kernel::RedrawInvalidation::buffer(
+                            crate::kernel::RedrawInvalidationKind::TextRows,
+                            command_context.current.buffer,
+                            Vec::new(),
+                        )],
+                    },
+                    Action::InsertNewLine { .. } | Action::InsertTab => {
+                        crate::kernel::CommandOutcome::buffer_mutated(
+                            command_context.current.buffer,
+                        )
+                    }
+                    _ => crate::kernel::CommandOutcome::no_redraw(),
+                };
+                (action.clone(), outcome)
+            }
+        };
+        let next_mode = self.execute(
+            mode,
+            &action,
+            buffer,
+            buffer_context,
+            buffer_display_context,
+            services,
+        )?;
+        Ok((next_mode, outcome))
     }
 
     /// Executes an action by mutably accessing the buffer and both of its contexts.
@@ -445,6 +858,9 @@ impl Editor {
             }
             Action::SetToReplace => {
                 return Some(Mode::Replace);
+            }
+            Action::SetToVirtualReplace => {
+                return Some(Mode::VirtualReplace);
             }
             Action::SetToAppend => {
                 let cursors = buffer_display_context.selections.selections.clone();
@@ -1754,19 +2170,25 @@ impl Editor {
                             end,
                         );
                     }
-                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-                    for &(start, end, ref toggled) in &edits {
-                        tx.replace(
-                            None,
-                            vim_buffer::TextRange::new(
-                                vim_buffer::ByteOffset(start),
-                                vim_buffer::ByteOffset(end),
-                            )
-                            .unwrap(),
-                            toggled.as_str(),
-                        );
-                    }
-                    let _ = tx.commit(Some(buffer_display_context.selections.clone()));
+                    let selection_snapshot = buffer_display_context.selections.clone();
+                    let _ = crate::kernel::transaction(
+                        buffer,
+                        vim_buffer::EditOrigin::User,
+                        Some(selection_snapshot),
+                        |tx| {
+                            for &(start, end, ref toggled) in &edits {
+                                tx.replace(
+                                    None,
+                                    vim_buffer::TextRange::new(
+                                        vim_buffer::ByteOffset(start),
+                                        vim_buffer::ByteOffset(end),
+                                    )
+                                    .unwrap(),
+                                    toggled.as_str(),
+                                );
+                            }
+                        },
+                    );
 
                     for (i, cursor) in cursors.iter().enumerate() {
                         if i >= edits.len() {
@@ -1840,15 +2262,21 @@ impl Editor {
                     end_offset,
                 );
 
-                let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-                tx.delete(
-                    None,
-                    vim_buffer::TextRange {
-                        start: vim_buffer::ByteOffset(start_offset),
-                        end: vim_buffer::ByteOffset(end_offset),
+                let selection_snapshot = buffer_display_context.selections.clone();
+                let _ = crate::kernel::transaction(
+                    buffer,
+                    vim_buffer::EditOrigin::User,
+                    Some(selection_snapshot),
+                    |tx| {
+                        tx.delete(
+                            None,
+                            vim_buffer::TextRange {
+                                start: vim_buffer::ByteOffset(start_offset),
+                                end: vim_buffer::ByteOffset(end_offset),
+                            },
+                        );
                     },
                 );
-                let _ = tx.commit(Some(buffer_display_context.selections.clone()));
             }
             Action::YankLines {
                 start_line,
@@ -1898,9 +2326,13 @@ impl Editor {
                         0,
                         0,
                     );
-                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-                    tx.insert(None, vim_buffer::ByteOffset(0), insert_text);
-                    let _ = tx.commit(Some(buffer_display_context.selections.clone()));
+                    let selection_snapshot = buffer_display_context.selections.clone();
+                    let _ = crate::kernel::transaction(
+                        buffer,
+                        vim_buffer::EditOrigin::User,
+                        Some(selection_snapshot),
+                        |tx| tx.insert(None, vim_buffer::ByteOffset(0), insert_text),
+                    );
                 } else {
                     // `paste` always inserts a linewise register after the
                     // cursor's current row, so anchor the cursor on the row
@@ -2022,16 +2454,22 @@ impl Editor {
                         " "
                     };
 
-                    let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-                    tx.replace(
-                        None,
-                        vim_buffer::TextRange {
-                            start: vim_buffer::ByteOffset(delete_start),
-                            end: vim_buffer::ByteOffset(delete_end),
+                    let selection_snapshot = buffer_display_context.selections.clone();
+                    let _ = crate::kernel::transaction(
+                        buffer,
+                        vim_buffer::EditOrigin::User,
+                        Some(selection_snapshot),
+                        |tx| {
+                            tx.replace(
+                                None,
+                                vim_buffer::TextRange {
+                                    start: vim_buffer::ByteOffset(delete_start),
+                                    end: vim_buffer::ByteOffset(delete_end),
+                                },
+                                replacement,
+                            );
                         },
-                        replacement,
                     );
-                    let _ = tx.commit(Some(buffer_display_context.selections.clone()));
                 }
 
                 if let Some(col) = target_col {
@@ -2742,18 +3180,24 @@ impl Editor {
             remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
         }
 
-        let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-        for &(start, end, ref text_val) in &edits {
-            tx.replace(
-                None,
-                vim_buffer::TextRange {
-                    start: vim_buffer::ByteOffset(start),
-                    end: vim_buffer::ByteOffset(end),
-                },
-                text_val.clone(),
-            );
-        }
-        let _ = tx.commit(Some(selections.clone()));
+        let selection_snapshot = selections.clone();
+        let _ = crate::kernel::transaction(
+            buffer,
+            vim_buffer::EditOrigin::User,
+            Some(selection_snapshot),
+            |tx| {
+                for &(start, end, ref text_val) in &edits {
+                    tx.replace(
+                        None,
+                        vim_buffer::TextRange {
+                            start: vim_buffer::ByteOffset(start),
+                            end: vim_buffer::ByteOffset(end),
+                        },
+                        text_val.clone(),
+                    );
+                }
+            },
+        );
 
         for cursor in cursors.iter() {
             let start = buffer.as_text_buffer().offset_for_anchor(&cursor.tail());
@@ -2834,11 +3278,17 @@ impl Editor {
                     range.end.0,
                 );
             }
-            let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-            for range in edits {
-                tx.delete(None, range);
-            }
-            let _ = tx.commit(Some(selections.clone()));
+            let selection_snapshot = selections.clone();
+            let _ = crate::kernel::transaction(
+                buffer,
+                vim_buffer::EditOrigin::User,
+                Some(selection_snapshot),
+                |tx| {
+                    for range in edits {
+                        tx.delete(None, range);
+                    }
+                },
+            );
             true
         } else {
             false
@@ -2898,11 +3348,17 @@ impl Editor {
                     range.end.0,
                 );
             }
-            let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-            for range in edits {
-                tx.delete(None, range);
-            }
-            let _ = tx.commit(Some(selections.clone()));
+            let selection_snapshot = selections.clone();
+            let _ = crate::kernel::transaction(
+                buffer,
+                vim_buffer::EditOrigin::User,
+                Some(selection_snapshot),
+                |tx| {
+                    for range in edits {
+                        tx.delete(None, range);
+                    }
+                },
+            );
             true
         } else {
             false
@@ -2988,19 +3444,25 @@ impl Editor {
             remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
         }
 
-        let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-        for (start, end, changed) in &edits {
-            tx.replace(
-                None,
-                vim_buffer::TextRange::new(
-                    vim_buffer::ByteOffset(*start),
-                    vim_buffer::ByteOffset(*end),
-                )
-                .unwrap(),
-                changed.as_str(),
-            );
-        }
-        let _ = tx.commit(Some(selections.clone()));
+        let selection_snapshot = selections.clone();
+        let _ = crate::kernel::transaction(
+            buffer,
+            vim_buffer::EditOrigin::User,
+            Some(selection_snapshot),
+            |tx| {
+                for (start, end, changed) in &edits {
+                    tx.replace(
+                        None,
+                        vim_buffer::TextRange::new(
+                            vim_buffer::ByteOffset(*start),
+                            vim_buffer::ByteOffset(*end),
+                        )
+                        .unwrap(),
+                        changed.as_str(),
+                    );
+                }
+            },
+        );
 
         let mut new_selections = Vec::new();
         for (cursor, (start, _, _)) in cursors.iter().zip(edits.iter()) {
@@ -3062,19 +3524,25 @@ impl Editor {
             remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
         }
 
-        let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-        for (start, end, changed) in &edits {
-            tx.replace(
-                None,
-                vim_buffer::TextRange::new(
-                    vim_buffer::ByteOffset(*start),
-                    vim_buffer::ByteOffset(*end),
-                )
-                .unwrap(),
-                changed.as_str(),
-            );
-        }
-        let _ = tx.commit(Some(selections.clone()));
+        let selection_snapshot = selections.clone();
+        let _ = crate::kernel::transaction(
+            buffer,
+            vim_buffer::EditOrigin::User,
+            Some(selection_snapshot),
+            |tx| {
+                for (start, end, changed) in &edits {
+                    tx.replace(
+                        None,
+                        vim_buffer::TextRange::new(
+                            vim_buffer::ByteOffset(*start),
+                            vim_buffer::ByteOffset(*end),
+                        )
+                        .unwrap(),
+                        changed.as_str(),
+                    );
+                }
+            },
+        );
 
         // Replacing a range's text does not guarantee old anchors within that range keep their
         // original relative offset, so recompute fresh anchors at the start of each edited range
@@ -3141,11 +3609,17 @@ impl Editor {
                     range.end.0,
                 );
             }
-            let mut tx = buffer.transaction(vim_buffer::EditOrigin::User);
-            for range in edits {
-                tx.delete(None, range);
-            }
-            let _ = tx.commit(Some(selections.clone()));
+            let selection_snapshot = selections.clone();
+            let _ = crate::kernel::transaction(
+                buffer,
+                vim_buffer::EditOrigin::User,
+                Some(selection_snapshot),
+                |tx| {
+                    for range in edits {
+                        tx.delete(None, range);
+                    }
+                },
+            );
         }
     }
 

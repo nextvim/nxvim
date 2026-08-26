@@ -120,6 +120,14 @@ impl RangeCommandHandler {
         }
         app.model.status = Some(message);
 
+        let Some(command_context) = app
+            .model
+            .kernel()
+            .command_context(crate::kernel::CommandKind::Edit)
+        else {
+            app.model.status = Some("No current editor context".to_string());
+            return CommandOutcome::redraw();
+        };
         let mut outcome = EditorHandler::execute(
             &mut app.ui,
             &mut app.model,
@@ -128,12 +136,13 @@ impl RangeCommandHandler {
             active_window,
             &action,
             register,
+            &command_context,
         );
 
         if BufferHandler::handles(&action) {
             outcome.merge(BufferHandler::execute(
                 &mut app.ui,
-                &app.model,
+                &mut app.model,
                 active_window,
                 &action,
             ));

@@ -342,6 +342,7 @@ impl Resolver {
             | Action::SetToOpenLineAbove { .. }
             | Action::SetToInsertStartOfLineNonSpace => self.mode = Mode::Insert,
             Action::SetToReplace => self.mode = Mode::Replace,
+            Action::SetToVirtualReplace => self.mode = Mode::VirtualReplace,
             Action::SetToVisual => self.mode = Mode::Visual,
             Action::SetToVisualLine => self.mode = Mode::VisualLine,
             Action::SetToVisualBlock => self.mode = Mode::VisualBlock,

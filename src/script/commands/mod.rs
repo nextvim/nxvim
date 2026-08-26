@@ -10,11 +10,14 @@ use crate::controller::{Command, RangeOperation};
 pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
     match request.command.name.as_str() {
         "quit" => quit(request),
-        "bnext" | "nexttab" => buffers(request),
-        "bprevious" | "bprev" | "previoustab" => buffers(request),
+        "bnext" => buffers(request),
+        "bprevious" | "bprev" => buffers(request),
+        "tabnext" | "nexttab" | "tabprevious" | "previoustab" => tabs(request),
+        "tabnew" => tab_new(request),
+        "tabclose" => Ok(Command::TabClose),
         "save" | "write" | "update" => files(request),
         "edit" | "enew" | "view" | "visual" | "ex" => edit(request),
-        "hsplit" | "vsplit" => split(request),
+        "split" | "hsplit" | "vsplit" => split(request),
         "new" | "vnew" => split_new(request),
         "saveas" => saveas(request),
         "qall" | "quitall" => qall(request),
@@ -61,17 +64,28 @@ fn quit(request: CommandRequest) -> Result<Command, RuntimeError> {
     })
 }
 
-fn buffers(request: CommandRequest) -> Result<Command, RuntimeError> {
-    let count = request.command.count.unwrap_or(1) as u32;
+fn tabs(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let count = request.command.count.unwrap_or(1) as usize;
     match request.command.name.as_str() {
-        "bnext" | "nexttab" => Ok(Command::Editor {
-            action: vim_input::Action::NextTab { count },
-            register: None,
-        }),
-        "bprevious" | "bprev" | "previoustab" => Ok(Command::Editor {
-            action: vim_input::Action::PreviousTab { count },
-            register: None,
-        }),
+        "tabnext" | "nexttab" => Ok(Command::TabNext { count }),
+        "tabprevious" | "previoustab" => Ok(Command::TabPrevious { count }),
+        _ => unreachable!(),
+    }
+}
+
+fn tab_new(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let path = request.command.arguments.trim();
+    Ok(Command::TabNew {
+        path: (!path.is_empty()).then(|| PathBuf::from(path)),
+    })
+}
+
+fn buffers(request: CommandRequest) -> Result<Command, RuntimeError> {
+    let count = request.command.count.unwrap_or(1) as usize;
+    match request.command.name.as_str() {
+        "bnext" => Ok(Command::BufferNext { count }),
+        "bprevious" | "bprev" => Ok(Command::BufferPrevious { count }),
+
         _ => unreachable!(),
     }
 }
@@ -203,7 +217,7 @@ fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
         Some(argument.to_string())
     };
     match request.command.name.as_str() {
-        "hsplit" => Ok(Command::Editor {
+        "split" | "hsplit" => Ok(Command::Editor {
             action: vim_input::Action::SplitHorizontal { file_path },
             register: None,
         }),

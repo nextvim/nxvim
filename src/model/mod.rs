@@ -1,10 +1,11 @@
 //! Semantic editor state.
 //!
-//! This layer owns buffers and must not depend on terminal input, rendering,
-//! UI layout, controller handlers, or service implementations. Window state
+//! This façade exposes semantic buffer operations without depending on terminal
+//! input, rendering, UI layout, controller handlers, or service implementations.
+//! Buffer ownership lives in `crate::kernel::EditorState`; window state
 //! (viewport, display map, selections) lives on `vim_ui::Window` — see
-//! `crate::app::windows::WindowOps` for the operations that combine it with
-//! buffer storage.
+//! `crate::app::windows::WindowOps` for the compatibility operations that
+//! combine the two stores during migration.
 
 mod buffer_state;
 mod buffers;
@@ -17,7 +18,7 @@ pub use buffer_state::BufferState;
 pub use buffers::Buffers;
 
 pub struct EditorModel {
-    buffers: Buffers,
+    kernel: crate::kernel::EditorState,
     initial_buffer: BufferId,
     pub status: Option<String>,
     pub commandline_buffer: BufferId,
@@ -43,9 +44,10 @@ impl EditorModel {
         buffers
             .set_listed(commandline_buffer, false)
             .expect("command-line buffer must exist");
+        let kernel = crate::kernel::EditorState::new(buffers);
 
         Self {
-            buffers,
+            kernel,
             initial_buffer,
             status: None,
             commandline_buffer,
@@ -72,19 +74,27 @@ impl EditorModel {
     }
 
     pub fn buffers(&self) -> &Buffers {
-        &self.buffers
+        self.kernel.buffers()
     }
 
     pub fn buffers_mut(&mut self) -> &mut Buffers {
-        &mut self.buffers
+        self.kernel.buffers_mut()
+    }
+
+    pub fn kernel(&self) -> &crate::kernel::EditorState {
+        &self.kernel
+    }
+
+    pub fn kernel_mut(&mut self) -> &mut crate::kernel::EditorState {
+        &mut self.kernel
     }
 
     pub fn create(&mut self, initial_text: impl Into<String>) -> BufferId {
-        self.buffers.create(initial_text)
+        self.kernel.create_buffer(initial_text)
     }
 
     pub fn open_path(&mut self, path: impl AsRef<std::path::Path>) -> BufferId {
-        self.buffers.open_path(path)
+        self.kernel.open_buffer(path)
     }
 
     pub fn wipe(
@@ -92,36 +102,61 @@ impl EditorModel {
         id: BufferId,
         force: bool,
     ) -> Result<vim_buffer::ManagerOutcome, vim_buffer::BufferError> {
-        self.buffers.wipe(id, force)
+        self.kernel.wipe_buffer(id, force)
+    }
+
+    pub fn save(
+        &mut self,
+        id: BufferId,
+        path: Option<&std::path::Path>,
+        force: bool,
+    ) -> Result<vim_buffer::SaveOutcome, vim_buffer::BufferError> {
+        self.kernel.save_buffer(id, path, force)
+    }
+
+    pub fn edit_buffer_with_state<R>(
+        &mut self,
+        id: BufferId,
+        edit: impl FnOnce(&mut vim_buffer::Buffer, &mut BufferState) -> R,
+    ) -> Result<R, vim_buffer::BufferError> {
+        self.kernel.edit_buffer_with_state(id, edit)
+    }
+
+    pub fn complete_background_save(
+        &mut self,
+        id: BufferId,
+        path: &std::path::Path,
+    ) -> Result<(), vim_buffer::BufferError> {
+        self.kernel.complete_background_save(id, path)
     }
 
     pub fn get_buffer(&self, id: BufferId) -> Result<&vim_buffer::Buffer, vim_buffer::BufferError> {
-        self.buffers.get(id)
+        self.kernel.buffers().get(id)
     }
 
     pub fn get_buffer_mut(
         &mut self,
         id: BufferId,
     ) -> Result<&mut vim_buffer::Buffer, vim_buffer::BufferError> {
-        self.buffers.get_mut(id)
+        self.kernel.buffers_mut().get_mut(id)
     }
 
     /// Buffers that may be presented and selected as editor tabs.
     pub fn list(&self) -> Vec<BufferId> {
-        self.buffers.listed()
+        self.kernel.buffers().listed()
     }
 
     pub fn buffer_state(&self, id: BufferId) -> Option<&BufferState> {
-        self.buffers.state(id)
+        self.kernel.buffers().state(id)
     }
 
     pub fn buffer_state_mut(&mut self, id: BufferId) -> Option<&mut BufferState> {
         self.get_buffer(id).ok()?;
-        Some(self.buffers.state_mut(id))
+        Some(self.kernel.buffers_mut().state_mut(id))
     }
 
     pub fn invalidate_all_highlights(&mut self) {
-        for state in self.buffers.states.values_mut() {
+        for state in self.kernel.buffers_mut().states.values_mut() {
             state.highlights.invalidate();
         }
     }

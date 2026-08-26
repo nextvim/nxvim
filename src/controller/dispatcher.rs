@@ -24,12 +24,32 @@ pub struct Dispatcher;
 
 impl Dispatcher {
     pub fn dispatch(app: &mut App, command: Command) -> CommandOutcome {
+        // Commands can be submitted by the runtime or directly by an
+        // embedding/test caller. Keep the ID context aligned with the focused
+        // buffer before constructing the command context.
+        app.sync_kernel_context();
+        let Some(context) = app.model.kernel().command_context_for(&command) else {
+            app.model.status = Some("No current editor context".to_string());
+            return CommandOutcome::redraw();
+        };
+        if !matches!(&command, Command::PendingInput(_)) {
+            app.model.kernel_mut().clear_pending_command();
+        }
+        log::trace!(
+            "dispatching {:?} command in tab {} window {} buffer {}",
+            context.kind,
+            context.current.tab.get(),
+            context.current.window.get(),
+            context.current.buffer.get()
+        );
+
         match command {
-            Command::PendingInput(sequence) => {
-                app.model.status = Some(format!("Pending sequence: {sequence}"));
+            Command::PendingInput(pending) => {
+                app.model.status = Some(format!("Pending sequence: {}", pending.display));
+                app.model.kernel_mut().set_pending_command(pending);
                 CommandOutcome::redraw()
             }
-            Command::ExecuteScript(_) => CommandOutcome::redraw(),
+            Command::ExecuteScript(_) | Command::CommandLine(_) => CommandOutcome::redraw(),
             Command::SearchForward { pattern } => {
                 let active_window = app.ui.focused_window_id();
                 app.model.search_pattern = Some(pattern.clone());
@@ -184,6 +204,45 @@ impl Dispatcher {
                 });
                 SharedOperations::split_window(active_window, !vertical)
             }
+            Command::TabNew { path } => {
+                let buffer = match path {
+                    Some(path) => app.model.open_path(path),
+                    None => app.model.create(""),
+                };
+                match app.new_tab(buffer) {
+                    Ok(_) => CommandOutcome::redraw(),
+                    Err(error) => {
+                        app.model.status = Some(error);
+                        CommandOutcome::redraw()
+                    }
+                }
+            }
+            Command::TabNext { count } => {
+                if let Err(error) = app.next_tab(count) {
+                    app.model.status = Some(error);
+                }
+                CommandOutcome::redraw()
+            }
+            Command::TabPrevious { count } => {
+                if let Err(error) = app.previous_tab(count) {
+                    app.model.status = Some(error);
+                }
+                CommandOutcome::redraw()
+            }
+            Command::TabClose => {
+                if let Err(error) = app.close_active_tab() {
+                    app.model.status = Some(error);
+                }
+                CommandOutcome::redraw()
+            }
+            Command::BufferNext { count } => {
+                let active = app.ui.focused_window_id();
+                SharedOperations::switch_buffer(&mut app.ui, &mut app.model, active, true, count)
+            }
+            Command::BufferPrevious { count } => {
+                let active = app.ui.focused_window_id();
+                SharedOperations::switch_buffer(&mut app.ui, &mut app.model, active, false, count)
+            }
             Command::WriteQuit { path, force } => {
                 let active_window = app.ui.focused_window_id();
                 LifecycleHandler::write_and_quit(
@@ -288,20 +347,55 @@ impl Dispatcher {
                 }
 
                 match &action {
+                    vim_input::Action::NextTab { count } => {
+                        if let Err(error) = app.next_tab(*count as usize) {
+                            app.model.status = Some(error);
+                        }
+                        return CommandOutcome::redraw();
+                    }
+                    vim_input::Action::PreviousTab { count } => {
+                        if let Err(error) = app.previous_tab(*count as usize) {
+                            app.model.status = Some(error);
+                        }
+                        return CommandOutcome::redraw();
+                    }
                     vim_input::Action::BeginMacro { register } => {
+                        if let Err(error) = app
+                            .model
+                            .kernel_mut()
+                            .begin_macro_recording(register.clone())
+                        {
+                            app.model.status = Some(error.to_string());
+                            return CommandOutcome::redraw();
+                        }
                         app.services.macros.begin(register.clone());
                         app.controller.set_in_recording(true);
                         app.model.status = Some(format!("recording @{register}"));
                         return CommandOutcome::redraw();
                     }
                     vim_input::Action::EndMacro => {
+                        let Some(register) = app.model.kernel_mut().end_macro_recording() else {
+                            app.model.status = Some("macro recording is not active".to_string());
+                            return CommandOutcome::redraw();
+                        };
                         app.services.macros.end();
                         app.controller.set_in_recording(false);
-                        app.model.status = Some("macro recorded".to_string());
+                        app.model.status = Some(format!("macro @{register} recorded"));
                         return CommandOutcome::redraw();
                     }
                     vim_input::Action::ReplayMacro { count, register } => {
-                        let replay_actions = app.services.macros.replay(register, *count);
+                        let (register, count) = match app
+                            .model
+                            .kernel_mut()
+                            .request_macro_replay(register, *count)
+                        {
+                            Ok(request) => request,
+                            Err(error) => {
+                                app.model.status = Some(error.to_string());
+                                return CommandOutcome::redraw();
+                            }
+                        };
+                        let replay_actions = app.services.macros.replay(&register, count);
                         for rec in replay_actions {
                             app.command_queue.push_back(Command::Editor {
                                 action: rec.action,
@@ -403,7 +497,7 @@ impl Dispatcher {
                         return CommandOutcome::redraw();
                     }
                     _ => {
-                        if app.services.macros.is_recording() {
+                        if app.model.kernel().recording_target().is_some() {
                             app.services.macros.record(action.clone(), register);
                         }
                     }
@@ -419,6 +513,7 @@ impl Dispatcher {
                     active_window,
                     &action,
                     register,
+                    &context,
                 );
 
                 let mode_after = app.controller.mode();
@@ -446,6 +541,7 @@ impl Dispatcher {
                             | vim_input::Action::SetToOpenLineAbove { .. }
                             | vim_input::Action::SetToInsert
                             | vim_input::Action::SetToReplace
+                            | vim_input::Action::SetToVirtualReplace
                             | vim_input::Action::SetToAppend
                             | vim_input::Action::SetToAppendEndOfLine
                             | vim_input::Action::SetToInsertStartOfLineNonSpace
@@ -456,6 +552,7 @@ impl Dispatcher {
                             action,
                             vim_input::Action::SetToInsert
                                 | vim_input::Action::SetToReplace
+                                | vim_input::Action::SetToVirtualReplace
                                 | vim_input::Action::SetToAppend
                                 | vim_input::Action::SetToAppendEndOfLine
                                 | vim_input::Action::SetToInsertStartOfLineNonSpace
@@ -494,7 +591,7 @@ impl Dispatcher {
                 if BufferHandler::handles(&action) {
                     outcome.merge(BufferHandler::execute(
                         &mut app.ui,
-                        &app.model,
+                        &mut app.model,
                         active_window,
                         &action,
                     ));

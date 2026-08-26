@@ -11,7 +11,7 @@ pub enum Command {
         action: Action,
         register: Option<char>,
     },
-    PendingInput(String),
+    PendingInput(crate::kernel::PendingCommandState),
     InvalidInput,
     PromptChoice {
         handler: PromptHandler,
@@ -33,6 +33,22 @@ pub enum Command {
     },
     SplitNew {
         vertical: bool,
+    },
+    TabNew {
+        path: Option<PathBuf>,
+    },
+    TabNext {
+        count: usize,
+    },
+    TabPrevious {
+        count: usize,
+    },
+    TabClose,
+    BufferNext {
+        count: usize,
+    },
+    BufferPrevious {
+        count: usize,
     },
     WriteQuit {
         path: Option<PathBuf>,
@@ -72,6 +88,7 @@ pub enum Command {
         message: String,
     },
     ExecuteScript(String),
+    CommandLine(crate::kernel::CommandLineRequest),
     SearchForward {
         pattern: String,
     },
@@ -117,6 +134,19 @@ impl std::fmt::Debug for Command {
                 .debug_struct("SplitNew")
                 .field("vertical", vertical)
                 .finish(),
+            Command::TabNew { path } => f.debug_struct("TabNew").field("path", path).finish(),
+            Command::TabNext { count } => f.debug_struct("TabNext").field("count", count).finish(),
+            Command::TabPrevious { count } => {
+                f.debug_struct("TabPrevious").field("count", count).finish()
+            }
+            Command::TabClose => write!(f, "TabClose"),
+            Command::BufferNext { count } => {
+                f.debug_struct("BufferNext").field("count", count).finish()
+            }
+            Command::BufferPrevious { count } => f
+                .debug_struct("BufferPrevious")
+                .field("count", count)
+                .finish(),
             Command::WriteQuit { path, force } => f
                 .debug_struct("WriteQuit")
                 .field("path", path)
@@ -161,6 +191,7 @@ impl std::fmt::Debug for Command {
             }
             Command::Echo { message } => f.debug_struct("Echo").field("message", message).finish(),
             Command::ExecuteScript(script) => f.debug_tuple("ExecuteScript").field(script).finish(),
+            Command::CommandLine(request) => f.debug_tuple("CommandLine").field(request).finish(),
             Command::SearchForward { pattern } => f
                 .debug_struct("SearchForward")
                 .field("pattern", pattern)
@@ -201,9 +232,25 @@ pub struct CommandOutcome {
     pub redraw: bool,
     pub quit: bool,
     pub view_effects: Vec<ViewEffect>,
+    pub kernel_effects: Vec<crate::kernel::CommandEffect>,
+    pub invalidations: Vec<crate::kernel::RedrawInvalidation>,
 }
 
 impl CommandOutcome {
+    pub fn from_kernel(outcome: crate::kernel::CommandOutcome) -> Self {
+        let quit = outcome
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, crate::kernel::CommandEffect::QuitRequested));
+        Self {
+            redraw: outcome.redraw != crate::kernel::RedrawRequest::None,
+            quit,
+            invalidations: outcome.invalidations,
+            kernel_effects: outcome.effects,
+            ..Self::default()
+        }
+    }
+
     pub fn redraw() -> Self {
         Self {
             redraw: true,
@@ -230,6 +277,28 @@ impl CommandOutcome {
     pub fn merge(&mut self, mut other: Self) {
         self.redraw |= other.redraw;
         self.quit |= other.quit;
+        self.invalidations.append(&mut other.invalidations);
         self.view_effects.append(&mut other.view_effects);
+        self.kernel_effects.append(&mut other.kernel_effects);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kernel_effects_survive_the_controller_adapter() {
+        let kernel = crate::kernel::CommandOutcome {
+            effects: vec![
+                crate::kernel::CommandEffect::Message("done".to_string()),
+                crate::kernel::CommandEffect::QuitRequested,
+            ],
+            redraw: crate::kernel::RedrawRequest::View,
+        };
+        let outcome = CommandOutcome::from_kernel(kernel);
+        assert!(outcome.redraw);
+        assert!(outcome.quit);
+        assert_eq!(outcome.kernel_effects.len(), 2);
     }
 }

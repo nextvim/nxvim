@@ -39,7 +39,7 @@ impl SharedOperations {
         force: bool,
     ) -> Result<CommandOutcome, vim_buffer::BufferError> {
         let result = match WindowOps::window_buffer(ui, active_window) {
-            Some(buffer_id) => model.buffers_mut().save(buffer_id, path, force),
+            Some(buffer_id) => model.save(buffer_id, path, force),
             None => Err(vim_buffer::BufferError::NotImplemented(
                 "saving an unregistered window",
             )),
@@ -80,7 +80,11 @@ impl SharedOperations {
             None => model.create(""),
         };
 
-        WindowOps::switch_to(ui, model, active_window, buffer_id);
+        if WindowOps::switch_to(ui, model, active_window, buffer_id) {
+            let _ = model
+                .kernel_mut()
+                .set_window_buffer(active_window, buffer_id);
+        }
 
         Ok(CommandOutcome::redraw())
     }
@@ -147,7 +151,7 @@ impl SharedOperations {
     /// Switch buffer in window (next/previous)
     pub fn switch_buffer(
         ui: &mut Ui,
-        model: &EditorModel,
+        model: &mut EditorModel,
         active_window: WindowId,
         forward: bool,
         count: usize,
@@ -158,6 +162,9 @@ impl SharedOperations {
             } else {
                 WindowOps::switch_previous_buffer(ui, model, active_window);
             }
+        }
+        if let Some(buffer) = WindowOps::window_buffer(ui, active_window) {
+            let _ = model.kernel_mut().set_window_buffer(active_window, buffer);
         }
         CommandOutcome::redraw()
     }

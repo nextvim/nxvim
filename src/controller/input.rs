@@ -58,8 +58,10 @@ impl InputController {
                 })
             }
             ResolveOutcome::Pending => {
-                self.pending_display = self.resolver.pending().to_string();
-                Some(Command::PendingInput(self.pending_display.clone()))
+                let pending =
+                    crate::kernel::PendingCommandState::from_decoder(self.resolver.pending());
+                self.pending_display.clone_from(&pending.display);
+                Some(Command::PendingInput(pending))
             }
             ResolveOutcome::Invalid(_) => {
                 self.pending_display.clear();
@@ -137,7 +139,7 @@ mod tests {
         let event_w = Event::Key(KeyEvent::new(CKey::Char('w'), control));
         assert!(matches!(
             controller.feed_event(event_w),
-            Some(Command::PendingInput(sequence)) if sequence == "<C-w>"
+            Some(Command::PendingInput(state)) if state.display == "<C-w>"
         ));
 
         let event_v2 = Event::Key(KeyEvent::new(CKey::Char('v'), control));

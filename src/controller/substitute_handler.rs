@@ -87,11 +87,12 @@ impl SubstituteHandler {
 
         if flags.contains('c') {
             Self::advance(app);
+            CommandOutcome::redraw()
         } else {
-            Self::replace_all_remaining(app);
+            let mutations = Self::replace_all_remaining(app);
             Self::finish(app);
+            Self::mutation_outcome(mutations)
         }
-        CommandOutcome::redraw()
     }
 
     pub fn respond(app: &mut App, choice: PromptChoice) -> CommandOutcome {
@@ -99,19 +100,20 @@ impl SubstituteHandler {
             return CommandOutcome::default();
         }
 
+        let mut mutations = Vec::new();
         match choice {
             PromptChoice::Quit => Self::finish(app),
             PromptChoice::All => {
-                Self::replace_current(app);
-                Self::replace_all_remaining(app);
+                mutations.extend(Self::replace_current(app));
+                mutations.extend(Self::replace_all_remaining(app));
                 Self::finish(app);
             }
             PromptChoice::Last => {
-                Self::replace_current(app);
+                mutations.extend(Self::replace_current(app));
                 Self::finish(app);
             }
             PromptChoice::Yes => {
-                Self::replace_current(app);
+                mutations.extend(Self::replace_current(app));
                 Self::advance(app);
             }
             PromptChoice::No => {
@@ -119,7 +121,7 @@ impl SubstituteHandler {
                 Self::advance(app);
             }
         }
-        CommandOutcome::redraw()
+        Self::mutation_outcome(mutations)
     }
 
     fn advance(app: &mut App) {
@@ -183,20 +185,21 @@ impl SubstituteHandler {
         }
     }
 
-    fn replace_current(app: &mut App) {
+    fn replace_current(app: &mut App) -> Option<crate::kernel::MutationOutcome> {
         let row_start = app
             .prompt
             .as_ref()
             .map(|prompt| row_start_offset(app, prompt.window_id, prompt.row))
             .unwrap_or(0);
         let Some(prompt) = app.prompt.as_mut() else {
-            return;
+            return None;
         };
         let Some((start, len)) = prompt.current_match.take() else {
-            return;
+            return None;
         };
         let replacement_len = prompt.replacement.len();
         let replacement = prompt.replacement.clone();
+        let mut mutation = None;
         let _ = WindowOps::edit_window(
             &mut app.ui,
             &mut app.model,
@@ -207,9 +210,13 @@ impl SubstituteHandler {
                     vim_buffer::ByteOffset(start + len),
                 )
                 .unwrap();
-                let mut transaction = buffer.transaction(vim_buffer::EditOrigin::VimScript);
-                transaction.replace(None, range, replacement.as_str());
-                let _ = transaction.commit(None);
+                mutation = crate::kernel::transaction(
+                    buffer,
+                    vim_buffer::EditOrigin::VimScript,
+                    None,
+                    |tx| tx.replace(None, range, replacement.as_str()),
+                )
+                .ok();
                 window_state.selections.selections.clear();
                 window_state
                     .selections
@@ -223,6 +230,7 @@ impl SubstituteHandler {
             prompt.row += 1;
             prompt.search_offset = 0;
         }
+        mutation
     }
 
     fn skip_current(app: &mut App) {
@@ -244,7 +252,8 @@ impl SubstituteHandler {
         }
     }
 
-    fn replace_all_remaining(app: &mut App) {
+    fn replace_all_remaining(app: &mut App) -> Vec<crate::kernel::MutationOutcome> {
+        let mut mutations = Vec::new();
         loop {
             Self::advance(app);
             if app
@@ -255,8 +264,20 @@ impl SubstituteHandler {
             {
                 break;
             }
-            Self::replace_current(app);
+            mutations.extend(Self::replace_current(app));
         }
+        mutations
+    }
+
+    fn mutation_outcome(mutations: Vec<crate::kernel::MutationOutcome>) -> CommandOutcome {
+        if mutations.is_empty() {
+            return CommandOutcome::redraw();
+        }
+        let mut outcome = crate::kernel::CommandOutcome::no_redraw();
+        for mutation in mutations {
+            outcome.merge(crate::kernel::CommandOutcome::mutation_committed(mutation));
+        }
+        CommandOutcome::from_kernel(outcome)
     }
 
     fn finish(app: &mut App) {
@@ -313,9 +334,18 @@ mod tests {
         assert!(app.prompt.is_some());
         assert!(app.model.status.as_deref().unwrap().contains("y/n/a/q/l"));
 
-        SubstituteHandler::respond(&mut app, PromptChoice::Yes);
-        SubstituteHandler::respond(&mut app, PromptChoice::No);
-        SubstituteHandler::respond(&mut app, PromptChoice::All);
+        let yes = SubstituteHandler::respond(&mut app, PromptChoice::Yes);
+        assert!(matches!(
+            yes.kernel_effects.as_slice(),
+            [crate::kernel::CommandEffect::MutationCommitted(_)]
+        ));
+        let no = SubstituteHandler::respond(&mut app, PromptChoice::No);
+        assert!(no.kernel_effects.is_empty());
+        let all = SubstituteHandler::respond(&mut app, PromptChoice::All);
+        assert!(matches!(
+            all.kernel_effects.as_slice(),
+            [crate::kernel::CommandEffect::MutationCommitted(_)]
+        ));
 
         assert_eq!(text(&app), "bar foo bar");
         assert!(app.prompt.is_none());
@@ -325,7 +355,11 @@ mod tests {
     fn confirm_substitute_last_replaces_once_then_stops() {
         let mut app = app_with_text("foo foo");
         SubstituteHandler::start(&mut app, "foo".into(), "bar".into(), "gc".into(), None);
-        SubstituteHandler::respond(&mut app, PromptChoice::Last);
+        let outcome = SubstituteHandler::respond(&mut app, PromptChoice::Last);
+        assert!(matches!(
+            outcome.kernel_effects.as_slice(),
+            [crate::kernel::CommandEffect::MutationCommitted(_)]
+        ));
 
         assert_eq!(text(&app), "bar foo");
         assert!(app.prompt.is_none());

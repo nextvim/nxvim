@@ -1,7 +1,8 @@
 //! Application composition and infrastructure adapters.
 //!
-//! This module wires model, controller-facing services, UI synchronization,
-//! and scripting. Semantic state remains in `model` and behavior in `controller`.
+//! This module wires the kernel-owned semantic model, controller-facing
+//! services, UI synchronization, and scripting. The controller remains the
+//! compatibility dispatch path while the kernel migration is underway.
 pub mod args;
 pub mod config;
 pub mod services;
@@ -20,6 +21,9 @@ pub enum InspectKind {
 
 pub struct App {
     pub model: crate::model::EditorModel,
+    /// Semantic tab pages. The initial migration contains one page and
+    /// projects structural changes from `vim-ui` into it.
+    pub tabs: crate::kernel::TabPages,
     pub controller: crate::controller::input::InputController,
     pub services: services::Services,
     pub ui: ui::Ui,
@@ -45,6 +49,7 @@ impl App {
         let mut ui = ui::Ui::new(screen_rect);
         let view_ids = ui::setup_initial_layout(&mut ui).unwrap();
         let model = crate::model::EditorModel::new(args.paths);
+        let tabs = crate::kernel::TabPages::single(ui.layout().clone(), view_ids.main);
 
         let initial_buffer = model
             .get_buffer(model.initial_buffer())
@@ -67,6 +72,7 @@ impl App {
 
         let mut app = Self {
             model,
+            tabs,
             controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
             services: services::Services::new(),
             ui,
@@ -86,7 +92,250 @@ impl App {
         };
 
         app.ui.set_colorscheme(app.colorscheme.clone());
+        app.sync_kernel_windows();
+        app.sync_kernel_context();
         app
+    }
+
+    /// Reconciles semantic window identities with the current UI projection.
+    /// The UI remains the compatibility layout owner until its projection is
+    /// reversed in a later migration slice.
+    pub fn sync_kernel_windows(&mut self) {
+        let window_buffers = WindowOps::window_buffers(&self.ui);
+        let active_members: Vec<_> = self
+            .ui
+            .layout()
+            .window_ids()
+            .into_iter()
+            .filter(|window| {
+                *window != self.view_ids.commandline
+                    && WindowOps::window_buffer(&self.ui, *window).is_some()
+            })
+            .collect();
+        let focused = self.ui.focused_window_id();
+        let active_window = if self
+            .ui
+            .window(focused)
+            .is_some_and(vim_ui::Window::has_content)
+        {
+            focused
+        } else {
+            self.view_ids.main
+        };
+
+        self.tabs.set_active_windows(active_members);
+
+        let kernel = self.model.kernel_mut();
+        for (window_id, buffer_id) in window_buffers {
+            kernel.register_window(window_id, buffer_id);
+        }
+        let _ = kernel.focus_window(active_window);
+    }
+
+    /// Synchronizes the kernel's stable current context from the active UI
+    /// window and the active semantic tab page.
+    pub fn sync_kernel_context(&mut self) {
+        let focused = self.ui.focused_window_id();
+        let window = if self
+            .ui
+            .window(focused)
+            .is_some_and(vim_ui::Window::has_content)
+        {
+            focused
+        } else {
+            self.view_ids.main
+        };
+        // The current context must describe the buffer actually hosted by the
+        // focused window. Command-line editing is buffer-backed too; replacing
+        // its buffer ID with the main buffer makes every InsertText fail the
+        // kernel identity check before it can mutate or render.
+        let buffer = WindowOps::window_buffer(&self.ui, window)
+            .unwrap_or_else(|| self.model.buffers().current());
+        self.model
+            .kernel_mut()
+            .set_current(crate::kernel::EditorContext {
+                tab: self.tabs.active_id(),
+                window,
+                buffer,
+            });
+    }
+
+    pub fn current_context(&self) -> Option<crate::kernel::EditorContext> {
+        self.model.kernel().current()
+    }
+
+    pub fn tab_count(&self) -> usize {
+        self.tabs.count()
+    }
+
+    pub fn active_tab(&self) -> crate::kernel::TabPageId {
+        self.tabs.active_id()
+    }
+
+    pub fn create_tab(
+        &mut self,
+        layout: vim_ui::LayoutNode,
+        active_window: vim_ui::WindowId,
+    ) -> crate::kernel::TabPageId {
+        self.tabs.create(layout, active_window)
+    }
+
+    pub fn new_tab(
+        &mut self,
+        buffer: vim_buffer::BufferId,
+    ) -> Result<crate::kernel::TabPageId, String> {
+        let source = self.tabs.active().active_window;
+        let mut layout = self.tabs.active().layout.clone();
+        let window = self.ui.create_window("MAIN WINDOW".to_string());
+        {
+            let buffer_ref = self
+                .model
+                .get_buffer(buffer)
+                .map_err(|error| error.to_string())?;
+            WindowOps::register_placeholder(&mut self.ui, window, buffer_ref);
+        }
+        if let Some(created) = self.ui.window_mut(window) {
+            created.set_draw_border(false);
+            created.set_view(Box::new(crate::view::TextView::new()));
+        }
+        if !layout.replace_leaf(source, window) {
+            self.ui.window_store_mut().remove(window);
+            return Err("active tab window is missing from its layout".to_string());
+        }
+        self.model.kernel_mut().register_window(window, buffer);
+        let id = self.tabs.create(layout.clone(), window);
+        if let Err(error) = self.ui.activate_layout(layout, window) {
+            let _ = self.tabs.close(id);
+            self.model.kernel_mut().close_window(window);
+            self.ui.window_store_mut().remove(window);
+            return Err(error.to_string());
+        }
+        self.model
+            .kernel_mut()
+            .focus_window(window)
+            .map_err(str::to_string)?;
+        self.model
+            .kernel_mut()
+            .set_current(crate::kernel::EditorContext {
+                tab: id,
+                window,
+                buffer,
+            });
+        Ok(id)
+    }
+
+    pub fn switch_tab(&mut self, id: crate::kernel::TabPageId) -> Result<(), String> {
+        let page = self
+            .tabs
+            .page(id)
+            .cloned()
+            .ok_or_else(|| "unknown tab page".to_string())?;
+        self.ui
+            .activate_layout(page.layout, page.active_window)
+            .map_err(|error| error.to_string())?;
+        self.tabs.switch_to(id).map_err(str::to_string)?;
+        self.model
+            .kernel_mut()
+            .focus_window(page.active_window)
+            .map_err(str::to_string)?;
+        let buffer = WindowOps::window_buffer(&self.ui, page.active_window)
+            .ok_or_else(|| "active tab window has no buffer".to_string())?;
+        self.model
+            .kernel_mut()
+            .set_current(crate::kernel::EditorContext {
+                tab: id,
+                window: page.active_window,
+                buffer,
+            });
+        Ok(())
+    }
+
+    pub fn next_tab(&mut self, count: usize) -> Result<crate::kernel::TabPageId, String> {
+        let id = self.tabs.next_id(count);
+        self.switch_tab(id)?;
+        Ok(id)
+    }
+
+    pub fn previous_tab(&mut self, count: usize) -> Result<crate::kernel::TabPageId, String> {
+        let id = self.tabs.previous_id(count);
+        self.switch_tab(id)?;
+        Ok(id)
+    }
+
+    pub fn close_tab(
+        &mut self,
+        id: crate::kernel::TabPageId,
+    ) -> Result<crate::kernel::TabPageId, &'static str> {
+        self.tabs.close(id)
+    }
+
+    pub fn close_active_tab(&mut self) -> Result<crate::kernel::TabPageId, String> {
+        let closing = self.tabs.active().clone();
+        let survivor = self.tabs.close(closing.id).map_err(str::to_string)?;
+        self.switch_tab(survivor)?;
+        for window in closing.windows {
+            if !self.tabs.iter().any(|page| page.windows.contains(&window)) {
+                self.model.kernel_mut().close_window(window);
+                self.ui.window_store_mut().remove(window);
+            }
+        }
+        Ok(survivor)
+    }
+
+    /// Projects the current UI layout into the active semantic tab during the
+    /// migration. Phase 2 will reverse this direction once tab pages are the
+    /// authoritative layout owners.
+    pub fn sync_kernel_layout(&mut self) {
+        self.sync_kernel_windows();
+        let layout = self.ui.layout().clone();
+        let focused = self.ui.focused_window_id();
+        let active_window = if focused == self.view_ids.commandline {
+            self.ui
+                .focus_manager()
+                .previous_id()
+                .filter(|window| *window != self.view_ids.commandline)
+                .unwrap_or(self.tabs.active().active_window)
+        } else {
+            focused
+        };
+        self.tabs.project_layout(layout, active_window);
+        self.sync_kernel_context();
+    }
+
+    /// Validates that the ID-based kernel context still names the focused
+    /// semantic window and an existing buffer. This is intentionally checked
+    /// at command boundaries while window and tab stores are still migrating.
+    pub fn validate_kernel_context(&self) -> Result<(), String> {
+        let context = self
+            .current_context()
+            .ok_or_else(|| "kernel has no current editor context".to_string())?;
+        let focused = self.ui.focused_window_id();
+        if context.window != focused
+            && self
+                .ui
+                .window(focused)
+                .is_some_and(vim_ui::Window::has_content)
+        {
+            return Err(format!(
+                "kernel window {} is not focused window {}",
+                context.window.get(),
+                focused.get()
+            ));
+        }
+        let window_buffer = WindowOps::window_buffer(&self.ui, context.window)
+            .ok_or_else(|| format!("kernel window {} has no buffer", context.window.get()))?;
+        if window_buffer != context.buffer {
+            return Err(format!(
+                "kernel buffer {} disagrees with window {} buffer {}",
+                context.buffer.get(),
+                context.window.get(),
+                window_buffer.get()
+            ));
+        }
+        self.model
+            .get_buffer(context.buffer)
+            .map(|_| ())
+            .map_err(|err| format!("kernel context names invalid buffer: {err}"))
     }
 
     pub fn init(

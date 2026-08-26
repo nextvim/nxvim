@@ -133,6 +133,27 @@ impl Ui {
         id
     }
 
+    /// Atomically activates a validated tiled layout and its requested focus.
+    /// Windows outside the layout remain stored so another tab page can reuse
+    /// their complete view state later.
+    pub fn activate_layout(&mut self, layout: LayoutNode, focused: WindowId) -> UiResult<()> {
+        let ids = self.validate_layout(&layout)?;
+        if !ids.contains(&focused) {
+            return Err(UiError::WindowNotInLayout(focused));
+        }
+        let window = self
+            .window_store
+            .get(focused)
+            .ok_or(UiError::UnknownWindow(focused))?;
+        if !window.is_visible() {
+            return Err(UiError::WindowNotVisible(focused));
+        }
+        self.layout_engine.set_layout(layout);
+        self.focus_manager.set_focus(focused);
+        self.update_layout();
+        Ok(())
+    }
+
     pub fn set_layout(&mut self, layout: LayoutNode) -> UiResult<()> {
         let ids = self.validate_layout(&layout)?;
         let next_focus = if ids.contains(&self.focus_manager.focused_id())
@@ -557,6 +578,24 @@ mod tests {
         );
         assert!(ui.layout().contains_leaf(first));
         assert!(!ui.layout().contains_leaf(second));
+    }
+
+    #[test]
+    fn activate_layout_restores_requested_focus_and_retains_inactive_windows() {
+        let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
+        let first = ui.focused_window_id();
+        let second = ui.create_window("second");
+
+        ui.activate_layout(LayoutNode::Leaf { window_id: second }, second)
+            .unwrap();
+        assert_eq!(ui.focused_window_id(), second);
+        assert!(ui.window(first).is_some());
+        assert!(!ui.layout().contains_leaf(first));
+
+        ui.activate_layout(LayoutNode::Leaf { window_id: first }, first)
+            .unwrap();
+        assert_eq!(ui.focused_window_id(), first);
+        assert!(ui.window(second).is_some());
     }
 
     #[test]

@@ -122,13 +122,13 @@ impl WindowOps {
                 "editing an unregistered window",
             ));
         };
-        let (buffer, state) = model.buffers_mut().get_mut_with_state(buffer_id)?;
-        state.revision = state.revision.wrapping_add(1);
-        let window = ui
-            .window_mut(window_id)
-            .and_then(Window::window_state_mut)
-            .expect("window buffer came from registered window");
-        Ok(edit(buffer, state, window))
+        model.edit_buffer_with_state(buffer_id, |buffer, state| {
+            let window = ui
+                .window_mut(window_id)
+                .and_then(Window::window_state_mut)
+                .expect("window buffer came from registered window");
+            edit(buffer, state, window)
+        })
     }
 
     pub fn validate(ui: &Ui, model: &EditorModel) -> Result<(), String> {

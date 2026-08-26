@@ -844,6 +844,9 @@ impl Keymap {
             .bind("R", Action::SetToReplace)
             .expect("Valid binding");
         mode_actions
+            .bind("gR", Action::SetToVirtualReplace)
+            .expect("Valid binding");
+        mode_actions
             .bind("o", Action::SetToOpenLineBelow { count: 1 })
             .expect("Valid binding");
         mode_actions

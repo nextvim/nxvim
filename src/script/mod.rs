@@ -7,7 +7,8 @@ use text::{BufferId, BufferSnapshot};
 use vim_script::{
     compiler::Compiler,
     host::{
-        Capability, CommandDefinition, CommandRequest, Host, HostFuture, HostRequest, HostRuntime,
+        Capability, CommandDefinition, CommandRequest, Host, HostContext, HostFuture, HostRequest,
+        HostRuntime,
     },
     lexer::Lexer,
     parser::Parser,
@@ -24,9 +25,25 @@ pub mod functions;
 
 use commands::registry::COMMAND_SPECS;
 
+#[derive(Debug)]
+pub struct EmittedCommand {
+    pub command: Command,
+    pub context: HostContext,
+}
+
+impl EmittedCommand {
+    pub fn editor_context(&self) -> Option<crate::kernel::EditorContext> {
+        Some(crate::kernel::EditorContext {
+            tab: crate::kernel::TabPageId::new(self.context.current_tab?),
+            window: crate::kernel::WindowId::new(self.context.current_window?),
+            buffer: crate::kernel::BufferId::new(self.context.current_buffer?)?,
+        })
+    }
+}
+
 pub struct ScriptRuntime {
     scheduler: Scheduler,
-    commands: mpsc::Receiver<Command>,
+    commands: mpsc::Receiver<EmittedCommand>,
     globals: HashMap<String, Value>,
     builtins: BuiltinRegistry,
     sources: SourceMap,
@@ -65,7 +82,20 @@ impl ScriptRuntime {
     }
 
     pub fn execute(&mut self, source: &str) -> Result<Value, String> {
-        let mut source = source;
+        self.execute_with_context(source, None)
+    }
+
+    pub fn execute_with_context(
+        &mut self,
+        source: &str,
+        current: Option<crate::kernel::EditorContext>,
+    ) -> Result<Value, String> {
+        // `&` and `~` are standalone Ex substitute-repeat commands, but the
+        // general expression lexer also assigns meaning to both tokens. Route
+        // these exact command lines through the canonical command spelling so
+        // they reach the Ex host rather than the expression parser.
+        let normalized = matches!(source.trim(), "&" | "~").then(|| "substitute".to_string());
+        let mut source = normalized.as_deref().unwrap_or(source);
         if let Some(stripped) = source.strip_prefix(':') {
             if stripped
                 .trim_start()
@@ -108,6 +138,11 @@ impl ScriptRuntime {
 
         let mut vm = Vm::with_globals(module, self.globals.clone()).map_err(runtime_message)?;
         vm.builtins = self.builtins.clone();
+        if let Some(current) = current {
+            vm.host_context.current_tab = Some(current.tab.get());
+            vm.host_context.current_window = Some(current.window.get());
+            vm.host_context.current_buffer = Some(current.buffer.get());
+        }
 
         let task_res = self.scheduler.spawn(vm).map_err(runtime_message);
         let value = match task_res {
@@ -178,8 +213,16 @@ impl ScriptRuntime {
         commands::execute(request).map_err(runtime_message)
     }
 
-    pub fn try_next_command(&self) -> Option<Command> {
+    pub fn try_next_emitted_command(&self) -> Option<EmittedCommand> {
         self.commands.try_recv().ok()
+    }
+
+    /// Compatibility accessor for callers that do not yet consume host
+    /// context. Runtime code must use [`Self::try_next_emitted_command`].
+    #[deprecated(note = "use try_next_emitted_command to preserve host context")]
+    pub fn try_next_command(&self) -> Option<Command> {
+        self.try_next_emitted_command()
+            .map(|emitted| emitted.command)
     }
 
     pub fn update_state(
@@ -285,7 +328,7 @@ impl Default for EditorState {
 }
 
 struct EditorHost {
-    sender: mpsc::Sender<Command>,
+    sender: mpsc::Sender<EmittedCommand>,
     state: Arc<Mutex<EditorState>>,
 }
 
@@ -297,13 +340,18 @@ impl Host for EditorHost {
                 "echo" | "message" | "echomsg" => {
                     expect_arity(&request, 1)?;
                     let message = request.arguments[0].to_string();
-                    sender.send(Command::Echo { message }).map_err(|_| {
-                        RuntimeError::coded(
-                            "E_HOST",
-                            RuntimeErrorKind::HostError,
-                            "editor command queue is closed",
-                        )
-                    })?;
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::Echo { message },
+                            context: request.context.clone(),
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
                     Ok(Value::Null)
                 }
 
@@ -323,14 +371,17 @@ impl Host for EditorHost {
     fn execute_command(&self, request: CommandRequest) -> HostFuture {
         let sender = self.sender.clone();
         Box::pin(async move {
+            let context = request.context.clone();
             let command = commands::execute(request)?;
-            sender.send(command).map_err(|_| {
-                RuntimeError::coded(
-                    "E_HOST",
-                    RuntimeErrorKind::HostError,
-                    "editor command queue is closed",
-                )
-            })?;
+            sender
+                .send(EmittedCommand { command, context })
+                .map_err(|_| {
+                    RuntimeError::coded(
+                        "E_HOST",
+                        RuntimeErrorKind::HostError,
+                        "editor command queue is closed",
+                    )
+                })?;
             Ok(Value::Null)
         })
     }
@@ -470,6 +521,20 @@ mod tests {
     }
 
     #[test]
+    fn emitted_commands_preserve_the_execution_context() {
+        let current = crate::kernel::EditorContext {
+            tab: crate::kernel::TabPageId::new(7),
+            window: crate::kernel::WindowId::new(11),
+            buffer: crate::kernel::BufferId::new(13).unwrap(),
+        };
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute_with_context(":q", Some(current)).unwrap();
+        let emitted = runtime.try_next_emitted_command().unwrap();
+        assert_eq!(emitted.editor_context(), Some(current));
+        assert!(matches!(emitted.command, Command::Quit { force: false }));
+    }
+
+    #[test]
     fn quit_and_its_abbreviation_are_dispatched() {
         for source in ["q", "quit"] {
             let mut runtime = ScriptRuntime::new();
@@ -496,21 +561,33 @@ mod tests {
 
     #[test]
     fn navigation_commands_are_dispatched() {
-        for (source, forward) in [("bnext", true), ("previoustab", false)] {
-            let mut runtime = ScriptRuntime::new();
-            runtime.execute(source).unwrap();
-            assert!(match runtime.try_next_command() {
-                Some(Command::Editor {
-                    action: vim_input::Action::NextTab { count: 1 },
-                    register: None,
-                }) => forward,
-                Some(Command::Editor {
-                    action: vim_input::Action::PreviousTab { count: 1 },
-                    register: None,
-                }) => !forward,
-                _ => false,
-            });
-        }
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("bnext").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::BufferNext { count: 1 })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("previoustab").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::TabPrevious { count: 1 })
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("tabnew notes.txt").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::TabNew { path: Some(path) }) if path == PathBuf::from("notes.txt")
+        ));
+
+        let mut runtime = ScriptRuntime::new();
+        runtime.execute("tabclose").unwrap();
+        assert!(matches!(
+            runtime.try_next_command(),
+            Some(Command::TabClose)
+        ));
     }
 
     #[test]

@@ -89,23 +89,10 @@ impl TaskDispatcher {
                 }
                 match result.result {
                     Ok(outcome) => {
-                        if let Ok(buffer) = model.get_buffer_mut(buffer_id) {
-                            if buffer.options().fixeol
-                                && !buffer.options().binary
-                                && !buffer.options().endofline
-                            {
-                                let mut options = buffer.options().clone();
-                                options.endofline = true;
-                                let _ = buffer.set_options(options);
-                            }
-                            let metadata = std::fs::metadata(&outcome.path);
-                            buffer.set_file_metadata(vim_buffer::FileMetadata {
-                                path: Some(outcome.path.clone()),
-                                source: vim_buffer::LoadSource::File,
-                                modified: metadata.as_ref().ok().and_then(|m| m.modified().ok()),
-                                size: metadata.as_ref().ok().map(|m| m.len()),
-                            });
-                            buffer.mark_saved();
+                        if model
+                            .complete_background_save(buffer_id, &outcome.path)
+                            .is_ok()
+                        {
                             model.status = Some(format!(
                                 "\"{}\" {} bytes written (background)",
                                 outcome.path.display(),

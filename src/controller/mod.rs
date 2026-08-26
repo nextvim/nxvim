@@ -16,13 +16,13 @@ mod buffer_handler;
 mod command;
 mod commandline_handler;
 mod dispatcher;
-mod editor;
+pub(crate) mod editor;
 mod editor_handler;
 pub(crate) mod input;
-mod lifecycle_handler;
-mod range;
-mod shared_operations;
-mod substitute_handler;
+pub(crate) mod lifecycle_handler;
+pub(crate) mod range;
+pub(crate) mod shared_operations;
+pub(crate) mod substitute_handler;
 mod task_dispatcher;
 mod window_handler;
 
@@ -58,6 +58,7 @@ pub fn prompt_choice(event: &crossterm::event::Event) -> Option<PromptChoice> {
 mod tests {
     use super::*;
     use crate::controller::commandline_handler::CommandlineHandler;
+    use text::ToPoint;
     use vim_input::Action;
     use vim_ui::{NavigationDirection, Rect, SplitAxis};
 
@@ -75,13 +76,30 @@ mod tests {
     #[test]
     fn pending_invalid_and_quit_return_explicit_outcomes() {
         let mut app = app();
-        let pending = Dispatcher::dispatch(&mut app, Command::PendingInput("g".to_string()));
+        let pending = Dispatcher::dispatch(
+            &mut app,
+            Command::PendingInput(crate::kernel::PendingCommandState {
+                count: None,
+                operator: None,
+                keys: Vec::new(),
+                waiting_for_register: false,
+                display: "g".to_string(),
+            }),
+        );
         assert!(pending.redraw);
         assert_eq!(app.model.status.as_deref(), Some("Pending sequence: g"));
+        assert_eq!(
+            app.model
+                .kernel()
+                .pending_command()
+                .map(|state| state.display.as_str()),
+            Some("g")
+        );
 
         let invalid = Dispatcher::dispatch(&mut app, Command::InvalidInput);
         assert!(invalid.redraw);
         assert_eq!(app.model.status.as_deref(), Some("Invalid sequence"));
+        assert!(app.model.kernel().pending_command().is_none());
 
         let quit = Dispatcher::dispatch(
             &mut app,
@@ -157,14 +175,16 @@ mod tests {
         let original = window_buffer(&app, main).unwrap();
         app.model.create("second");
 
-        Dispatcher::dispatch(
-            &mut app,
-            Command::Editor {
-                action: Action::NextTab { count: 1 },
-                register: None,
-            },
-        );
+        Dispatcher::dispatch(&mut app, Command::BufferNext { count: 1 });
         assert_ne!(window_buffer(&app, main), Some(original));
+        assert_eq!(
+            app.model
+                .kernel()
+                .windows()
+                .record(main)
+                .map(|window| window.buffer),
+            window_buffer(&app, main),
+        );
 
         let split = Dispatcher::dispatch(
             &mut app,
@@ -297,6 +317,69 @@ mod tests {
     }
 
     #[test]
+    fn tab_switch_restores_layout_focus_and_window_buffer() {
+        let mut app = app();
+        let first_tab = app.active_tab();
+        let first_window = app.ui.focused_window_id();
+        let first_buffer = window_buffer(&app, first_window).unwrap();
+        crate::app::windows::WindowOps::edit_window(
+            &mut app.ui,
+            &mut app.model,
+            first_window,
+            |buffer, _, state| {
+                state.selections.clear(buffer.as_text_buffer());
+                state.selections.add(buffer.as_text_buffer(), 0);
+            },
+        )
+        .unwrap();
+        let second_buffer = app.model.create("second tab");
+
+        let second_tab = app.new_tab(second_buffer).unwrap();
+        let second_window = app.ui.focused_window_id();
+        assert_ne!(second_tab, first_tab);
+        assert_ne!(second_window, first_window);
+        assert_eq!(window_buffer(&app, second_window), Some(second_buffer));
+
+        app.switch_tab(first_tab).unwrap();
+        assert_eq!(app.ui.focused_window_id(), first_window);
+        assert_eq!(window_buffer(&app, first_window), Some(first_buffer));
+        assert_eq!(
+            app.ui
+                .window(first_window)
+                .unwrap()
+                .window_state()
+                .unwrap()
+                .selections
+                .first()
+                .unwrap()
+                .head()
+                .to_point(app.model.get_buffer(first_buffer).unwrap().as_text_buffer()),
+            text::Point::new(0, 0),
+        );
+        assert_eq!(app.current_context().unwrap().tab, first_tab);
+
+        app.switch_tab(second_tab).unwrap();
+        assert_eq!(app.ui.focused_window_id(), second_window);
+        assert_eq!(window_buffer(&app, second_window), Some(second_buffer));
+
+        Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::NextTab { count: 1 },
+                register: None,
+            },
+        );
+        assert_eq!(app.active_tab(), first_tab);
+        assert_eq!(app.ui.focused_window_id(), first_window);
+
+        app.close_active_tab().unwrap();
+        assert_eq!(app.tab_count(), 1);
+        assert_eq!(app.active_tab(), second_tab);
+        assert!(app.ui.window(first_window).is_none());
+        assert_eq!(app.ui.focused_window_id(), second_window);
+    }
+
+    #[test]
     fn command_action_requests_commandline_focus_and_insert_mode() {
         let mut app = app();
         let outcome = Dispatcher::dispatch(
@@ -314,6 +397,39 @@ mod tests {
                 ViewEffect::SetCommandLineMode(':')
             ]
         );
+    }
+
+    #[test]
+    fn commandline_characters_mutate_the_focused_commandline_buffer() {
+        let mut app = app();
+        let outcome = Dispatcher::dispatch(
+            &mut app,
+            Command::Editor {
+                action: Action::SetToCommand,
+                register: None,
+            },
+        );
+        for effect in outcome.view_effects {
+            crate::app::ui::ViewSynchronizer::apply(
+                &mut app.ui,
+                &mut app.model,
+                app.view_ids,
+                effect,
+            );
+        }
+        app.sync_kernel_layout();
+
+        let command = app
+            .controller
+            .feed_key(vim_input::Key::char('q'))
+            .expect("insert-mode character should resolve");
+        let _ = Dispatcher::dispatch(&mut app, command);
+
+        let buffer = app
+            .model
+            .get_buffer(app.model.commandline_buffer())
+            .unwrap();
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "q");
     }
 
     #[test]

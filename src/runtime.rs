@@ -16,6 +16,11 @@ pub struct Runtime {
     script: crate::script::ScriptRuntime,
 }
 
+enum RuntimeCommand {
+    Controller(Command),
+    ScriptHost(crate::script::EmittedCommand),
+}
+
 impl Runtime {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let terminal = TerminalSession::enter()?;
@@ -59,7 +64,7 @@ impl Runtime {
             let mut commands = Vec::new();
 
             while let Some(cmd) = self.app.command_queue.pop_front() {
-                commands.push(cmd);
+                commands.push(RuntimeCommand::Controller(cmd));
             }
 
             if commands.is_empty() && self.app.services.poll() {
@@ -68,11 +73,14 @@ impl Runtime {
                         .services
                         .drain_results()
                         .into_iter()
-                        .map(Command::Task),
+                        .map(Command::Task)
+                        .map(RuntimeCommand::Controller),
                 );
             }
 
-            commands.extend(std::iter::from_fn(|| self.script.try_next_command()));
+            while let Some(emitted) = self.script.try_next_emitted_command() {
+                commands.push(RuntimeCommand::ScriptHost(emitted));
+            }
 
             if commands.is_empty() {
                 if event::poll(std::time::Duration::from_millis(50))? {
@@ -85,11 +93,14 @@ impl Runtime {
                             if let Some(handler) =
                                 self.app.prompt.as_ref().map(|prompt| prompt.handler)
                             {
-                                commands.push(Command::PromptChoice { handler, choice });
+                                commands.push(RuntimeCommand::Controller(Command::PromptChoice {
+                                    handler,
+                                    choice,
+                                }));
                             }
                         }
                     } else if let Some(command) = self.app.controller.feed_event(terminal_event) {
-                        commands.push(command);
+                        commands.push(RuntimeCommand::Controller(command));
                     }
                 }
             }
@@ -111,7 +122,9 @@ impl Runtime {
                         should_redraw = true;
                     }
                 }
-            } else if !is_idle && last_command_time.elapsed() >= std::time::Duration::from_secs(2) {
+            } else if is_idle == false
+                && last_command_time.elapsed() >= std::time::Duration::from_secs(2)
+            {
                 is_idle = true;
                 idle_since = Some(std::time::Instant::now());
                 self.app.model.status = Some("idle".to_string());
@@ -120,23 +133,95 @@ impl Runtime {
 
             let processed_any = !commands.is_empty();
             for command in commands {
+                let RuntimeCommand::Controller(command) = command else {
+                    let RuntimeCommand::ScriptHost(emitted) = command else {
+                        unreachable!();
+                    };
+                    let origin = emitted.editor_context();
+                    let current = self.app.current_context();
+                    match crate::kernel::ExDispatcher::execute_host_command(
+                        &mut self.app,
+                        current,
+                        origin,
+                        emitted.command,
+                    ) {
+                        Ok(outcome) => {
+                            should_redraw |= outcome.redraw;
+                            self.apply_outcome(&outcome);
+                            self.app.sync_kernel_layout();
+                            if outcome.quit {
+                                break 'main_loop;
+                            }
+                        }
+                        Err(error) => {
+                            self.app.model.status = Some(error);
+                            should_redraw = true;
+                        }
+                    }
+                    continue;
+                };
+                if let Command::CommandLine(ref request) = command {
+                    log::trace!(
+                        "dispatching command-line {:?} in tab {} window {} buffer {}: range={:?} count={:?} register={:?} modifiers={:?} bang={}",
+                        request.kind,
+                        request.current.tab.get(),
+                        request.current.window.get(),
+                        request.current.buffer.get(),
+                        request.range,
+                        request.count,
+                        request.register,
+                        request.modifiers,
+                        request.bang,
+                    );
+                    let current_buffer = crate::app::ui::current_buffer(&self.app);
+                    let _ = self.script.update_state(&self.app.model, current_buffer);
+                    let current = self.app.current_context();
+                    if let Err(err) =
+                        crate::kernel::ExDispatcher::dispatch(current, request, |accepted| {
+                            self.script
+                                .execute_with_context(&accepted.text, Some(accepted.current))
+                                .map(|_| ())
+                        })
+                    {
+                        self.app.model.status = Some(err);
+                    }
+                    self.app.sync_kernel_context();
+                    should_redraw = true;
+                    continue;
+                }
                 if let Command::ExecuteScript(ref script_str) = command {
                     let current_buffer = crate::app::ui::current_buffer(&self.app);
                     let _ = self.script.update_state(&self.app.model, current_buffer);
-                    if let Err(err) = self.script.execute(script_str) {
+                    if let Err(err) = self
+                        .script
+                        .execute_with_context(script_str, self.app.current_context())
+                    {
                         self.app.model.status = Some(err);
+                    }
+                    self.app.sync_kernel_context();
+                    if let Err(err) = self.app.validate_kernel_context() {
+                        log::warn!("invalid kernel context after script: {err}");
                     }
                     should_redraw = true;
                     continue;
                 }
+                if let Err(err) = self.app.validate_kernel_context() {
+                    log::warn!("invalid kernel context before command: {err}");
+                    self.app.sync_kernel_context();
+                }
                 let outcome = Dispatcher::dispatch(&mut self.app, command);
                 should_redraw |= outcome.redraw;
                 self.apply_outcome(&outcome);
+                self.app.sync_kernel_layout();
+                if let Err(err) = self.app.validate_kernel_context() {
+                    log::warn!("invalid kernel context after command: {err}");
+                }
                 if outcome.quit {
                     break 'main_loop;
                 }
             }
             if processed_any {
+                self.app.sync_kernel_context();
                 let current_buffer = crate::app::ui::current_buffer(&self.app);
                 let _ = self.script.update_state(&self.app.model, current_buffer);
             }
@@ -163,8 +248,37 @@ impl Runtime {
     }
 
     fn apply_outcome(&mut self, outcome: &CommandOutcome) {
+        crate::app::services::schedule_redraw_invalidations(&mut self.app, &outcome.invalidations);
         for effect in &outcome.view_effects {
             self.apply_view_effect(*effect);
+        }
+        for effect in &outcome.kernel_effects {
+            match effect {
+                crate::kernel::CommandEffect::Message(message) => {
+                    self.app.model.status = Some(message.clone());
+                    self.app.message = message.clone();
+                    self.app.messages.push(message.clone());
+                }
+                crate::kernel::CommandEffect::MutationCommitted(mutation) => {
+                    // Older producers may not carry typed invalidations yet.
+                    if outcome.invalidations.is_empty() {
+                        crate::app::services::schedule_mutation_updates(&mut self.app, mutation);
+                    }
+                }
+                crate::kernel::CommandEffect::EventEmitted { name, payload } => {
+                    log::trace!("kernel event {name}: {payload:?}");
+                }
+                crate::kernel::CommandEffect::BackgroundWorkRequested { kind } => {
+                    log::trace!("kernel background work requested: {kind}");
+                }
+                crate::kernel::CommandEffect::CursorMoved { .. }
+                | crate::kernel::CommandEffect::BufferMutated { .. }
+                | crate::kernel::CommandEffect::WindowChanged { .. }
+                | crate::kernel::CommandEffect::TabChanged { .. }
+                | crate::kernel::CommandEffect::OptionChanged { .. }
+                | crate::kernel::CommandEffect::ModeChanged { .. }
+                | crate::kernel::CommandEffect::QuitRequested => {}
+            }
         }
     }
 
