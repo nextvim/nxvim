@@ -19,6 +19,7 @@ pub enum PromptChoice {
 
 pub struct Prompt {
     pub handler: PromptHandler,
+    pub message: String,
     window_id: WindowId,
     pattern: String,
     replacement: String,
@@ -32,6 +33,24 @@ pub struct Prompt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptHandler {
     Substitute,
+    Script,
+}
+
+impl Prompt {
+    pub fn script(message: String, window_id: WindowId) -> Self {
+        Self {
+            handler: PromptHandler::Script,
+            message,
+            window_id,
+            pattern: String::new(),
+            replacement: String::new(),
+            global: false,
+            row: 0,
+            end_row: 0,
+            search_offset: 0,
+            current_match: None,
+        }
+    }
 }
 
 pub struct SubstituteHandler;
@@ -75,6 +94,7 @@ impl SubstituteHandler {
 
         app.prompt = Some(Prompt {
             handler: PromptHandler::Substitute,
+            message: format!("replace with {replacement}? (y/n/a/q/l)"),
             window_id,
             pattern,
             replacement,

@@ -397,8 +397,9 @@ impl Command {
             | Self::TabPrevious { .. }
             | Self::TabClose => CommandKind::Tab,
             Self::BufferNext { .. } | Self::BufferPrevious { .. } => CommandKind::Window,
-            Self::Set { .. } => CommandKind::Option,
-            Self::ExecuteScript(_) => CommandKind::Script,
+            Self::Set { .. } | Self::SetOption { .. } => CommandKind::Option,
+            Self::ReplaceBuffer { .. } => CommandKind::Edit,
+            Self::ExecuteScript(_) | Self::OpenPrompt { .. } => CommandKind::Script,
             Self::CommandLine(_) => CommandKind::Ex,
             Self::Task(_) => CommandKind::Script,
             Self::PendingInput(_)

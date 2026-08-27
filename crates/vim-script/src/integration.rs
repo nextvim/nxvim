@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
-use crate::ast::{ExCommand, MapMode, MappingOptions};
+use crate::ast::ExCommand;
 use crate::bytecode::BytecodeModule;
 use crate::runtime::{RuntimeError, RuntimeErrorKind, RuntimeResult, Value};
+pub use vim_input::{
+    Mapping as CompiledMapping, MappingExpansion, MappingId, MappingStore as KeymapStore,
+    SharedMappingStore as SharedKeymapStore,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct EventHandlerId(pub u64);
@@ -49,6 +53,41 @@ impl EventBus {
         self.handlers.retain(|_, handlers| !handlers.is_empty());
     }
 
+    /// Removes handlers in `group` whose event and pattern match the
+    /// selective `:autocmd!` form.
+    pub fn remove_matching(
+        &mut self,
+        group: Option<&str>,
+        events: Option<&[&str]>,
+        patterns: Option<&[&str]>,
+    ) -> usize {
+        let mut removed = 0;
+        for handlers in self.handlers.values_mut() {
+            let before = handlers.len();
+            handlers.retain(|handler| {
+                let group_matches =
+                    group.is_none_or(|group| handler.group.as_deref() == Some(group));
+                let event_matches = events.is_none_or(|events| {
+                    events
+                        .iter()
+                        .any(|event| *event == "*" || *event == handler.event)
+                });
+                let pattern_matches = patterns.is_none_or(|patterns| {
+                    patterns.iter().any(|pattern| {
+                        handler
+                            .patterns
+                            .iter()
+                            .any(|registered| registered == pattern)
+                    })
+                });
+                !(group_matches && event_matches && pattern_matches)
+            });
+            removed += before - handlers.len();
+        }
+        self.handlers.retain(|_, handlers| !handlers.is_empty());
+        removed
+    }
+
     /// Removes all handlers in `group`, returning the number removed.
     pub fn remove_group(&mut self, group: &str) -> usize {
         let mut removed = 0;
@@ -63,17 +102,28 @@ impl EventBus {
 
     /// Returns matching handlers in registration order and consumes `once` handlers.
     pub fn handlers_for(&mut self, event: &Event) -> Vec<EventHandler> {
+        self.handlers_for_with_nesting(event, true)
+    }
+
+    /// Returns handlers eligible at the current nesting level. Nested event
+    /// delivery admits only handlers explicitly marked `++nested`.
+    pub fn handlers_for_with_nesting(
+        &mut self,
+        event: &Event,
+        allow_non_nested: bool,
+    ) -> Vec<EventHandler> {
         let Some(handlers) = self.handlers.get_mut(&event.name) else {
             return Vec::new();
         };
         let subject = event.pattern.as_deref().unwrap_or("");
         let mut matching = Vec::new();
         handlers.retain(|handler| {
-            let matches = handler.patterns.is_empty()
-                || handler
-                    .patterns
-                    .iter()
-                    .any(|pattern| vim_glob_matches(pattern, subject));
+            let matches = (allow_non_nested || handler.nested)
+                && (handler.patterns.is_empty()
+                    || handler
+                        .patterns
+                        .iter()
+                        .any(|pattern| pattern_matches_subject(pattern, subject)));
             if matches {
                 matching.push(handler.clone());
             }
@@ -83,6 +133,15 @@ impl EventBus {
             self.handlers.remove(&event.name);
         }
         matching
+    }
+}
+
+fn pattern_matches_subject(pattern: &str, subject: &str) -> bool {
+    if pattern.contains('/') {
+        vim_glob_matches(pattern, subject)
+    } else {
+        let tail = subject.rsplit('/').next().unwrap_or(subject);
+        vim_glob_matches(pattern, tail)
     }
 }
 
@@ -114,79 +173,6 @@ fn vim_glob_matches(pattern: &str, subject: &str) -> bool {
         pattern_index += 1;
     }
     pattern_index == pattern.len()
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct MappingId(pub u64);
-
-#[derive(Clone, Debug)]
-pub struct CompiledMapping {
-    pub id: MappingId,
-    pub modes: Vec<MapMode>,
-    pub lhs: String,
-    pub expansion: MappingExpansion,
-    pub options: MappingOptions,
-    pub buffer: Option<u64>,
-}
-
-#[derive(Clone, Debug)]
-pub enum MappingExpansion {
-    Keys(String),
-    Bytecode(BytecodeModule),
-    NoOp,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct KeymapStore {
-    pub global: HashMap<(MapMode, String), CompiledMapping>,
-    pub buffer_local: HashMap<u64, HashMap<(MapMode, String), CompiledMapping>>,
-}
-
-impl KeymapStore {
-    /// Registers the mapping for every declared mode, replacing mappings with the same key.
-    pub fn register(&mut self, mapping: CompiledMapping) {
-        let target = match mapping.buffer {
-            Some(buffer) => self.buffer_local.entry(buffer).or_default(),
-            None => &mut self.global,
-        };
-        for mode in &mapping.modes {
-            target.insert((*mode, mapping.lhs.clone()), mapping.clone());
-        }
-    }
-
-    pub fn unmap(
-        &mut self,
-        mode: MapMode,
-        lhs: &str,
-        buffer: Option<u64>,
-    ) -> Option<CompiledMapping> {
-        let key = (mode, lhs.to_owned());
-        match buffer {
-            Some(buffer) => {
-                let mappings = self.buffer_local.get_mut(&buffer)?;
-                let removed = mappings.remove(&key);
-                if mappings.is_empty() {
-                    self.buffer_local.remove(&buffer);
-                }
-                removed
-            }
-            None => self.global.remove(&key),
-        }
-    }
-
-    /// Resolves a buffer-local mapping first, then falls back to the global mapping.
-    pub fn resolve(
-        &self,
-        mode: MapMode,
-        lhs: &str,
-        buffer: Option<u64>,
-    ) -> Option<&CompiledMapping> {
-        let key = (mode, lhs.to_owned());
-        buffer
-            .and_then(|buffer| self.buffer_local.get(&buffer))
-            .and_then(|mappings| mappings.get(&key))
-            .or_else(|| self.global.get(&key))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -428,17 +414,6 @@ mod tests {
         }
     }
 
-    fn mapping(id: u64, mode: MapMode, buffer: Option<u64>) -> CompiledMapping {
-        CompiledMapping {
-            id: MappingId(id),
-            modes: vec![mode],
-            lhs: "x".into(),
-            expansion: MappingExpansion::NoOp,
-            options: MappingOptions::default(),
-            buffer,
-        }
-    }
-
     fn handler(id: u64, pattern: &str, group: Option<&str>, once: bool) -> EventHandler {
         EventHandler {
             id: EventHandlerId(id),
@@ -502,30 +477,53 @@ mod tests {
     }
 
     #[test]
-    fn keymaps_use_mode_and_buffer_local_precedence() {
-        let mut store = KeymapStore::default();
-        store.register(mapping(1, MapMode::Normal, None));
-        store.register(mapping(2, MapMode::Normal, Some(7)));
-        store.register(mapping(3, MapMode::Insert, None));
+    fn file_patterns_use_tail_or_full_path_subjects() {
+        let mut bus = EventBus::default();
+        bus.register(handler(1, "*.rs", None, false));
+        bus.register(handler(2, "src/*.rs", None, false));
+
+        let matching = bus.handlers_for(&event("src/main.rs"));
+        assert_eq!(
+            matching
+                .iter()
+                .map(|handler| handler.id.0)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(bus.handlers_for(&event("/work/src/main.rs")).len(), 1);
+        assert!(bus.handlers_for(&event("/work/src/main.txt")).is_empty());
+    }
+
+    #[test]
+    fn selective_event_removal_preserves_unmatched_handlers() {
+        let mut bus = EventBus::default();
+        bus.register(handler(1, "*.rs", Some("rust"), false));
+        bus.register(handler(2, "*.txt", Some("rust"), false));
+        bus.register(handler(3, "*.rs", Some("other"), false));
 
         assert_eq!(
-            store.resolve(MapMode::Normal, "x", Some(7)).unwrap().id.0,
-            2
-        );
-        assert_eq!(
-            store.resolve(MapMode::Normal, "x", Some(8)).unwrap().id.0,
+            bus.remove_matching(Some("rust"), Some(&["BufWrite"]), Some(&["*.rs"])),
             1
         );
-        assert_eq!(
-            store.resolve(MapMode::Insert, "x", Some(7)).unwrap().id.0,
-            3
-        );
-        assert!(store.resolve(MapMode::Visual, "x", Some(7)).is_none());
+        assert_eq!(bus.handlers_for(&event("main.rs")).len(), 1);
+        assert_eq!(bus.handlers_for(&event("main.txt")).len(), 1);
+    }
 
-        assert_eq!(store.unmap(MapMode::Normal, "x", Some(7)).unwrap().id.0, 2);
+    #[test]
+    fn nested_dispatch_only_admits_nested_handlers() {
+        let mut bus = EventBus::default();
+        bus.register(handler(1, "*", None, false));
+        let mut nested = handler(2, "*", None, false);
+        nested.nested = true;
+        bus.register(nested);
+
+        let nested_handlers = bus.handlers_for_with_nesting(&event("main.rs"), false);
         assert_eq!(
-            store.resolve(MapMode::Normal, "x", Some(7)).unwrap().id.0,
-            1
+            nested_handlers
+                .iter()
+                .map(|handler| handler.id.0)
+                .collect::<Vec<_>>(),
+            vec![2]
         );
     }
 

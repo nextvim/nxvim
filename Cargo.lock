@@ -3709,6 +3709,9 @@ dependencies = [
 [[package]]
 name = "vim-script"
 version = "0.1.0"
+dependencies = [
+ "vim-input",
+]
 
 [[package]]
 name = "vim-treesitter"

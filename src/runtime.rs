@@ -14,6 +14,7 @@ pub struct Runtime {
     app: App,
     buffered_renderer: BufferedRenderer,
     script: crate::script::ScriptRuntime,
+    pending_script_commands: std::collections::VecDeque<RuntimeCommand>,
 }
 
 enum RuntimeCommand {
@@ -32,7 +33,8 @@ impl Runtime {
         let scripts = args.scripts.clone();
 
         let mut app = App::new(rect, args);
-        let mut script = crate::script::ScriptRuntime::new();
+        let mut script = crate::script::ScriptRuntime::with_options(app.config.clone());
+        app.controller.set_mapping_store(script.keymaps());
         app.init(&mut script, pre_config_cmds, post_config_cmds, scripts);
         app.model
             .kernel_mut()
@@ -44,6 +46,7 @@ impl Runtime {
             app,
             buffered_renderer: BufferedRenderer::new(rect.width, rect.height),
             script,
+            pending_script_commands: std::collections::VecDeque::new(),
         })
     }
 
@@ -69,6 +72,9 @@ impl Runtime {
 
             while let Some(cmd) = self.app.command_queue.pop_front() {
                 commands.push(RuntimeCommand::Controller(cmd));
+            }
+            while let Some(command) = self.pending_script_commands.pop_front() {
+                commands.push(command);
             }
 
             if commands.is_empty() && self.app.services.poll() {
@@ -103,7 +109,12 @@ impl Runtime {
                                 }));
                             }
                         }
-                    } else if let Some(command) = self.app.controller.feed_event(terminal_event) {
+                    } else if let Some(command) = self.app.controller.feed_event_with_buffer(
+                        terminal_event,
+                        self.app
+                            .current_context()
+                            .map(|context| context.buffer.get()),
+                    ) {
                         commands.push(RuntimeCommand::Controller(command));
                     }
                 }
@@ -158,7 +169,10 @@ impl Runtime {
                             }
                         }
                         Err(error) => {
-                            self.app.model.status = Some(error);
+                            // A failed callback command is terminal for that
+                            // handler, but does not discard later handlers
+                            // already queued for the same event batch.
+                            self.report_autocmd_error(error);
                             should_redraw = crate::kernel::RedrawRequest::View;
                         }
                     }
@@ -189,6 +203,7 @@ impl Runtime {
                     {
                         self.app.model.status = Some(err);
                     }
+                    self.collect_script_events();
                     self.app.sync_kernel_context();
                     should_redraw = crate::kernel::RedrawRequest::View;
                     continue;
@@ -202,6 +217,7 @@ impl Runtime {
                     {
                         self.app.model.status = Some(err);
                     }
+                    self.collect_script_events();
                     self.app.sync_kernel_context();
                     if let Err(err) = self.app.validate_kernel_context() {
                         log::warn!("invalid kernel context after script: {err}");
@@ -313,6 +329,8 @@ impl Runtime {
                 }
                 crate::kernel::CommandEffect::EventEmitted { name, payload } => {
                     log::trace!("kernel event {name}: {payload:?}");
+                    // Insert lifecycle events are already published by the
+                    // authoritative mode transition; avoid publishing them twice.
                 }
                 crate::kernel::CommandEffect::BackgroundWorkRequested { kind } => {
                     log::trace!("kernel background work requested: {kind}");
@@ -347,17 +365,60 @@ impl Runtime {
                         )],
                     );
                 }
+                crate::kernel::CommandEffect::OptionChanged { name } => {
+                    self.app.model.kernel_mut().events_mut().push(
+                        crate::kernel::EditorEvent::OptionSet {
+                            name: crate::kernel::OptionName::from(name.as_str()),
+                            value: None,
+                        },
+                    );
+                }
                 crate::kernel::CommandEffect::BufferMutated { .. }
                 | crate::kernel::CommandEffect::WindowChanged { .. }
-                | crate::kernel::CommandEffect::OptionChanged { .. }
                 | crate::kernel::CommandEffect::QuitRequested => {}
             }
         }
     }
 
+    fn collect_script_events(&mut self) {
+        for event in self.script.take_user_command_events() {
+            self.app.model.kernel_mut().events_mut().push(event);
+        }
+    }
+
+    fn report_autocmd_error(&mut self, error: String) {
+        log::warn!("autocommand failed: {error}");
+        self.app.model.status = Some(error.clone());
+        self.app.message = error.clone();
+        self.app.messages.push(error);
+        self.app.queue_redraw(
+            crate::kernel::RedrawRequest::View,
+            &[crate::kernel::RedrawInvalidation::global(
+                crate::kernel::RedrawInvalidationKind::Statusline,
+            )],
+        );
+    }
+
     fn deliver_deferred_events(&mut self) {
-        for event in self.app.model.kernel_mut().events_mut().drain_deferred() {
-            log::trace!("deferred editor event: {event:?}");
+        let mut events = self.app.model.kernel_mut().events_mut().drain_immediate();
+        events.extend(self.app.model.kernel_mut().events_mut().drain_deferred());
+        for event in events {
+            let envelope =
+                crate::script::AutocmdEventEnvelope::from_editor_event(&event, &self.app.model);
+            let callbacks = self.script.snapshot_autocmd_commands(&envelope);
+            let callback_count = callbacks.len();
+            for callback in callbacks {
+                match self.script.execute_autocmd_snapshot(callback) {
+                    Ok(command) => self
+                        .pending_script_commands
+                        .push_back(RuntimeCommand::ScriptHost(command)),
+                    Err(error) => self.report_autocmd_error(error),
+                }
+            }
+            log::trace!(
+                "editor event {} resolved {callback_count} callback(s)",
+                envelope.event.name
+            );
         }
     }
 

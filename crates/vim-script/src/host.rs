@@ -7,7 +7,7 @@ use crate::ast::{ExCommand, MapMode, MappingOptions, UserCommandAttributes};
 use crate::ex_parser::ExLineParser;
 use crate::integration::{
     CompiledMapping, Event, EventAction, EventBus, EventHandler, EventHandlerId, KeymapStore,
-    MappingExpansion, MappingId,
+    MappingExpansion, MappingId, SharedKeymapStore,
 };
 use crate::runtime::{HostObjectId, RuntimeError, RuntimeErrorKind, RuntimeResult, Value, Vm};
 use crate::source::SourceId;
@@ -33,6 +33,30 @@ pub trait Host: Send + Sync + 'static {
         })
     }
 
+    fn external_runtime(&self, request: ExternalRuntimeRequest) -> HostFuture {
+        Box::pin(async move {
+            let _ = request;
+            Err(RuntimeError::coded(
+                "E_NOTIMPL",
+                RuntimeErrorKind::HostError,
+                "external runtime requests are reserved for Phase 7",
+            ))
+        })
+    }
+
+    fn editor(&self, request: EditorRequest) -> HostFuture {
+        Box::pin(async move {
+            Err(RuntimeError::coded(
+                "E_HOST",
+                RuntimeErrorKind::HostError,
+                format!(
+                    "host does not implement editor request {:?}",
+                    request.operation
+                ),
+            ))
+        })
+    }
+
     fn execute_command(&self, request: CommandRequest) -> HostFuture {
         Box::pin(async move {
             Err(RuntimeError::coded(
@@ -50,6 +74,108 @@ pub struct HostRequest {
     pub function: String,
     pub arguments: Vec<Value>,
     pub context: HostContext,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditorRequest {
+    pub operation: EditorRequestOperation,
+    pub context: HostContext,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExternalRuntimeRequest {
+    Timer { delay_ms: u64, repeat: bool },
+    Job { command: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExternalRuntimeResponse {
+    Pending { id: u64 },
+    Unsupported,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditorRequestOperation {
+    CurrentContext,
+    BufferText {
+        buffer: u64,
+        range: OwnedTextRange,
+    },
+    Selection {
+        window: u64,
+    },
+    Register {
+        name: char,
+    },
+    Mark {
+        buffer: u64,
+        name: char,
+    },
+    ReplaceBuffer {
+        buffer: u64,
+        range: OwnedTextRange,
+        text: String,
+    },
+    Window(WindowRequestOperation),
+    Tab(TabRequestOperation),
+    Message {
+        text: String,
+    },
+    Prompt {
+        message: String,
+    },
+    RegisterEvent {
+        event: String,
+        pattern: String,
+        command: String,
+        once: bool,
+        nested: bool,
+    },
+}
+
+impl EditorRequestOperation {
+    pub fn required_capability(&self) -> Capability {
+        match self {
+            Self::CurrentContext => Capability::Editor,
+            Self::BufferText { .. } | Self::Selection { .. } | Self::Mark { .. } => {
+                Capability::BufferRead
+            }
+            Self::Register { .. } => Capability::Editor,
+            Self::ReplaceBuffer { .. } => Capability::BufferWrite,
+            Self::Window(_) => Capability::Window,
+            Self::Tab(_) => Capability::Editor,
+            Self::Message { .. } | Self::Prompt { .. } => Capability::UserInterface,
+            Self::RegisterEvent { .. } => Capability::Editor,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WindowRequestOperation {
+    SplitHorizontal,
+    SplitVertical,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TabRequestOperation {
+    Next { count: usize },
+    Previous { count: usize },
+    Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OwnedTextRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditorResponse {
+    Context(HostContext),
+    Text(String),
+    Range(OwnedTextRange),
+    Register(Value),
+    Mark(Option<u64>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -186,9 +312,15 @@ pub struct HostRuntime {
     pub functions: HostFunctionRegistry,
     pub commands: CommandRegistry,
     pub user_commands: HashMap<String, UserCommand>,
-    pub keymaps: KeymapStore,
+    pub keymaps: SharedKeymapStore,
     pub events: EventBus,
     pub current_augroup: Option<String>,
+    pub augroups: HashSet<String>,
+    eventignore: HashSet<String>,
+    autocmd_depth: u8,
+    autocmd_enabled: bool,
+    registered_user_commands: Vec<String>,
+    removed_user_commands: Vec<String>,
     next_mapping_id: u64,
     next_event_handler_id: u64,
 }
@@ -201,24 +333,44 @@ impl std::fmt::Debug for HostRuntime {
             .field("functions", &self.functions)
             .field("commands", &self.commands)
             .field("user_commands", &self.user_commands)
-            .field("keymaps", &self.keymaps)
+            .field(
+                "keymaps",
+                &self.keymaps.read().expect("keymap store lock poisoned"),
+            )
             .field("events", &self.events)
             .field("current_augroup", &self.current_augroup)
+            .field("augroups", &self.augroups)
+            .field("eventignore", &self.eventignore)
+            .field("autocmd_depth", &self.autocmd_depth)
+            .field("autocmd_enabled", &self.autocmd_enabled)
             .finish_non_exhaustive()
     }
 }
 
 impl HostRuntime {
     pub fn new(host: Arc<dyn Host>) -> Self {
+        Self::with_keymaps(
+            host,
+            Arc::new(std::sync::RwLock::new(KeymapStore::default())),
+        )
+    }
+
+    pub fn with_keymaps(host: Arc<dyn Host>, keymaps: SharedKeymapStore) -> Self {
         Self {
             host,
             capabilities: CapabilitySet::default(),
             functions: HostFunctionRegistry::default(),
             commands: CommandRegistry::default(),
             user_commands: HashMap::new(),
-            keymaps: KeymapStore::default(),
+            keymaps,
             events: EventBus::default(),
             current_augroup: None,
+            augroups: HashSet::new(),
+            eventignore: HashSet::new(),
+            autocmd_depth: 0,
+            autocmd_enabled: true,
+            registered_user_commands: Vec::new(),
+            removed_user_commands: Vec::new(),
             next_mapping_id: 0,
             next_event_handler_id: 0,
         }
@@ -252,13 +404,26 @@ impl HostRuntime {
                 format!("command already exists: {}", definition.name),
             ));
         }
-        self.user_commands
-            .insert(definition.name.clone(), definition);
+        let name = definition.name.clone();
+        self.user_commands.insert(name.clone(), definition);
+        self.registered_user_commands.push(name);
         Ok(())
     }
 
+    pub fn take_registered_user_commands(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.registered_user_commands)
+    }
+
+    pub fn take_removed_user_commands(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.removed_user_commands)
+    }
+
     pub fn remove_user_command(&mut self, name: &str) -> bool {
-        self.user_commands.remove(name).is_some()
+        let removed = self.user_commands.remove(name).is_some();
+        if removed {
+            self.removed_user_commands.push(name.to_owned());
+        }
+        removed
     }
 
     pub fn delete_user_command(&mut self, command: &ExCommand) -> RuntimeResult<()> {
@@ -323,13 +488,22 @@ impl HostRuntime {
         mode: MapMode,
         lhs: &str,
         buffer: Option<u64>,
-    ) -> Option<&CompiledMapping> {
-        self.keymaps.resolve(mode, lhs, buffer)
+    ) -> Option<CompiledMapping> {
+        self.keymaps
+            .read()
+            .expect("keymap store lock poisoned")
+            .resolve(input_mapping_mode(mode), lhs, buffer)
+            .ok()
+            .flatten()
+            .cloned()
     }
 
     pub fn event_commands(&mut self, event: &Event, context: HostContext) -> Vec<CommandRequest> {
+        if !self.autocmd_enabled || self.event_is_ignored(&event.name) || self.autocmd_depth >= 10 {
+            return Vec::new();
+        }
         self.events
-            .handlers_for(event)
+            .handlers_for_with_nesting(event, self.autocmd_depth == 0)
             .into_iter()
             .filter_map(|handler| match handler.action {
                 EventAction::Command(command) => Some(CommandRequest {
@@ -339,6 +513,35 @@ impl HostRuntime {
                 EventAction::Bytecode(_) => None,
             })
             .collect()
+    }
+
+    pub fn set_eventignore(&mut self, events: impl IntoIterator<Item = String>) {
+        self.eventignore = events.into_iter().collect();
+    }
+
+    pub fn set_autocmd_enabled(&mut self, enabled: bool) {
+        self.autocmd_enabled = enabled;
+    }
+
+    pub fn begin_autocmd(&mut self) -> RuntimeResult<()> {
+        if self.autocmd_depth >= 10 {
+            return Err(RuntimeError::coded(
+                "E218",
+                RuntimeErrorKind::InvalidCommand,
+                "autocommand nesting exceeds 10 levels",
+            ));
+        }
+        self.autocmd_depth += 1;
+        Ok(())
+    }
+
+    pub fn end_autocmd(&mut self) {
+        self.autocmd_depth = self.autocmd_depth.saturating_sub(1);
+    }
+
+    fn event_is_ignored(&self, event: &str) -> bool {
+        self.eventignore.contains("all") && !self.eventignore.contains(&format!("-{event}"))
+            || self.eventignore.contains(event)
     }
 
     fn handle_mapping(&mut self, request: &CommandRequest) -> RuntimeResult<()> {
@@ -370,7 +573,19 @@ impl HostRuntime {
         if unmap {
             let mut removed = false;
             for mode in modes {
-                removed |= self.keymaps.unmap(mode, lhs, buffer).is_some();
+                removed |= self
+                    .keymaps
+                    .write()
+                    .expect("keymap store lock poisoned")
+                    .unmap(input_mapping_mode(mode), lhs, buffer)
+                    .map_err(|error| {
+                        RuntimeError::coded(
+                            "E474",
+                            RuntimeErrorKind::InvalidCommand,
+                            format!("invalid mapping key sequence: {error}"),
+                        )
+                    })?
+                    .is_some();
             }
             return if removed {
                 Ok(())
@@ -399,14 +614,39 @@ impl HostRuntime {
         self.next_mapping_id += 1;
         let mut options = options;
         options.non_recursive |= non_recursive;
-        self.keymaps.register(CompiledMapping {
+        let mapping = CompiledMapping::new(
             id,
-            modes,
-            lhs: lhs.to_owned(),
+            modes.into_iter().map(input_mapping_mode).collect(),
+            lhs.to_owned(),
             expansion,
-            options,
-            buffer,
-        });
+            vim_input::MappingFlags {
+                non_recursive: options.non_recursive,
+                silent: options.silent,
+                nowait: options.nowait,
+                expr: options.expr,
+                unique: options.unique,
+                script: options.script,
+            },
+            buffer.map_or(
+                vim_input::MappingScope::Global,
+                vim_input::MappingScope::Buffer,
+            ),
+            vim_input::MappingOrigin::Script,
+            vim_input::MappingScriptContext {
+                script_name: request.context.script_name.clone(),
+            },
+        )
+        .map_err(|error| {
+            RuntimeError::coded(
+                "E474",
+                RuntimeErrorKind::InvalidCommand,
+                format!("invalid mapping key sequence: {error}"),
+            )
+        })?;
+        self.keymaps
+            .write()
+            .expect("keymap store lock poisoned")
+            .register(mapping);
         Ok(())
     }
 
@@ -419,29 +659,72 @@ impl HostRuntime {
                 "augroup requires a name",
             ));
         }
-        self.current_augroup = (group != "END").then(|| group.to_owned());
+        if group == "END" {
+            self.current_augroup = None;
+        } else {
+            self.augroups.insert(group.to_owned());
+            self.current_augroup = Some(group.to_owned());
+        }
         Ok(())
     }
 
     fn handle_autocmd(&mut self, request: &CommandRequest) -> RuntimeResult<()> {
-        if request.command.bang {
-            if let Some(group) = &self.current_augroup {
+        let arguments = request.command.arguments.as_str();
+        if request.command.bang && arguments.trim().is_empty() {
+            if let Some(group) = self.current_augroup.as_deref() {
                 self.events.remove_group(group);
             } else {
                 self.events.handlers.clear();
             }
-            if request.command.arguments.trim().is_empty() {
-                return Ok(());
-            }
+            return Ok(());
         }
-        let arguments = request.command.arguments.as_str();
-        let (events, mut cursor) = word_at(arguments, 0).ok_or_else(|| {
+        let (first, mut cursor) = word_at(arguments, 0).ok_or_else(|| {
             RuntimeError::coded(
                 "E216",
                 RuntimeErrorKind::InvalidCommand,
                 "autocmd requires an event",
             )
         })?;
+        let explicit_group = self.augroups.contains(first);
+        let group = if explicit_group {
+            if let Some((_, end)) = word_at(arguments, cursor) {
+                cursor = end;
+            } else if request.command.bang {
+                self.events.remove_matching(Some(first), None, None);
+                return Ok(());
+            } else {
+                return Err(RuntimeError::coded(
+                    "E216",
+                    RuntimeErrorKind::InvalidCommand,
+                    "autocmd requires an event",
+                ));
+            }
+            Some(first)
+        } else {
+            self.current_augroup.as_deref()
+        };
+        let events = if explicit_group {
+            word_at(arguments, word_at(arguments, 0).unwrap().1)
+                .expect("explicit group has an event")
+                .0
+        } else {
+            first
+        };
+
+        if request.command.bang {
+            let pattern = word_at(arguments, cursor).map(|(pattern, _)| pattern);
+            let event_names: Option<Vec<_>> = if explicit_group || !events.is_empty() {
+                Some(events.split(',').collect())
+            } else {
+                None
+            };
+            let pattern_names = pattern.map(|pattern| vec![pattern]);
+            self.events
+                .remove_matching(group, event_names.as_deref(), pattern_names.as_deref());
+            // `:autocmd!` with no event/pattern clears the selected group.
+            return Ok(());
+        }
+
         let (patterns, end) = word_at(arguments, cursor).ok_or_else(|| {
             RuntimeError::coded(
                 "E216",
@@ -478,13 +761,23 @@ impl HostRuntime {
                     diagnostic.message.clone(),
                 )
             })?;
-        let patterns: Vec<_> = patterns.split(',').map(str::to_owned).collect();
+        let patterns: Vec<_> = split_autocmd_patterns(patterns)
+            .into_iter()
+            .map(|pattern| expand_autocmd_pattern(&pattern))
+            .collect();
         for event in events.split(',') {
+            if event == "*" || !is_supported_autocmd_event(event) {
+                return Err(RuntimeError::coded(
+                    "E216",
+                    RuntimeErrorKind::InvalidCommand,
+                    format!("unknown autocommand event: {event}"),
+                ));
+            }
             let id = EventHandlerId(self.next_event_handler_id);
             self.next_event_handler_id += 1;
             self.events.register(EventHandler {
                 id,
-                group: self.current_augroup.clone(),
+                group: group.map(str::to_owned),
                 event: event.to_owned(),
                 patterns: patterns.clone(),
                 action: action.clone(),
@@ -589,6 +882,36 @@ impl HostRuntime {
         Ok(Some(sync_result))
     }
 
+    pub fn dispatch_editor(&self, request: EditorRequest) -> RuntimeResult<HostFuture> {
+        let capability = request.operation.required_capability();
+        if !self.capabilities.allows(&capability) {
+            return Err(RuntimeError::coded(
+                "E_PERM",
+                RuntimeErrorKind::PermissionDenied,
+                format!("editor request requires capability {capability:?}"),
+            ));
+        }
+        Ok(self.host.editor(request))
+    }
+
+    pub fn dispatch_external_runtime(
+        &self,
+        request: ExternalRuntimeRequest,
+    ) -> RuntimeResult<HostFuture> {
+        let capability = match &request {
+            ExternalRuntimeRequest::Timer { .. } => Capability::Editor,
+            ExternalRuntimeRequest::Job { .. } => Capability::Process,
+        };
+        if !self.capabilities.allows(&capability) {
+            return Err(RuntimeError::coded(
+                "E_PERM",
+                RuntimeErrorKind::PermissionDenied,
+                format!("external runtime request requires capability {capability:?}"),
+            ));
+        }
+        Ok(self.host.external_runtime(request))
+    }
+
     pub fn dispatch_option(&self, request: OptionRequest) -> RuntimeResult<HostFuture> {
         if !self.capabilities.allows(&Capability::Settings) {
             return Err(RuntimeError::coded(
@@ -678,6 +1001,19 @@ fn parse_count_and_register(
     }
 
     (count, register, remaining)
+}
+
+fn input_mapping_mode(mode: MapMode) -> vim_input::MappingMode {
+    match mode {
+        MapMode::Normal => vim_input::MappingMode::Normal,
+        MapMode::Visual => vim_input::MappingMode::Visual,
+        MapMode::Select => vim_input::MappingMode::Select,
+        MapMode::OperatorPending => vim_input::MappingMode::OperatorPending,
+        MapMode::Insert => vim_input::MappingMode::Insert,
+        MapMode::CommandLine => vim_input::MappingMode::CommandLine,
+        MapMode::LangArg => vim_input::MappingMode::LangArg,
+        MapMode::Terminal => vim_input::MappingMode::Terminal,
+    }
 }
 
 fn mapping_modes(name: &str) -> Option<(Vec<MapMode>, bool, bool)> {
@@ -887,6 +1223,94 @@ impl UserCommand {
                 )
             })
     }
+}
+
+fn split_autocmd_patterns(patterns: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut escaped = false;
+    for character in patterns.chars() {
+        if escaped {
+            current.push('\\');
+            current.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == ',' {
+            result.push(current);
+            current = String::new();
+        } else {
+            current.push(character);
+        }
+    }
+    if escaped {
+        current.push('\\');
+    }
+    result.push(current);
+    result
+}
+
+fn expand_autocmd_pattern(pattern: &str) -> String {
+    let mut expanded = String::new();
+    let mut chars = pattern.chars().peekable();
+    if pattern.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            expanded.push_str(home.trim_end_matches('/'));
+            chars.next();
+        }
+    }
+    while let Some(character) = chars.next() {
+        if character == '$' {
+            let mut name = String::new();
+            while chars
+                .peek()
+                .is_some_and(|value| value.is_ascii_alphanumeric() || *value == '_')
+            {
+                name.push(chars.next().expect("peeked environment variable character"));
+            }
+            if name.is_empty() {
+                expanded.push('$');
+            } else if let Ok(value) = std::env::var(&name) {
+                expanded.push_str(&value);
+            } else {
+                expanded.push('$');
+                expanded.push_str(&name);
+            }
+        } else {
+            expanded.push(character);
+        }
+    }
+    expanded
+}
+
+fn is_supported_autocmd_event(event: &str) -> bool {
+    matches!(
+        event,
+        "BufAdd"
+            | "BufRead"
+            | "BufReadPost"
+            | "BufEnter"
+            | "BufLeave"
+            | "BufWrite"
+            | "BufWritePost"
+            | "BufUnload"
+            | "BufDelete"
+            | "BufWipeout"
+            | "TextChanged"
+            | "CursorMoved"
+            | "InsertEnter"
+            | "InsertLeave"
+            | "OptionSet"
+            | "VimEnter"
+            | "VimLeave"
+            | "BufNewFile"
+            | "FileType"
+            | "WinEnter"
+            | "WinLeave"
+            | "ModeChanged"
+            | "SafeState"
+            | "User"
+    )
 }
 
 fn word_at(source: &str, mut cursor: usize) -> Option<(&str, usize)> {

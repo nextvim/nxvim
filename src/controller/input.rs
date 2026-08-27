@@ -1,4 +1,5 @@
 use crossterm::event::{Event, KeyCode as CKey, KeyEvent, KeyEventKind, KeyModifiers as CMod};
+use std::collections::VecDeque;
 use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
 
 use super::Command;
@@ -9,6 +10,8 @@ pub struct InputController {
     resolver: Resolver,
     keymap: Keymap,
     pending_display: String,
+    mappings: Option<vim_input::SharedMappingStore>,
+    mapped_keys: VecDeque<Key>,
 }
 
 impl InputController {
@@ -17,6 +20,8 @@ impl InputController {
             resolver: Resolver::new(initial_mode),
             keymap: Keymap::vim_defaults(),
             pending_display: String::new(),
+            mappings: None,
+            mapped_keys: VecDeque::new(),
         }
     }
 
@@ -31,11 +36,15 @@ impl InputController {
 
     /// Translate a Crossterm event to a `vim_input::Key` and feed it to the resolver.
     pub fn feed_event(&mut self, event: Event) -> Option<Command> {
+        self.feed_event_with_buffer(event, None)
+    }
+
+    pub fn feed_event_with_buffer(&mut self, event: Event, buffer: Option<u64>) -> Option<Command> {
         match event {
             Event::Key(key_event) => {
                 if key_event.kind != KeyEventKind::Release {
                     let vim_key = translate_key(key_event)?;
-                    self.feed_key(vim_key)
+                    self.feed_key_with_buffer(vim_key, buffer)
                 } else {
                     None
                 }
@@ -48,14 +57,69 @@ impl InputController {
         }
     }
 
+    pub fn set_mapping_store(&mut self, mappings: vim_input::SharedMappingStore) {
+        self.mappings = Some(mappings);
+    }
+
     pub fn feed_key(&mut self, key: Key) -> Option<Command> {
-        match self.resolver.feed(key, &self.keymap) {
+        self.feed_key_with_buffer(key, None)
+    }
+
+    pub fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<Command> {
+        if let Some(mapped_key) = self.mapped_keys.pop_front() {
+            self.mapped_keys.push_front(key);
+            return self.feed_key_without_mappings(mapped_key);
+        }
+        let outcome = match self.mappings.clone() {
+            Some(mappings) => self
+                .resolver
+                .feed_with_mappings(key, &self.keymap, mappings, buffer),
+            None => self.resolver.feed(key, &self.keymap),
+        };
+        self.handle_outcome(outcome)
+    }
+
+    fn feed_key_without_mappings(&mut self, key: Key) -> Option<Command> {
+        let outcome = self.resolver.feed(key, &self.keymap);
+        self.handle_outcome(outcome)
+    }
+
+    fn handle_outcome(&mut self, outcome: ResolveOutcome) -> Option<Command> {
+        match outcome {
             ResolveOutcome::Resolved(resolved) => {
                 self.pending_display.clear();
                 Some(Command::Editor {
                     action: resolved.action,
                     register: resolved.register,
                 })
+            }
+            ResolveOutcome::Mapping(mapping) => {
+                self.pending_display.clear();
+                match mapping.expansion {
+                    vim_input::MappingExpansion::NoOp => Some(Command::Editor {
+                        action: vim_input::Action::NoOp,
+                        register: None,
+                    }),
+                    vim_input::MappingExpansion::Script(script)
+                    | vim_input::MappingExpansion::Expression(script) => {
+                        Some(Command::ExecuteScript(script))
+                    }
+                    vim_input::MappingExpansion::Keys(keys) => {
+                        let sequence = vim_input::KeySequence::parse(&keys).ok()?;
+                        let mut exact = VecDeque::new();
+                        for pattern in sequence.items {
+                            if let vim_input::KeyPattern::Exact(key) = pattern {
+                                exact.push_back(key);
+                            } else {
+                                return None;
+                            }
+                        }
+                        self.mapped_keys.extend(exact);
+                        self.mapped_keys
+                            .pop_front()
+                            .and_then(|key| self.feed_key_without_mappings(key))
+                    }
+                }
             }
             ResolveOutcome::Pending => {
                 let pending =
@@ -149,6 +213,48 @@ mod tests {
                 action: vim_input::Action::SplitVertical { file_path: None },
                 register: None,
             })
+        ));
+    }
+
+    #[test]
+    fn shared_script_mapping_is_consumed_by_live_input() {
+        let mappings =
+            std::sync::Arc::new(std::sync::RwLock::new(vim_input::MappingStore::default()));
+        mappings.write().unwrap().register(
+            vim_input::Mapping::new(
+                vim_input::MappingId(1),
+                vec![vim_input::MappingMode::Normal],
+                "<leader>w".into(),
+                vim_input::MappingExpansion::Script(":write<CR>".into()),
+                vim_input::MappingFlags::default(),
+                vim_input::MappingScope::Global,
+                vim_input::MappingOrigin::Script,
+                vim_input::MappingScriptContext::default(),
+            )
+            .unwrap(),
+        );
+        mappings.write().unwrap().register(
+            vim_input::Mapping::new(
+                vim_input::MappingId(2),
+                vec![vim_input::MappingMode::Normal],
+                "<leader>w".into(),
+                vim_input::MappingExpansion::Script(":local-write<CR>".into()),
+                vim_input::MappingFlags::default(),
+                vim_input::MappingScope::Buffer(7),
+                vim_input::MappingOrigin::Script,
+                vim_input::MappingScriptContext::default(),
+            )
+            .unwrap(),
+        );
+        let mut controller = InputController::new(Mode::Normal);
+        controller.set_mapping_store(mappings);
+        assert!(matches!(
+            controller.feed_key_with_buffer(Key::char('\\'), Some(7)),
+            Some(Command::PendingInput(_))
+        ));
+        assert!(matches!(
+            controller.feed_key_with_buffer(Key::char('w'), Some(7)),
+            Some(Command::ExecuteScript(script)) if script == ":local-write<CR>"
         ));
     }
 

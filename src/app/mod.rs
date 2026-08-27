@@ -53,7 +53,7 @@ pub struct App {
     pub highlighter: Option<textmate::Highlighter<'static>>,
 
     // App State
-    pub config: config::ConfigStore,
+    pub config: std::sync::Arc<std::sync::RwLock<config::ConfigStore>>,
     pub syntax_highlight: bool,
     pub treesitter_enabled: bool,
     pub indexer_enabled: bool,
@@ -103,7 +103,7 @@ impl App {
             prompt: None,
             colorscheme: Some(colorscheme),
             highlighter: Some(highlighter),
-            config: config::ConfigStore::new(),
+            config: std::sync::Arc::new(std::sync::RwLock::new(config::ConfigStore::new())),
             syntax_highlight: true,
             treesitter_enabled: false,
             indexer_enabled: false,

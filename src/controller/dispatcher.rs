@@ -108,6 +108,11 @@ impl Dispatcher {
                 super::substitute_handler::PromptHandler::Substitute => {
                     super::substitute_handler::SubstituteHandler::respond(app, choice)
                 }
+                super::substitute_handler::PromptHandler::Script => {
+                    app.prompt = None;
+                    app.model.status = Some(format!("Prompt response: {choice:?}"));
+                    CommandOutcome::statusline()
+                }
             },
             Command::InvalidInput => {
                 app.model.status = Some("Invalid sequence".to_string());
@@ -279,10 +284,12 @@ impl Dispatcher {
                 let active_window = app.ui.focused_window_id();
                 let buffer_id =
                     crate::app::windows::WindowOps::window_buffer(&app.ui, active_window);
-                match app
+                let result = app
                     .config
-                    .execute_set_command(&arguments, buffer_id, Some(active_window))
-                {
+                    .write()
+                    .expect("config store lock poisoned")
+                    .execute_set_command(&arguments, buffer_id, Some(active_window));
+                match result {
                     Ok(Some(msg)) => {
                         app.model.status = Some(msg);
                     }
@@ -291,7 +298,12 @@ impl Dispatcher {
                         app.model.status = Some(format!("Error: {}", err));
                     }
                 }
-                if let Some(val) = app.config.get("inspect", buffer_id, Some(active_window)) {
+                let inspect = app.config.read().expect("config store lock poisoned").get(
+                    "inspect",
+                    buffer_id,
+                    Some(active_window),
+                );
+                if let Some(val) = inspect {
                     if let Some(s) = val.as_string() {
                         app.inspect_what = match s {
                             "treesitter" => crate::app::InspectKind::TreeSitter,
@@ -302,6 +314,13 @@ impl Dispatcher {
                     }
                 }
                 CommandOutcome::redraw()
+            }
+            Command::SetOption { .. }
+            | Command::ReplaceBuffer { .. }
+            | Command::OpenPrompt { .. } => {
+                app.model.status =
+                    Some("Typed host mutation requires the script host boundary".into());
+                CommandOutcome::statusline()
             }
             Command::Syntax { enable } => {
                 app.syntax_highlight = enable;

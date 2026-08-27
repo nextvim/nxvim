@@ -7,8 +7,9 @@ use text::{BufferId, BufferSnapshot};
 use vim_script::{
     compiler::Compiler,
     host::{
-        Capability, CommandDefinition, CommandRequest, Host, HostContext, HostFuture, HostRequest,
-        HostRuntime,
+        Capability, CommandDefinition, CommandRequest, EditorRequest, EditorRequestOperation,
+        EditorResponse, Host, HostContext, HostFuture, HostRequest, HostRuntime, OptionRequest,
+        OptionRequestOperation, OptionRequestScope, TabRequestOperation, WindowRequestOperation,
     },
     lexer::Lexer,
     parser::Parser,
@@ -24,6 +25,103 @@ pub mod commands;
 pub mod functions;
 
 use commands::registry::COMMAND_SPECS;
+
+/// Owned application-to-script event boundary. The envelope is resolved before
+/// callbacks run, so nested commands cannot invalidate borrowed editor state.
+#[derive(Clone, Debug)]
+pub struct AutocmdEventEnvelope {
+    pub event: vim_script::integration::Event,
+    pub context: HostContext,
+}
+
+impl AutocmdEventEnvelope {
+    pub fn from_editor_event(
+        editor_event: &crate::kernel::EditorEvent,
+        model: &crate::model::EditorModel,
+    ) -> Self {
+        use crate::kernel::EditorEvent;
+
+        let current = model.kernel().current();
+        let mut context = HostContext::default();
+        if let Some(current) = current {
+            context.current_tab = Some(current.tab.get());
+            context.current_window = Some(current.window.get());
+            context.current_buffer = Some(current.buffer.get());
+        }
+
+        let (name, buffer, window, explicit_match) = match editor_event {
+            EditorEvent::BufAdd { buffer } => ("BufAdd", Some(*buffer), None, None),
+            EditorEvent::BufRead { buffer } => ("BufRead", Some(*buffer), None, None),
+            EditorEvent::BufEnter { buffer, window } => {
+                ("BufEnter", Some(*buffer), Some(*window), None)
+            }
+            EditorEvent::BufLeave { buffer, window } => {
+                ("BufLeave", Some(*buffer), Some(*window), None)
+            }
+            EditorEvent::BufWrite { buffer } => ("BufWrite", Some(*buffer), None, None),
+            EditorEvent::BufUnload { buffer } => ("BufUnload", Some(*buffer), None, None),
+            EditorEvent::BufDelete { buffer } => ("BufDelete", Some(*buffer), None, None),
+            EditorEvent::BufWipeout { buffer } => ("BufWipeout", Some(*buffer), None, None),
+            EditorEvent::TextChanged { buffer, .. } => ("TextChanged", Some(*buffer), None, None),
+            EditorEvent::CursorMoved { window } => ("CursorMoved", None, Some(*window), None),
+            EditorEvent::InsertEnter { window } => ("InsertEnter", None, Some(*window), None),
+            EditorEvent::InsertLeave { window } => ("InsertLeave", None, Some(*window), None),
+            EditorEvent::OptionSet { name, .. } => {
+                ("OptionSet", None, None, Some(name.as_str().to_owned()))
+            }
+            EditorEvent::UserCommandRegistered { name } => ("User", None, None, Some(name.clone())),
+            EditorEvent::UserCommandRemoved { name } => ("User", None, None, Some(name.clone())),
+            EditorEvent::VimEnter => ("VimEnter", None, None, None),
+            EditorEvent::VimLeave => ("VimLeave", None, None, None),
+        };
+
+        if let Some(buffer) = buffer {
+            context.current_buffer = Some(buffer.get());
+        }
+        if let Some(window) = window {
+            context.current_window = Some(window.get());
+        }
+
+        let file = buffer.and_then(|buffer| {
+            model
+                .get_buffer(buffer)
+                .ok()
+                .and_then(|buffer| buffer.path())
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+        let pattern = explicit_match.or_else(|| file.clone()).unwrap_or_default();
+        let mut payload = HashMap::new();
+        if let EditorEvent::OptionSet {
+            value: Some(value), ..
+        } = editor_event
+        {
+            payload.insert(
+                "option_new".to_owned(),
+                Value::String(Arc::<str>::from(value.as_str())),
+            );
+        }
+        if let Some(buffer) = buffer {
+            payload.insert("abuf".to_owned(), Value::Integer(buffer.get() as i64));
+        }
+        payload.insert(
+            "amatch".to_owned(),
+            Value::String(Arc::<str>::from(pattern.as_str())),
+        );
+        payload.insert(
+            "afile".to_owned(),
+            Value::String(Arc::<str>::from(file.as_deref().unwrap_or(""))),
+        );
+
+        Self {
+            event: vim_script::integration::Event {
+                name: name.to_owned(),
+                pattern: Some(pattern),
+                payload,
+            },
+            context,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct EmittedCommand {
@@ -48,18 +146,37 @@ pub struct ScriptRuntime {
     builtins: BuiltinRegistry,
     sources: SourceMap,
     state: Arc<Mutex<EditorState>>,
+    pending_user_commands: Vec<String>,
+    keymaps: vim_script::integration::SharedKeymapStore,
 }
 
 impl ScriptRuntime {
     pub fn new() -> Self {
+        Self::with_options(Arc::new(std::sync::RwLock::new(
+            crate::app::config::ConfigStore::new(),
+        )))
+    }
+
+    pub fn with_options(options: Arc<std::sync::RwLock<crate::app::config::ConfigStore>>) -> Self {
         let (sender, commands) = mpsc::channel();
         let state = Arc::new(Mutex::new(EditorState::default()));
-        let mut host = HostRuntime::new(Arc::new(EditorHost {
-            sender,
-            state: state.clone(),
-        }));
+        let keymaps = Arc::new(std::sync::RwLock::new(
+            vim_script::integration::KeymapStore::default(),
+        ));
+        let mut host = HostRuntime::with_keymaps(
+            Arc::new(EditorHost {
+                sender,
+                state: state.clone(),
+                options: options.clone(),
+            }),
+            keymaps.clone(),
+        );
         host.capabilities.grant(Capability::Editor);
         host.capabilities.grant(Capability::BufferRead);
+        host.capabilities.grant(Capability::BufferWrite);
+        host.capabilities.grant(Capability::Window);
+        host.capabilities.grant(Capability::UserInterface);
+        host.capabilities.grant(Capability::Settings);
 
         functions::register(&mut host);
 
@@ -78,7 +195,13 @@ impl ScriptRuntime {
             builtins,
             sources: SourceMap::default(),
             state,
+            pending_user_commands: Vec::new(),
+            keymaps,
         }
+    }
+
+    pub fn keymaps(&self) -> vim_script::integration::SharedKeymapStore {
+        self.keymaps.clone()
     }
 
     pub fn execute(&mut self, source: &str) -> Result<Value, String> {
@@ -160,7 +283,31 @@ impl ScriptRuntime {
         };
 
         let value = value?;
+        if let Some(host) = self.scheduler.host_mut() {
+            self.pending_user_commands
+                .extend(host.take_registered_user_commands());
+            self.pending_user_commands.extend(
+                host.take_removed_user_commands()
+                    .into_iter()
+                    .map(|name| format!("-:{name}")),
+            );
+        }
         Ok(value)
+    }
+
+    pub fn take_user_command_events(&mut self) -> Vec<crate::kernel::EditorEvent> {
+        self.pending_user_commands
+            .drain(..)
+            .map(|name| {
+                if let Some(name) = name.strip_prefix("-:") {
+                    crate::kernel::EditorEvent::UserCommandRemoved {
+                        name: name.to_owned(),
+                    }
+                } else {
+                    crate::kernel::EditorEvent::UserCommandRegistered { name }
+                }
+            })
+            .collect()
     }
 
     pub fn peek_command(&self, source: &str) -> Result<Command, String> {
@@ -215,6 +362,32 @@ impl ScriptRuntime {
 
     pub fn try_next_emitted_command(&self) -> Option<EmittedCommand> {
         self.commands.try_recv().ok()
+    }
+
+    /// Resolves the matching callback set in registration order. `++once`
+    /// handlers are consumed by the script event bus during this snapshot.
+    pub fn snapshot_autocmd_commands(
+        &mut self,
+        envelope: &AutocmdEventEnvelope,
+    ) -> Vec<vim_script::host::CommandRequest> {
+        self.scheduler
+            .host_mut()
+            .expect("script host is installed")
+            .event_commands(&envelope.event, envelope.context.clone())
+    }
+
+    /// Converts a snapshotted callback into the same owned command envelope
+    /// used by ordinary script-host requests. The runtime performs the final
+    /// identity admission through `ExDispatcher`.
+    pub fn execute_autocmd_snapshot(
+        &self,
+        request: vim_script::host::CommandRequest,
+    ) -> Result<EmittedCommand, String> {
+        let command = commands::execute(request.clone()).map_err(runtime_message)?;
+        Ok(EmittedCommand {
+            command,
+            context: request.context,
+        })
     }
 
     /// Compatibility accessor for callers that do not yet consume host
@@ -330,6 +503,7 @@ impl Default for EditorState {
 struct EditorHost {
     sender: mpsc::Sender<EmittedCommand>,
     state: Arc<Mutex<EditorState>>,
+    options: Arc<std::sync::RwLock<crate::app::config::ConfigStore>>,
 }
 
 impl Host for EditorHost {
@@ -368,6 +542,275 @@ impl Host for EditorHost {
         functions::call_sync(&self.state, &request)
     }
 
+    fn editor(&self, request: EditorRequest) -> HostFuture {
+        let state = self.state.clone();
+        let sender = self.sender.clone();
+        Box::pin(async move {
+            let response = match request.operation {
+                EditorRequestOperation::CurrentContext => EditorResponse::Context(request.context),
+                EditorRequestOperation::BufferText { buffer, range } => {
+                    let id = text::BufferId::new(buffer).map_err(|_| {
+                        RuntimeError::coded("E86", RuntimeErrorKind::HostError, "invalid buffer ID")
+                    })?;
+                    let state = state.lock().map_err(|_| {
+                        RuntimeError::coded(
+                            "E_HOST",
+                            RuntimeErrorKind::HostError,
+                            "editor state lock poisoned",
+                        )
+                    })?;
+                    let (snapshot, _) = state.buffers.get(&id).ok_or_else(|| {
+                        RuntimeError::coded(
+                            "E86",
+                            RuntimeErrorKind::HostError,
+                            format!("stale buffer ID: {buffer}"),
+                        )
+                    })?;
+                    let start = usize::try_from(range.start)
+                        .unwrap_or(usize::MAX)
+                        .min(snapshot.len());
+                    let end = usize::try_from(range.end)
+                        .unwrap_or(usize::MAX)
+                        .min(snapshot.len());
+                    if start > end {
+                        return Err(RuntimeError::coded(
+                            "E16",
+                            RuntimeErrorKind::InvalidCommand,
+                            "invalid buffer range",
+                        ));
+                    }
+                    EditorResponse::Text(snapshot.text_for_range(start..end).collect())
+                }
+                EditorRequestOperation::ReplaceBuffer {
+                    buffer,
+                    range,
+                    text,
+                } => {
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::ReplaceBuffer {
+                                buffer,
+                                range,
+                                text,
+                            },
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    return Ok(Value::Null);
+                }
+                EditorRequestOperation::Window(operation) => {
+                    let action = match operation {
+                        WindowRequestOperation::SplitHorizontal => {
+                            vim_input::Action::SplitHorizontal { file_path: None }
+                        }
+                        WindowRequestOperation::SplitVertical => {
+                            vim_input::Action::SplitVertical { file_path: None }
+                        }
+                    };
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::Editor {
+                                action,
+                                register: None,
+                            },
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    return Ok(Value::Null);
+                }
+                EditorRequestOperation::Tab(operation) => {
+                    let command = match operation {
+                        TabRequestOperation::Next { count } => Command::TabNext { count },
+                        TabRequestOperation::Previous { count } => Command::TabPrevious { count },
+                        TabRequestOperation::Close => Command::TabClose,
+                    };
+                    sender
+                        .send(EmittedCommand {
+                            command,
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    return Ok(Value::Null);
+                }
+                EditorRequestOperation::RegisterEvent {
+                    event,
+                    pattern,
+                    command,
+                    once,
+                    nested,
+                } => {
+                    let mut registration = format!("autocmd");
+                    if once {
+                        registration.push_str(" ++once");
+                    }
+                    if nested {
+                        registration.push_str(" ++nested");
+                    }
+                    registration.push_str(&format!(" {event} {pattern} {command}"));
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::ExecuteScript(registration),
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    return Ok(Value::Null);
+                }
+                EditorRequestOperation::Message { text } => {
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::Echo { message: text },
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    return Ok(Value::Null);
+                }
+                EditorRequestOperation::Prompt { message } => {
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::OpenPrompt { message },
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    return Ok(Value::Null);
+                }
+                EditorRequestOperation::Selection { .. }
+                | EditorRequestOperation::Register { .. }
+                | EditorRequestOperation::Mark { .. } => {
+                    return Err(RuntimeError::coded(
+                        "E_NOTIMPL",
+                        RuntimeErrorKind::HostError,
+                        "editor request is not connected yet",
+                    ));
+                }
+            };
+            Ok(editor_response_value(response))
+        })
+    }
+
+    fn option(&self, request: OptionRequest) -> HostFuture {
+        let options = self.options.clone();
+        let sender = self.sender.clone();
+        Box::pin(async move {
+            let (buffer, window) = match request.scope {
+                OptionRequestScope::Global => (None, None),
+                OptionRequestScope::Local | OptionRequestScope::Unqualified => (
+                    request
+                        .context
+                        .current_buffer
+                        .and_then(vim_buffer::BufferId::new),
+                    request.context.current_window.map(vim_ui::WindowId::new),
+                ),
+            };
+            match request.operation {
+                OptionRequestOperation::Get => {
+                    let options = options.read().map_err(|_| {
+                        RuntimeError::coded(
+                            "E_HOST",
+                            RuntimeErrorKind::HostError,
+                            "option store lock poisoned",
+                        )
+                    })?;
+                    let value = options.get(&request.name, buffer, window).ok_or_else(|| {
+                        RuntimeError::coded(
+                            "E_UNKNOWN_OPTION",
+                            RuntimeErrorKind::NameError,
+                            format!("unknown option '{}'", request.name),
+                        )
+                    })?;
+                    Ok(match value {
+                        crate::app::config::ConfigValue::Bool(value) => Value::Bool(value),
+                        crate::app::config::ConfigValue::Number(value) => Value::Integer(value),
+                        crate::app::config::ConfigValue::String(value) => {
+                            Value::String(value.into())
+                        }
+                    })
+                }
+                OptionRequestOperation::Set(value) => {
+                    let config_value = match &value {
+                        Value::Bool(value) => crate::app::config::ConfigValue::Bool(*value),
+                        Value::Integer(value) => crate::app::config::ConfigValue::Number(*value),
+                        Value::String(value) => {
+                            crate::app::config::ConfigValue::String(value.to_string())
+                        }
+                        _ => {
+                            return Err(RuntimeError::coded(
+                                "E_OPTION_TYPE",
+                                RuntimeErrorKind::TypeError,
+                                format!("invalid value type for option '{}'", request.name),
+                            ));
+                        }
+                    };
+                    options
+                        .read()
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "option store lock poisoned",
+                            )
+                        })?
+                        .validate_value(&request.name, &config_value)
+                        .map_err(|error| {
+                            RuntimeError::coded("E_OPTION", RuntimeErrorKind::InvalidCommand, error)
+                        })?;
+                    sender
+                        .send(EmittedCommand {
+                            command: Command::SetOption {
+                                name: request.name,
+                                value,
+                                scope: request.scope,
+                            },
+                            context: request.context,
+                        })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    Ok(Value::Null)
+                }
+            }
+        })
+    }
+
     fn execute_command(&self, request: CommandRequest) -> HostFuture {
         let sender = self.sender.clone();
         Box::pin(async move {
@@ -384,6 +827,25 @@ impl Host for EditorHost {
                 })?;
             Ok(Value::Null)
         })
+    }
+}
+
+fn editor_response_value(response: EditorResponse) -> Value {
+    match response {
+        EditorResponse::Context(context) => Value::List(vec![
+            Value::Integer(context.current_tab.unwrap_or(0) as i64),
+            Value::Integer(context.current_window.unwrap_or(0) as i64),
+            Value::Integer(context.current_buffer.unwrap_or(0) as i64),
+        ]),
+        EditorResponse::Text(text) => Value::String(text.into()),
+        EditorResponse::Range(range) => Value::List(vec![
+            Value::Integer(range.start as i64),
+            Value::Integer(range.end as i64),
+        ]),
+        EditorResponse::Register(value) => value,
+        EditorResponse::Mark(offset) => {
+            offset.map_or(Value::Null, |offset| Value::Integer(offset as i64))
+        }
     }
 }
 
@@ -471,6 +933,9 @@ mod tests {
         let mut host = HostRuntime::new(Arc::new(EditorHost {
             sender: mpsc::channel().0,
             state: Arc::new(Mutex::new(EditorState::default())),
+            options: Arc::new(std::sync::RwLock::new(
+                crate::app::config::ConfigStore::new(),
+            )),
         }));
         for spec in COMMAND_SPECS {
             host.register_command(CommandDefinition::from(spec));
@@ -879,6 +1344,24 @@ mod tests {
                 Some(Command::Substitute { ref pattern, .. }) if pattern == "foo" || pattern.is_empty()
             ));
         }
+    }
+
+    #[test]
+    fn option_assignment_emits_a_typed_host_command() {
+        let mut runtime = ScriptRuntime::new();
+
+        runtime.execute("let &g:nu = v:true").unwrap();
+        assert!(matches!(
+            runtime.try_next_emitted_command(),
+            Some(EmittedCommand {
+                command: Command::SetOption {
+                    ref name,
+                    value: Value::Bool(true),
+                    scope: OptionRequestScope::Global,
+                },
+                ..
+            }) if name == "nu"
+        ));
     }
 
     #[test]

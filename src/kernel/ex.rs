@@ -176,6 +176,14 @@ impl ExDispatcher {
                 name.as_deref(),
             ),
             Command::Set { arguments } => Self::set(app, arguments),
+            Command::SetOption { name, value, scope } => {
+                Self::set_option(app, context.current, name, value, scope)
+            }
+            Command::ReplaceBuffer {
+                buffer,
+                range,
+                text,
+            } => Self::replace_buffer(app, buffer, range, text)?,
             Command::Syntax { enable } => {
                 app.syntax_highlight = enable;
                 app.model.invalidate_all_highlights();
@@ -191,6 +199,13 @@ impl ExDispatcher {
             }
             Command::Inspect { enable } => {
                 app.inspect = enable;
+                CommandOutcome::redraw()
+            }
+            Command::OpenPrompt { message } => {
+                let window = app.ui.focused_window_id();
+                let prompt = crate::controller::Prompt::script(message, window);
+                app.model.status = Some(format!("{} (y/n/q)", prompt.message));
+                app.prompt = Some(prompt);
                 CommandOutcome::redraw()
             }
             Command::Echo { message } => {
@@ -297,18 +312,114 @@ impl ExDispatcher {
         CommandOutcome::redraw()
     }
 
+    fn replace_buffer(
+        app: &mut App,
+        buffer: u64,
+        range: vim_script::host::OwnedTextRange,
+        text: String,
+    ) -> Result<CommandOutcome, String> {
+        let id = crate::kernel::BufferId::new(buffer)
+            .ok_or_else(|| format!("Invalid buffer ID: {buffer}"))?;
+        let buffer = app
+            .model
+            .get_buffer_mut(id)
+            .map_err(|_| format!("Stale buffer ID: {}", id.get()))?;
+        let len = buffer.as_text_buffer().len();
+        let start = usize::try_from(range.start).unwrap_or(usize::MAX).min(len);
+        let end = usize::try_from(range.end).unwrap_or(usize::MAX).min(len);
+        let range =
+            vim_buffer::TextRange::new(vim_buffer::ByteOffset(start), vim_buffer::ByteOffset(end))
+                .ok_or_else(|| "Invalid replacement range".to_owned())?;
+        let mutation = crate::kernel::transaction(
+            buffer,
+            vim_buffer::EditOrigin::VimScript,
+            None,
+            |transaction| transaction.replace(None, range, text.as_str()),
+        )?;
+        Ok(CommandOutcome::from_kernel(
+            crate::kernel::CommandOutcome::mutation_committed(mutation),
+        ))
+    }
+
+    fn set_option(
+        app: &mut App,
+        current: EditorContext,
+        name: String,
+        value: vim_script::runtime::Value,
+        scope: vim_script::host::OptionRequestScope,
+    ) -> CommandOutcome {
+        let value = match value {
+            vim_script::runtime::Value::Bool(value) => crate::app::config::ConfigValue::Bool(value),
+            vim_script::runtime::Value::Integer(value) => {
+                crate::app::config::ConfigValue::Number(value)
+            }
+            vim_script::runtime::Value::String(value) => {
+                crate::app::config::ConfigValue::String(value.to_string())
+            }
+            _ => {
+                app.model.status = Some(format!("Invalid value type for option: {name}"));
+                return CommandOutcome::statusline();
+            }
+        };
+        let (buffer, window) = match scope {
+            vim_script::host::OptionRequestScope::Global => (None, None),
+            vim_script::host::OptionRequestScope::Local
+            | vim_script::host::OptionRequestScope::Unqualified => {
+                (Some(current.buffer), Some(current.window))
+            }
+        };
+        let result = {
+            let mut config = app.config.write().expect("config store lock poisoned");
+            let canonical_name = config
+                .registry()
+                .lookup(&name)
+                .map(|spec| spec.name.to_owned())
+                .unwrap_or_else(|| name.clone());
+            config
+                .set(&name, value.clone(), buffer, window)
+                .map(|()| canonical_name)
+        };
+        match result {
+            Ok(canonical_name) => {
+                app.model
+                    .kernel_mut()
+                    .events_mut()
+                    .push(crate::kernel::EditorEvent::OptionSet {
+                        name: canonical_name.into(),
+                        value: Some(match value {
+                            crate::app::config::ConfigValue::Bool(value) => value.to_string(),
+                            crate::app::config::ConfigValue::Number(value) => value.to_string(),
+                            crate::app::config::ConfigValue::String(value) => value,
+                        }),
+                    });
+                CommandOutcome::redraw()
+            }
+            Err(error) => {
+                app.model.status = Some(format!("Error: {error}"));
+                CommandOutcome::statusline()
+            }
+        }
+    }
+
     fn set(app: &mut App, arguments: String) -> CommandOutcome {
         let window = app.ui.focused_window_id();
         let buffer = crate::app::windows::WindowOps::window_buffer(&app.ui, window);
-        match app
+        let result = app
             .config
-            .execute_set_command(&arguments, buffer, Some(window))
-        {
+            .write()
+            .expect("config store lock poisoned")
+            .execute_set_command(&arguments, buffer, Some(window));
+        match result {
             Ok(Some(message)) => app.model.status = Some(message),
             Ok(None) => {}
             Err(error) => app.model.status = Some(format!("Error: {error}")),
         }
-        if let Some(value) = app.config.get("inspect", buffer, Some(window)) {
+        let inspect = app.config.read().expect("config store lock poisoned").get(
+            "inspect",
+            buffer,
+            Some(window),
+        );
+        if let Some(value) = inspect {
             if let Some(value) = value.as_string() {
                 app.inspect_what = match value {
                     "treesitter" => crate::app::InspectKind::TreeSitter,

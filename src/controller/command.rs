@@ -17,6 +17,9 @@ pub enum Command {
         handler: PromptHandler,
         choice: PromptChoice,
     },
+    OpenPrompt {
+        message: String,
+    },
     Save {
         path: Option<PathBuf>,
         force: bool,
@@ -72,6 +75,16 @@ pub enum Command {
     Set {
         arguments: String,
     },
+    SetOption {
+        name: String,
+        value: vim_script::runtime::Value,
+        scope: vim_script::host::OptionRequestScope,
+    },
+    ReplaceBuffer {
+        buffer: u64,
+        range: vim_script::host::OwnedTextRange,
+        text: String,
+    },
     Syntax {
         enable: bool,
     },
@@ -117,6 +130,10 @@ impl std::fmt::Debug for Command {
                 .debug_struct("PromptChoice")
                 .field("handler", handler)
                 .field("choice", choice)
+                .finish(),
+            Command::OpenPrompt { message } => f
+                .debug_struct("OpenPrompt")
+                .field("message", message)
                 .finish(),
             Command::Save { path, force } => f
                 .debug_struct("Save")
@@ -178,6 +195,22 @@ impl std::fmt::Debug for Command {
             Command::Set { arguments } => {
                 f.debug_struct("Set").field("arguments", arguments).finish()
             }
+            Command::SetOption { name, value, scope } => f
+                .debug_struct("SetOption")
+                .field("name", name)
+                .field("value", value)
+                .field("scope", scope)
+                .finish(),
+            Command::ReplaceBuffer {
+                buffer,
+                range,
+                text,
+            } => f
+                .debug_struct("ReplaceBuffer")
+                .field("buffer", buffer)
+                .field("range", range)
+                .field("text", text)
+                .finish(),
             Command::Syntax { enable } => f.debug_struct("Syntax").field("enable", enable).finish(),
             Command::Treesitter { enable } => f
                 .debug_struct("Treesitter")

@@ -238,21 +238,20 @@ pub fn refresh_views(app: &mut crate::app::App, layout: &LayoutSnapshot) {
                 );
             }
         } else {
-            let show_number = app
-                .config
+            let config = app.config.read().expect("config store lock poisoned");
+            let show_number = config
                 .get("number", Some(buffer_id), Some(window_id))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let show_cursorline = app
-                .config
+            let show_cursorline = config
                 .get("cursorline", Some(buffer_id), Some(window_id))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let wrap_text = app
-                .config
+            let wrap_text = config
                 .get("wrap", Some(buffer_id), Some(window_id))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            drop(config);
             if let Some(state) = window.window_state_mut() {
                 state.set_show_gutter(show_number);
                 state.set_show_cursorline(show_cursorline);

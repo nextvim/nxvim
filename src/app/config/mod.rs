@@ -195,6 +195,23 @@ impl ConfigStore {
         Some(spec.default_value.clone())
     }
 
+    pub fn validate_value(
+        &self,
+        name_or_alias: &str,
+        value: &ConfigValue,
+    ) -> Result<&'static str, String> {
+        let spec = self
+            .registry
+            .lookup(name_or_alias)
+            .ok_or_else(|| format!("Unknown option: {name_or_alias}"))?;
+        match (&spec.default_value, value) {
+            (ConfigValue::Bool(_), ConfigValue::Bool(_))
+            | (ConfigValue::Number(_), ConfigValue::Number(_))
+            | (ConfigValue::String(_), ConfigValue::String(_)) => Ok(spec.name),
+            _ => Err(format!("Invalid type for option: {}", spec.name)),
+        }
+    }
+
     pub fn set(
         &mut self,
         name_or_alias: &str,
@@ -202,19 +219,11 @@ impl ConfigStore {
         buffer_id: Option<BufferId>,
         window_id: Option<WindowId>,
     ) -> Result<(), String> {
+        let name = self.validate_value(name_or_alias, &value)?.to_string();
         let spec = self
             .registry
-            .lookup(name_or_alias)
-            .ok_or_else(|| format!("Unknown option: {name_or_alias}"))?;
-        let name = spec.name.to_string();
-
-        // Validate type
-        match (&spec.default_value, &value) {
-            (ConfigValue::Bool(_), ConfigValue::Bool(_)) => {}
-            (ConfigValue::Number(_), ConfigValue::Number(_)) => {}
-            (ConfigValue::String(_), ConfigValue::String(_)) => {}
-            _ => return Err(format!("Invalid type for option: {name}")),
-        }
+            .lookup(&name)
+            .expect("validated option exists");
 
         let mut final_value = value;
         if name == "inspect" {
@@ -351,6 +360,55 @@ impl ConfigStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aliases_validation_and_local_fallback_share_one_store() {
+        let mut store = ConfigStore::new();
+        let first_buffer = BufferId::new(1).unwrap();
+        let second_buffer = BufferId::new(2).unwrap();
+        let first_window = WindowId::new(1);
+        let second_window = WindowId::new(2);
+
+        store.set("ts", ConfigValue::Number(4), None, None).unwrap();
+        assert_eq!(
+            store.get("tabstop", Some(first_buffer), Some(first_window)),
+            Some(ConfigValue::Number(4))
+        );
+        store
+            .set("tabstop", ConfigValue::Number(2), Some(first_buffer), None)
+            .unwrap();
+        assert_eq!(
+            store.get("ts", Some(first_buffer), None),
+            Some(ConfigValue::Number(2))
+        );
+        assert_eq!(
+            store.get("ts", Some(second_buffer), None),
+            Some(ConfigValue::Number(4))
+        );
+
+        store
+            .set("rnu", ConfigValue::Bool(true), None, Some(first_window))
+            .unwrap();
+        assert_eq!(
+            store.get("relativenumber", None, Some(first_window)),
+            Some(ConfigValue::Bool(true))
+        );
+        assert_eq!(
+            store.get("rnu", None, Some(second_window)),
+            Some(ConfigValue::Bool(false))
+        );
+
+        assert!(
+            store
+                .set("ts", ConfigValue::Bool(true), None, None)
+                .is_err()
+        );
+        assert!(
+            store
+                .set("missing", ConfigValue::Bool(true), None, None)
+                .is_err()
+        );
+    }
 
     #[test]
     fn test_config_store_basic() {

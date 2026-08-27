@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::bytecode::{BytecodeModule, Constant, Instruction};
 use crate::compiler::Compiler;
-use crate::host::HostRuntime;
+use crate::host::{HostContext, HostRuntime};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::resolver::{Resolver, ResolverConfig};
@@ -21,21 +21,42 @@ pub struct RuntimePath {
 
 impl RuntimePath {
     pub fn new(roots: impl IntoIterator<Item = PathBuf>) -> Self {
-        Self {
-            roots: roots.into_iter().collect(),
+        let mut runtime_path = Self { roots: Vec::new() };
+        for root in roots {
+            runtime_path.push(root);
         }
+        runtime_path
     }
+
     pub fn push(&mut self, root: impl Into<PathBuf>) {
-        self.roots.push(root.into());
+        let root = root.into();
+        let canonical = root.canonicalize().unwrap_or(root);
+        if !self.roots.iter().any(|existing| existing == &canonical) {
+            self.roots.push(canonical);
+        }
     }
 
     pub fn startup_plugins(&self) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
+        let mut regular = Vec::new();
+        let mut after = Vec::new();
         for root in &self.roots {
-            collect_vim_files(&root.join("plugin"), false, &mut paths);
+            let mut root_paths = Vec::new();
+            collect_vim_files(&root.join("plugin"), false, &mut root_paths);
+            root_paths.sort();
+            regular.extend(root_paths);
         }
-        paths.sort();
-        paths
+        for root in &self.roots {
+            let mut root_paths = Vec::new();
+            collect_vim_files(&root.join("after/plugin"), false, &mut root_paths);
+            root_paths.sort();
+            after.extend(root_paths);
+        }
+        regular.extend(after);
+        let mut seen = std::collections::HashSet::new();
+        regular
+            .into_iter()
+            .filter(|path| seen.insert(path.clone()))
+            .collect()
     }
 
     pub fn colorscheme(&self, name: &str) -> Option<PathBuf> {
@@ -193,7 +214,55 @@ impl ScriptLoader {
         report
     }
 
+    pub fn load_filetype_scripts(
+        &mut self,
+        filetype: &str,
+        context: HostContext,
+    ) -> CompatibilityReport {
+        let mut paths = Vec::new();
+        for directory in ["ftplugin", "indent"] {
+            for root in &self.runtime_path.roots {
+                let path = root.join(directory).join(format!("{filetype}.vim"));
+                if path.is_file() {
+                    paths.push(path);
+                }
+            }
+            for root in &self.runtime_path.roots {
+                let path = root
+                    .join("after")
+                    .join(directory)
+                    .join(format!("{filetype}.vim"));
+                if path.is_file() {
+                    paths.push(path);
+                }
+            }
+        }
+        let mut report = CompatibilityReport {
+            discovered: paths.clone(),
+            ..CompatibilityReport::default()
+        };
+        for path in paths {
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if self.loaded_scripts.contains_key(&canonical) {
+                continue;
+            }
+            match self.load_script_with_context(&path, context.clone()) {
+                Ok(()) => report.loaded.push(canonical),
+                Err(failure) => report.failures.push(failure),
+            }
+        }
+        report
+    }
+
     pub fn load_script(&mut self, path: &Path) -> Result<(), CompatibilityFailure> {
+        self.load_script_with_context(path, HostContext::default())
+    }
+
+    pub fn load_script_with_context(
+        &mut self,
+        path: &Path,
+        context: HostContext,
+    ) -> Result<(), CompatibilityFailure> {
         let canonical = path.canonicalize().map_err(|error| {
             failure(path, CompatibilityStage::Io, error.to_string(), Vec::new())
         })?;
@@ -268,10 +337,11 @@ impl ScriptLoader {
                     Vec::new(),
                 )
             })?;
-            self.load_script(&autoload)?;
+            self.load_script_with_context(&autoload, context.clone())?;
         }
-        let vm = Vm::with_globals(module, self.globals.clone())
+        let mut vm = Vm::with_globals(module, self.globals.clone())
             .map_err(|error| runtime_failure(&canonical, error))?;
+        vm.host_context = context;
         let mut scheduler = Scheduler::new(self.instruction_quantum);
         if let Some(host) = self.host.clone() {
             scheduler.set_host(host);
@@ -394,6 +464,40 @@ pub fn missing_feature(name: impl Into<String>) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    #[test]
+    fn startup_plugins_load_regular_roots_before_after_roots() {
+        let root = std::env::temp_dir().join(format!("nxvim-runtime-path-{}", std::process::id()));
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(first.join("plugin")).unwrap();
+        fs::create_dir_all(first.join("after/plugin")).unwrap();
+        fs::create_dir_all(second.join("plugin")).unwrap();
+        fs::create_dir_all(second.join("after/plugin")).unwrap();
+        for path in [
+            first.join("plugin/z.vim"),
+            second.join("plugin/a.vim"),
+            first.join("after/plugin/a.vim"),
+            second.join("after/plugin/z.vim"),
+        ] {
+            fs::write(path, "\n").unwrap();
+        }
+
+        let runtime = RuntimePath::new([first.clone(), second.clone(), first.clone()]);
+        let paths = runtime.startup_plugins();
+        assert_eq!(
+            paths,
+            vec![
+                first.join("plugin/z.vim"),
+                second.join("plugin/a.vim"),
+                first.join("after/plugin/a.vim"),
+                second.join("after/plugin/z.vim"),
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn maps_autoload_function_names_to_paths() {
         let root = PathBuf::from("/runtime");

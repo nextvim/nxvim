@@ -72,7 +72,7 @@ fn discovers_initializes_and_executes_a_tier_one_plugin() {
     let mapping = host
         .mapping(MapMode::Normal, "<leader>w", None)
         .expect("normal mapping");
-    assert!(mapping.options.non_recursive && mapping.options.silent);
+    assert!(mapping.flags.non_recursive && mapping.flags.silent);
     assert!(
         matches!(&mapping.expansion, MappingExpansion::Keys(keys) if keys == ":BasicSet mapped<CR>")
     );

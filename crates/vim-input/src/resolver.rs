@@ -1,4 +1,7 @@
-use crate::{Action, BindingContext, Key, KeyCode, KeySequence, Keymap, Mode, Modifiers};
+use crate::{
+    Action, BindingContext, Key, KeyCode, KeySequence, Keymap, MappingMatch, MappingMode, Mode,
+    Modifiers, SharedMappingStore,
+};
 use smallvec::SmallVec;
 use std::fmt;
 
@@ -27,6 +30,7 @@ impl fmt::Display for InvalidSequence {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolveOutcome {
     Resolved(ResolvedAction),
+    Mapping(crate::Mapping),
     Pending,
     Ignored,
     Invalid(InvalidSequence),
@@ -70,6 +74,8 @@ pub struct Resolver {
     waiting_for_register: bool,
     waiting_for_insert_register: bool,
     in_recording: bool,
+    mapping_store: Option<SharedMappingStore>,
+    mapping_buffer: Option<u64>,
 }
 
 impl Default for Resolver {
@@ -91,6 +97,8 @@ impl Resolver {
             waiting_for_register: false,
             waiting_for_insert_register: false,
             in_recording: false,
+            mapping_store: None,
+            mapping_buffer: None,
         }
     }
 
@@ -139,6 +147,21 @@ impl Resolver {
         self.waiting_for_insert_register = false;
     }
 
+    pub fn feed_with_mappings(
+        &mut self,
+        key: Key,
+        keymap: &Keymap,
+        mappings: SharedMappingStore,
+        buffer: Option<u64>,
+    ) -> ResolveOutcome {
+        self.mapping_store = Some(mappings);
+        self.mapping_buffer = buffer;
+        let outcome = self.feed(key, keymap);
+        self.mapping_store = None;
+        self.mapping_buffer = None;
+        outcome
+    }
+
     pub fn feed(&mut self, key: Key, keymap: &Keymap) -> ResolveOutcome {
         let key = key.normalized();
 
@@ -182,6 +205,11 @@ impl Resolver {
         }
 
         self.keys.push(key);
+        if self.pending_operator.is_none() {
+            if let Some(outcome) = self.resolve_mapping() {
+                return outcome;
+            }
+        }
         match self.resolve_current(keymap) {
             Match::Complete(action) => self.complete(action),
             Match::Operator(operator) => {
@@ -228,6 +256,9 @@ impl Resolver {
         }
 
         self.keys.push(key);
+        if let Some(outcome) = self.resolve_mapping() {
+            return outcome;
+        }
         match match_map(&self.keys, keymap.bindings(BindingContext::Insert)) {
             Match::Complete(action) => {
                 if action == Action::Clear || action == Action::SetToNormal {
@@ -246,6 +277,29 @@ impl Resolver {
             }
             Match::None => self.invalid([key]),
             Match::Operator(_) => unreachable!("insert bindings cannot start operators"),
+        }
+    }
+
+    fn resolve_mapping(&mut self) -> Option<ResolveOutcome> {
+        let store = self.mapping_store.as_ref()?;
+        let mode = match self.mode {
+            Mode::Normal => MappingMode::Normal,
+            Mode::Visual => MappingMode::Visual,
+            Mode::VisualLine | Mode::VisualBlock => MappingMode::Visual,
+            Mode::Insert | Mode::Replace | Mode::VirtualReplace => MappingMode::Insert,
+            Mode::Command => MappingMode::CommandLine,
+        };
+        let matched = {
+            let store = store.read().ok()?;
+            store.match_keys(mode, &self.keys, self.mapping_buffer)
+        };
+        match matched {
+            MappingMatch::Complete(mapping) => {
+                self.reset();
+                Some(ResolveOutcome::Mapping(mapping))
+            }
+            MappingMatch::Prefix => Some(ResolveOutcome::Pending),
+            MappingMatch::None => None,
         }
     }
 

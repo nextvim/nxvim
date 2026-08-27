@@ -32,19 +32,55 @@ impl From<&str> for OptionName {
 /// Application-level editor events with stable identities and owned payloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorEvent {
-    BufAdd { buffer: BufferId },
-    BufRead { buffer: BufferId },
-    BufEnter { buffer: BufferId, window: WindowId },
-    BufLeave { buffer: BufferId, window: WindowId },
-    BufWrite { buffer: BufferId },
-    BufUnload { buffer: BufferId },
-    BufDelete { buffer: BufferId },
-    BufWipeout { buffer: BufferId },
-    TextChanged { buffer: BufferId, tick: ChangedTick },
-    CursorMoved { window: WindowId },
-    InsertEnter { window: WindowId },
-    InsertLeave { window: WindowId },
-    OptionSet { name: OptionName },
+    BufAdd {
+        buffer: BufferId,
+    },
+    BufRead {
+        buffer: BufferId,
+    },
+    BufEnter {
+        buffer: BufferId,
+        window: WindowId,
+    },
+    BufLeave {
+        buffer: BufferId,
+        window: WindowId,
+    },
+    BufWrite {
+        buffer: BufferId,
+    },
+    BufUnload {
+        buffer: BufferId,
+    },
+    BufDelete {
+        buffer: BufferId,
+    },
+    BufWipeout {
+        buffer: BufferId,
+    },
+    TextChanged {
+        buffer: BufferId,
+        tick: ChangedTick,
+    },
+    CursorMoved {
+        window: WindowId,
+    },
+    InsertEnter {
+        window: WindowId,
+    },
+    InsertLeave {
+        window: WindowId,
+    },
+    OptionSet {
+        name: OptionName,
+        value: Option<String>,
+    },
+    UserCommandRegistered {
+        name: String,
+    },
+    UserCommandRemoved {
+        name: String,
+    },
     VimEnter,
     VimLeave,
 }
@@ -82,6 +118,10 @@ impl EventQueue {
 
     pub fn drain_deferred(&mut self) -> Vec<EditorEvent> {
         self.deferred.drain(..).collect()
+    }
+
+    pub fn drain_immediate(&mut self) -> Vec<EditorEvent> {
+        self.immediate.drain(..).collect()
     }
 
     pub fn has_immediate(&self) -> bool {

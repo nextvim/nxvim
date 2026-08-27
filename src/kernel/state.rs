@@ -179,11 +179,14 @@ impl EditorState {
         id: BufferId,
         options: vim_buffer::BufferOptions,
         name: impl Into<super::OptionName>,
+        value: Option<String>,
     ) -> Result<bool, vim_buffer::BufferError> {
         let changed = self.buffers.get_mut(id)?.set_options(options)?.is_some();
         if changed {
-            self.events
-                .push(super::EditorEvent::OptionSet { name: name.into() });
+            self.events.push(super::EditorEvent::OptionSet {
+                name: name.into(),
+                value,
+            });
         }
         Ok(changed)
     }
