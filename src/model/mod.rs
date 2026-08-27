@@ -22,16 +22,11 @@ pub struct EditorModel {
     initial_buffer: BufferId,
     pub status: Option<String>,
     pub commandline_buffer: BufferId,
-    pub commandline_mode: char,
 
     pub search_pattern: Option<String>,
     pub search_regex: Option<Regex>,
     pub search_range: Option<vim_script::ast::CommandRange>,
     pub substitute_text: Option<String>,
-    pub command_history: Vec<String>,
-    pub search_history: Vec<String>,
-    pub history_index: Option<usize>,
-    pub history_temp: String,
 }
 
 impl EditorModel {
@@ -51,16 +46,11 @@ impl EditorModel {
             initial_buffer,
             status: None,
             commandline_buffer,
-            commandline_mode: ':',
 
             search_pattern: None,
             search_regex: None,
             search_range: None,
             substitute_text: None,
-            command_history: Vec::new(),
-            search_history: Vec::new(),
-            history_index: None,
-            history_temp: String::new(),
         }
     }
 

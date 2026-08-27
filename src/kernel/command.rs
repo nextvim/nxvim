@@ -1,5 +1,4 @@
 use super::EditorContext;
-use crate::app::command::ExCommand as Command;
 
 /// Temporary command categories for the semantic-kernel migration seam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +42,16 @@ pub struct CommandContext {
     pub range: Option<vim_script::ast::CommandRange>,
     pub register: Option<char>,
     pub last_character_search: Option<vim_input::Action>,
+}
+
+/// Parsed command facts supplied by an application or script adapter before
+/// the kernel binds them to its authoritative current editor context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandMetadata {
+    pub kind: CommandKind,
+    pub count: Option<usize>,
+    pub range: Option<vim_script::ast::CommandRange>,
+    pub register: Option<char>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,77 +350,6 @@ impl CommandContext {
                 change: CaseChange::Lower,
             }),
             _ => None,
-        }
-    }
-}
-
-impl Command {
-    /// Builds a command context from the current editor identity and the
-    /// arguments already parsed by the controller/resolver.
-    pub fn kernel_context(&self, current: EditorContext) -> CommandContext {
-        let (count, range, register) = match self {
-            Self::Editor { action, register } => (Some(action.count() as usize), None, *register),
-            Self::RangeOp {
-                range,
-                count,
-                register,
-                ..
-            } => (count.map(|value| value as usize), range.clone(), *register),
-            Self::Substitute { range, .. } => (None, range.clone(), None),
-            _ => (None, None, None),
-        };
-        CommandContext {
-            current,
-            kind: self.kernel_kind(),
-            count,
-            range,
-            register,
-            last_character_search: None,
-        }
-    }
-
-    /// Classifies a controller command for the semantic-kernel boundary.
-    /// Detailed Normal-mode classification will be added as handlers migrate.
-    pub fn kernel_kind(&self) -> CommandKind {
-        match self {
-            Self::Editor { action, .. } => match action {
-                vim_input::Action::MoveLeft { .. }
-                | vim_input::Action::MoveRight { .. }
-                | vim_input::Action::MoveUp { .. }
-                | vim_input::Action::MoveDown { .. } => CommandKind::Motion,
-                _ => CommandKind::Edit,
-            },
-            Self::SearchForward { .. }
-            | Self::SearchBackward { .. }
-            | Self::Substitute { .. }
-            | Self::RangeOp { .. } => CommandKind::Edit,
-            Self::Save { .. }
-            | Self::Edit { .. }
-            | Self::WriteQuit { .. }
-            | Self::WriteQuitAll { .. }
-            | Self::Quit { .. }
-            | Self::QuitAll { .. } => CommandKind::Ex,
-            Self::SplitNew { .. } => CommandKind::Window,
-            Self::TabNew { .. }
-            | Self::TabNext { .. }
-            | Self::TabPrevious { .. }
-            | Self::TabClose => CommandKind::Tab,
-            Self::BufferNext { .. } | Self::BufferPrevious { .. } => CommandKind::Window,
-            Self::Set { .. } | Self::SetOption { .. } => CommandKind::Option,
-            Self::ReplaceBuffer { .. } => CommandKind::Edit,
-            Self::ExecuteScript(_) | Self::OpenPrompt { .. } => CommandKind::Script,
-            Self::CommandLine(_) => CommandKind::Ex,
-            Self::Task(_) => CommandKind::Script,
-            Self::PendingInput(_)
-            | Self::InvalidInput
-            | Self::PromptChoice { .. }
-            | Self::ClearSearchHighlight
-            | Self::Colorscheme { .. }
-            | Self::Syntax { .. }
-            | Self::Treesitter { .. }
-            | Self::Indexer { .. }
-            | Self::Inspect { .. }
-            | Self::Echo { .. } => CommandKind::Ex,
         }
     }
 }

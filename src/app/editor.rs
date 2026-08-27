@@ -1,15 +1,86 @@
 //! App-owned dispatch for editor semantic action and range commands.
 
 use crate::app::App;
-use crate::app::buffer_handler::BufferHandler;
+
 use crate::app::command::ExCommand as Command;
 use crate::app::command::{AppCommand, ScriptRequest, SemanticRequest};
-use crate::app::commandline_handler::CommandlineHandler;
-use crate::app::editor_handler::EditorHandler;
+use crate::app::commandline;
 use crate::app::lifecycle_ops::LifecycleHandler;
 use crate::app::outcome::CommandOutcome;
-use crate::app::range_ops::{RangeCommandHandler, RangeOperation};
-use crate::app::window_handler::WindowHandler;
+use crate::app::range_ops::RangeCommandHandler;
+
+/// Thin application adapter for kernel-owned editor action execution.
+///
+/// The kernel owns action classification and semantics. This boundary only
+/// lends concrete buffer/window state, selects the requested register, and
+/// synchronizes application input state after a semantic mode transition.
+pub(crate) fn execute_action(
+    app: &mut App,
+    active_window: vim_ui::WindowId,
+    action: &vim_input::Action,
+    register: Option<char>,
+    command_context: &crate::kernel::CommandContext,
+) -> CommandOutcome {
+    if crate::app::windows::WindowOps::window_buffer(&app.ui, active_window).is_none() {
+        return CommandOutcome::redraw();
+    }
+
+    app.model
+        .kernel_mut()
+        .record_character_search(action.clone());
+    if let Some(register) = register.and_then(vim_clipboard::RegisterName::from_char) {
+        app.services.clipboard.grab(register);
+    }
+
+    let current_mode = app.model.kernel().mode();
+    let join_insert_transaction = app.model.kernel().join_insert_transaction();
+    let search_pattern = app.model.search_pattern.clone();
+    let mut execution = None;
+    let _ = crate::app::windows::WindowOps::edit_window(
+        &mut app.ui,
+        &mut app.model,
+        active_window,
+        |buffer, buffer_state, window_state| {
+            execution = Some(crate::kernel::editor::execute_action(
+                buffer,
+                buffer_state,
+                window_state,
+                &mut app.services.clipboard,
+                action,
+                command_context,
+                current_mode,
+                join_insert_transaction,
+                search_pattern.as_deref(),
+            ));
+        },
+    );
+    app.services.clipboard.release();
+
+    let Some(mut execution) = execution else {
+        return CommandOutcome::redraw();
+    };
+    if let Some(mode) = execution.next_mode {
+        let mode_outcome = app.model.kernel_mut().transition_mode(mode);
+        app.input.set_mode(app.model.kernel().mode());
+        execution.outcome.merge(mode_outcome);
+    }
+    let mutated = execution.outcome.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::kernel::CommandEffect::BufferMutated { .. }
+                | crate::kernel::CommandEffect::MutationCommitted(_)
+        )
+    });
+    if mutated && app.model.kernel().mode().is_insert() {
+        app.model.kernel_mut().note_insert_mutation();
+    }
+    if !execution.outcome.effects.is_empty() {
+        log::trace!("kernel command produced {:?}", execution.outcome.effects);
+        CommandOutcome::from_kernel(execution.outcome)
+    } else {
+        CommandOutcome::redraw()
+    }
+}
 
 pub fn dispatch(
     app: &mut App,
@@ -167,16 +238,8 @@ pub fn dispatch(
                 return Ok(CommandOutcome::statusline());
             };
 
-            let mut outcome = EditorHandler::execute(
-                &mut app.ui,
-                &mut app.model,
-                &mut app.input,
-                &mut app.services,
-                active_window,
-                &action,
-                register,
-                &command_context,
-            );
+            let mut outcome =
+                execute_action(app, active_window, &action, register, &command_context);
 
             let mode_after = app.input.mode();
             let is_repeat = matches!(action, vim_input::Action::Repeat { .. });
@@ -251,19 +314,40 @@ pub fn dispatch(
                 app.model.kernel_mut().finish_repeat_recording();
             }
 
-            if BufferHandler::handles(&action) {
-                outcome.merge(BufferHandler::execute(
-                    &mut app.ui,
-                    &mut app.model,
-                    active_window,
-                    &action,
-                ));
+            let window_effect = match action {
+                vim_input::Action::SplitHorizontal { .. } => Some(
+                    crate::app::operations::SharedOperations::split_window(active_window, true),
+                ),
+                vim_input::Action::SplitVertical { .. } => Some(
+                    crate::app::operations::SharedOperations::split_window(active_window, false),
+                ),
+                vim_input::Action::FocusLeftWindow => {
+                    Some(crate::app::operations::SharedOperations::focus_window(
+                        vim_ui::NavigationDirection::Left,
+                    ))
+                }
+                vim_input::Action::FocusRightWindow => {
+                    Some(crate::app::operations::SharedOperations::focus_window(
+                        vim_ui::NavigationDirection::Right,
+                    ))
+                }
+                vim_input::Action::FocusUpWindow => {
+                    Some(crate::app::operations::SharedOperations::focus_window(
+                        vim_ui::NavigationDirection::Up,
+                    ))
+                }
+                vim_input::Action::FocusDownWindow => {
+                    Some(crate::app::operations::SharedOperations::focus_window(
+                        vim_ui::NavigationDirection::Down,
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(window_effect) = window_effect {
+                outcome.merge(window_effect);
             }
-            if WindowHandler::handles(&action) {
-                outcome.merge(WindowHandler::execute(active_window, &action));
-            }
-            if CommandlineHandler::handles(active_window, app.view_ids.commandline, &action) {
-                outcome.merge(CommandlineHandler::execute(
+            if commandline::handles(active_window, app.view_ids.commandline, &action) {
+                outcome.merge(commandline::execute(
                     &mut app.ui,
                     &mut app.model,
                     &mut app.input,
@@ -305,8 +389,11 @@ pub fn dispatch(
                             let raw_pattern: String =
                                 text_buffer.as_rope().chunks_in_range(start..end).collect();
 
-                            let command_line =
-                                format!("{}{}", app.model.commandline_mode, raw_pattern);
+                            let command_line = format!(
+                                "{}{}",
+                                app.model.kernel().command_line().prefix(),
+                                raw_pattern
+                            );
                             let mut runtime = crate::script::ScriptRuntime::new();
                             if let Ok(cmd) = runtime.peek_command(&command_line) {
                                 match cmd {

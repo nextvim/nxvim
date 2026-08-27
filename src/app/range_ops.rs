@@ -5,8 +5,6 @@ use crate::app::App;
 use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
 
-use crate::app::buffer_handler::BufferHandler;
-use crate::app::editor_handler::EditorHandler;
 use crate::app::outcome::CommandOutcome;
 
 /// The kind of range-taking Ex command being dispatched. Each variant maps to
@@ -128,26 +126,7 @@ impl RangeCommandHandler {
             app.model.status = Some("No current editor context".to_string());
             return CommandOutcome::redraw();
         };
-        let mut outcome = EditorHandler::execute(
-            &mut app.ui,
-            &mut app.model,
-            &mut app.input,
-            &mut app.services,
-            active_window,
-            &action,
-            register,
-            &command_context,
-        );
-
-        if BufferHandler::handles(&action) {
-            outcome.merge(BufferHandler::execute(
-                &mut app.ui,
-                &mut app.model,
-                active_window,
-                &action,
-            ));
-        }
-        outcome
+        crate::app::editor::execute_action(app, active_window, &action, register, &command_context)
     }
 
     fn resolve_action(

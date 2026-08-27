@@ -5,15 +5,15 @@
 //! implementations are retained only as explicitly named compatibility code.
 pub mod application;
 pub mod args;
-pub mod buffer_handler;
+
 pub mod command;
-pub mod commandline_handler;
+pub mod commandline;
 pub mod config;
 pub mod editor;
-pub mod editor_handler;
+pub mod ex;
 pub mod external_runtime;
 pub mod input;
-pub mod legacy_editor;
+
 pub mod lifecycle;
 pub mod lifecycle_ops;
 pub mod navigation;
@@ -27,7 +27,7 @@ pub mod substitute;
 pub mod task_dispatcher;
 pub(crate) mod typed_command;
 pub mod ui;
-pub mod window_handler;
+
 pub mod windows;
 
 use windows::WindowOps;
@@ -56,32 +56,33 @@ pub enum InspectKind {
 }
 
 pub struct App {
-    pub model: crate::model::EditorModel,
+    pub(crate) model: crate::model::EditorModel,
     /// Semantic tab pages. The initial migration contains one page and
     /// projects structural changes from `vim-ui` into it.
-    pub tabs: crate::kernel::TabPages,
-    pub input: input::InputAdapter,
-    pub services: services::Services,
-    pub ui: ui::Ui,
-    pub view_ids: ui::ViewIds,
-    pub command_queue: std::collections::VecDeque<command::AppCommand>,
+    pub(crate) tabs: crate::kernel::TabPages,
+    pub(crate) input: input::InputAdapter,
+    pub(crate) services: services::Services,
+    pub(crate) ui: ui::Ui,
+    pub(crate) view_ids: ui::ViewIds,
+    pub(crate) command_queue: std::collections::VecDeque<command::AppCommand>,
     /// Typed invalidations accumulated until the next render boundary.
-    pub pending_invalidations: Vec<crate::kernel::RedrawInvalidation>,
-    pub pending_redraw: crate::kernel::RedrawRequest,
-    pub pending_view_invalidations: Vec<ViewInvalidation>,
-    pub prompt: Option<prompt::Prompt>,
-    pub colorscheme: Option<vim_colorscheme::ColorScheme>,
-    pub highlighter: Option<textmate::Highlighter<'static>>,
+    pub(crate) pending_invalidations: Vec<crate::kernel::RedrawInvalidation>,
+    pub(crate) pending_redraw: crate::kernel::RedrawRequest,
+    pub(crate) pending_view_invalidations: Vec<ViewInvalidation>,
+    pub(crate) prompt: Option<prompt::Prompt>,
+    pub(crate) colorscheme: Option<vim_colorscheme::ColorScheme>,
+    pub(crate) highlighter: Option<textmate::Highlighter<'static>>,
 
     // App State
-    pub config: std::sync::Arc<std::sync::RwLock<config::ConfigStore>>,
-    pub syntax_highlight: bool,
-    pub treesitter_enabled: bool,
-    pub indexer_enabled: bool,
-    pub message: String,
-    pub messages: Vec<String>,
-    pub inspect: bool,
-    pub inspect_what: InspectKind,
+    pub(crate) config: std::sync::Arc<std::sync::RwLock<config::ConfigStore>>,
+    pub(crate) syntax_highlight: bool,
+    pub(crate) treesitter_enabled: bool,
+    pub(crate) indexer_enabled: bool,
+    pub(crate) message: String,
+    pub(crate) messages: Vec<String>,
+
+    pub(crate) inspect: bool,
+    pub(crate) inspect_what: InspectKind,
 }
 
 impl App {
@@ -124,12 +125,14 @@ impl App {
             prompt: None,
             colorscheme: Some(colorscheme),
             highlighter: Some(highlighter),
+
             config: std::sync::Arc::new(std::sync::RwLock::new(config::ConfigStore::new())),
             syntax_highlight: true,
             treesitter_enabled: false,
             indexer_enabled: false,
-            message: "".to_string(),
+            message: String::new(),
             messages: Vec::new(),
+
             inspect: false,
             inspect_what: InspectKind::None,
         };

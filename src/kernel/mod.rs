@@ -5,6 +5,8 @@
 //! behind these types without duplicating the existing stores.
 
 mod command;
+pub(crate) mod commandline;
+pub(crate) mod editor;
 mod events;
 mod ex;
 mod ids;
@@ -18,11 +20,12 @@ mod transaction;
 mod windows;
 
 pub use command::{
-    CaseChange, CommandContext, CommandKind, CommandLineKind, CommandLineRequest, NormalCommand,
-    PendingCommandState, SearchDirection,
+    CaseChange, CommandContext, CommandKind, CommandLineKind, CommandLineRequest, CommandMetadata,
+    NormalCommand, PendingCommandState, SearchDirection,
 };
+pub use commandline::CommandLineState;
 pub use events::{EditorEvent, EventQueue, OptionName};
-pub use ex::ExDispatcher;
+pub use ex::ExAdmission;
 pub use ids::{BufferId, ChannelId, JobId, TabPageId, TerminalId, TimerId, WindowId};
 pub use outcome::{
     CommandEffect, CommandOutcome, MutationOutcome, RedrawInvalidation, RedrawInvalidationKind,

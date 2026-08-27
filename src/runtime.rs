@@ -157,7 +157,7 @@ impl Runtime {
                     };
                     let origin = emitted.editor_context();
                     let current = self.app.current_context();
-                    match crate::kernel::ExDispatcher::execute_host_command(
+                    match crate::app::ex::ExDispatcher::execute_host_command(
                         &mut self.app,
                         current,
                         origin,
@@ -286,7 +286,7 @@ impl Runtime {
                                 let current_buffer = crate::app::ui::current_buffer(&self.app);
                                 let _ = self.script.update_state(&self.app.model, current_buffer);
                                 let current = self.app.current_context();
-                                if let Err(err) = crate::kernel::ExDispatcher::dispatch(
+                                if let Err(err) = crate::app::ex::ExDispatcher::dispatch(
                                     current,
                                     &request,
                                     |accepted| {

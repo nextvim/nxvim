@@ -1,7 +1,7 @@
 use super::{
-    BufferId, CommandContext, CommandKind, CommandLineRequest, TabPageId, WindowId, Windows,
+    BufferId, CommandContext, CommandKind, CommandLineRequest, CommandMetadata, TabPageId,
+    WindowId, Windows,
 };
-use crate::app::command::ExCommand as Command;
 use crate::model::Buffers;
 use std::path::Path;
 
@@ -31,6 +31,7 @@ pub struct EditorState {
     recording_register: Option<String>,
     last_replayed_macro: Option<String>,
     pending_command: Option<super::PendingCommandState>,
+    command_line: super::CommandLineState,
     last_character_search: Option<vim_input::Action>,
     repeat_actions: Option<Vec<vim_input::Action>>,
     recording_repeat: Option<Vec<vim_input::Action>>,
@@ -49,6 +50,7 @@ impl EditorState {
             recording_register: None,
             last_replayed_macro: None,
             pending_command: None,
+            command_line: super::CommandLineState::default(),
             last_character_search: None,
             repeat_actions: None,
             recording_repeat: None,
@@ -315,6 +317,14 @@ impl EditorState {
         self.last_character_search.as_ref()
     }
 
+    pub fn command_line(&self) -> &super::CommandLineState {
+        &self.command_line
+    }
+
+    pub fn command_line_mut(&mut self) -> &mut super::CommandLineState {
+        &mut self.command_line
+    }
+
     pub fn pending_command(&self) -> Option<&super::PendingCommandState> {
         self.pending_command.as_ref()
     }
@@ -406,11 +416,14 @@ impl EditorState {
         })
     }
 
-    pub fn command_context_for(&self, command: &Command) -> Option<CommandContext> {
-        self.current.map(|current| {
-            let mut context = command.kernel_context(current);
-            context.last_character_search = self.last_character_search.clone();
-            context
+    pub fn command_context_with(&self, metadata: CommandMetadata) -> Option<CommandContext> {
+        self.current.map(|current| CommandContext {
+            current,
+            kind: metadata.kind,
+            count: metadata.count,
+            range: metadata.range,
+            register: metadata.register,
+            last_character_search: self.last_character_search.clone(),
         })
     }
 

@@ -378,7 +378,7 @@ impl ScriptRuntime {
 
     /// Converts a snapshotted callback into the same owned command envelope
     /// used by ordinary script-host requests. The runtime performs the final
-    /// identity admission through `ExDispatcher`.
+    /// identity admission through the kernel-backed app Ex executor.
     pub fn execute_autocmd_snapshot(
         &self,
         request: vim_script::host::CommandRequest,

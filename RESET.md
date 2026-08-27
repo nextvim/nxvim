@@ -483,7 +483,12 @@ The first command-kernel boundary is implemented:
 - `cargo test -p nxvim --bin nxvim kernel::normal::tests -- --nocapture` passed (4 tests) after pure-buffer case operators and explicit inclusivity classification were added.
 - `cargo test -p nxvim --bin nxvim kernel:: -- --nocapture` and `cargo check --workspace` passed after kernel search-motion execution and macro replay-state ownership were added.
 - Focused command-prefix ownership, macro-state tests, and `kernel::ex::tests` passed, followed by `cargo check --workspace`.
-- Script-host execution migration passed 6 focused `kernel::ex::tests`, 21 `script::tests`, and `cargo check --workspace`; source audit confirms emitted commands execute through the kernel host path rather than entering `controller::Dispatcher`.
+- Script-host execution migration passed 6 focused `kernel::ex::tests`, 21 `script::tests`, and `cargo check --workspace`; source audit confirms emitted commands execute through the controlled host path rather than entering `controller::Dispatcher`.
+- [x] `src/app/editor_handler.rs` is physically deleted. Its action classification and execution matrix now live in `kernel::editor::execute_action`, which dispatches to the permanent Normal, Insert, and Structural kernel families without importing app controllers, services, input adapters, window adapters, or `EditorModel`.
+- [x] `app::editor::execute_action` is the remaining thin application adapter: it lends the active buffer/window state, selects and releases the requested register, synchronizes `vim-input` after kernel mode transitions, records insert-session mutation state, and projects the typed kernel outcome.
+- [x] Ranged Ex actions use the same thin app adapter; no `EditorHandler` or `editor_handler` references remain under `src`. `cargo test -p nxvim` passes all 101 tests and `cargo check --workspace` passes.
+- [x] `src/app/commandline_handler.rs` is deleted. Interactive Ex/search kind, command/search histories, history cursor/temp input, and command-line buffer text replacement now live in `kernel::CommandLineState` and `kernel::commandline`; the corresponding fields were removed from `EditorModel`.
+- [x] `app::commandline` is a handler-free projection boundary that retains UI focus, input-mode synchronization, search-preview adaptation, and completed `CommandLineRequest` queueing. Kernel command-line history/edit tests and the full package gate cover the migrated path.
 
 The command context is authoritative for the migrated pure-buffer motion families, simple delete, their supported `DeleteMotion` ranges, Insert/Replace/newline/tab text transactions, typed command-line admission, and script-host command execution. The kernel now owns committed mode state, insert lifecycle effect production, backend undo grouping across a complete insert session, and stale-context validation for host commands, while `vim-input` continues to own key grammar and pending parser state. Remaining Phase 3 work is concentrated in dependent motion coverage, final mode/cursor normalization, and broader syntax/fold behavior verification.
 
@@ -1013,8 +1018,11 @@ Route option changes and user-command registration through the same event-aware 
 
 Phase 6 will converge script-visible state on kernel/application-owned stores and controlled host requests. Each slice must preserve owned data and stable IDs across the script boundary, and must pass its listed compile gate before the next slice starts.
 
-The first mapping-ownership slice is implemented:
+Implemented convergence slices:
 
+- [x] Ex stable-context admission is now kernel-only through `kernel::ExAdmission`; app-aware host-command execution moved from `kernel/ex.rs` to `app/ex.rs`, so the kernel no longer imports `App`, lifecycle handlers, services, UI operations, or the app-owned `ExCommand` for Ex orchestration.
+- [x] Runtime command-line and emitted-host-command paths use the app executor, which delegates identity validation to the kernel before performing application effects; focused kernel admission and app executor tests pass.
+- [x] The kernel no longer imports the app-owned `ExCommand`: `app/ex.rs` translates that compatibility envelope into kernel-owned `CommandMetadata`, and `EditorState::command_context_with` binds it to authoritative current/character-search state. The old `impl ExCommand` and `command_context_for(&ExCommand)` inversion are removed.
 - [x] `vim-input::MappingStore` is the authoritative application mapping model and preserves parsed key sequences, stable IDs, modes, scope, flags, origin, and owned script context.
 - [x] `vim-script` re-exports only compatibility names for the input-layer types; its duplicate mapping model/store has been removed.
 - [x] `HostRuntime::with_keymaps` accepts the authoritative shared handle; script mapping registration, removal, and lookup all use that handle.
@@ -1042,7 +1050,7 @@ The first mapping-ownership slice is implemented:
   - [x] Add controlled buffer replacement transactions and window/tab operations through the main kernel command queue; replacements return mutation-committed outcomes and never mutate editor state from the script host.
   - [~] Add capability-gated message and prompt requests that enqueue owned `Echo`/`OpenPrompt` commands; script prompts reuse the generalized substitution `Prompt`/`PromptChoice` input flow without direct UI mutation. Returning the selected choice to a suspended script operation remains.
   - [~] Add capability-gated `RegisterEvent` requests routed through the existing `autocmd` parser/event bus, plus explicit timer/job request and dispatch extension points reserved for Phase 7; callback result delivery and runtime implementations remain.
-  - [~] Revalidate originating context before every queued host operation and reject stale buffer targets/ranges during reads/replacements without retargeting; selection/register/mark target revalidation remains with their providers.
+  - [~] Revalidate originating context before every queued host operation and reject stale buffer targets/ranges during reads/replacements without retargeting; command-line and emitted host-command admission now use kernel-only `ExAdmission`, while selection/register/mark target revalidation remains with their providers.
   - [ ] Run `cargo check -p vim-script` plus `cargo check -p nxvim`.
 - [~] **6.4 Add runtime/plugin loading**
   - [x] Define ordered runtime-path entries with canonicalization and duplicate-root removal.
