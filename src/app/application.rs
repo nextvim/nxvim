@@ -3,11 +3,11 @@
 use crate::app::command::ApplicationRequest;
 use crate::app::{App, InspectKind};
 
-use super::outcome::CommandOutcome;
+use super::outcome::AppCommandOutcome;
 
 /// Handles application-level requests that do not require semantic editor
 /// dispatch.
-pub fn dispatch(app: &mut App, command: ApplicationRequest) -> CommandOutcome {
+pub fn dispatch(app: &mut App, command: ApplicationRequest) -> AppCommandOutcome {
     match command {
         ApplicationRequest::ClearSearchHighlight => {
             crate::app::lifecycle::LifecycleHandler::clear_search_highlight(&mut app.model)
@@ -49,34 +49,38 @@ pub fn dispatch(app: &mut App, command: ApplicationRequest) -> CommandOutcome {
                     };
                 }
             }
-            CommandOutcome::redraw()
+            AppCommandOutcome::redraw()
         }
         ApplicationRequest::SetOption { .. } => {
             app.model.status = Some("Typed host mutation requires the script host boundary".into());
-            CommandOutcome::statusline()
+            AppCommandOutcome::statusline()
         }
         ApplicationRequest::Syntax { enable } => {
             app.syntax_highlight = enable;
             app.model.invalidate_all_highlights();
-            CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::SyntaxHighlighting)
+            AppCommandOutcome::global_redraw(
+                crate::kernel::RedrawInvalidationKind::SyntaxHighlighting,
+            )
         }
         ApplicationRequest::Treesitter { enable } => {
             app.treesitter_enabled = enable;
-            CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::SyntaxHighlighting)
+            AppCommandOutcome::global_redraw(
+                crate::kernel::RedrawInvalidationKind::SyntaxHighlighting,
+            )
         }
         ApplicationRequest::Indexer { enable } => {
             app.indexer_enabled = enable;
-            CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
+            AppCommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
         }
         ApplicationRequest::Inspect { enable } => {
             app.inspect = enable;
-            CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
+            AppCommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
         }
         ApplicationRequest::Echo { message } => {
             app.model.status = Some(message.clone());
             app.message = message.clone();
             app.messages.push(message);
-            CommandOutcome::statusline()
+            AppCommandOutcome::statusline()
         }
     }
 }

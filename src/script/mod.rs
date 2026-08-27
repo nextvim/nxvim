@@ -126,7 +126,6 @@ impl AutocmdEventEnvelope {
     }
 }
 
-#[derive(Debug)]
 pub struct EmittedCommand {
     pub command: Command,
     pub context: HostContext,
@@ -716,7 +715,7 @@ impl Host for EditorHost {
                 EditorRequestOperation::Prompt { message } => {
                     sender
                         .send(EmittedCommand {
-                            command: Command::Prompt(PromptRequest::OpenPrompt { message }),
+                            command: Command::Prompt(PromptRequest::Open { message }),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -1114,12 +1113,12 @@ mod tests {
             ..
         }) = cmd
         {
-            assert_eq!(operation, crate::app::range_ops::RangeOperation::Delete);
+            assert_eq!(operation, crate::kernel::RangeOperation::Delete);
             assert!(range.is_some());
             assert_eq!(count, None);
             assert_eq!(register, Some('a'));
         } else {
-            panic!("Expected Command::RangeOp, got {:?}", cmd);
+            panic!("Expected Command::Semantic(SemanticRequest::RangeOp)");
         }
     }
 
@@ -1178,10 +1177,10 @@ mod tests {
         runtime.execute("split").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Editor {
+            Some(Command::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::SplitHorizontal { file_path: None },
                 register: None,
-            })
+            }))
         ));
 
         // Test :vsplit with file path
@@ -1189,10 +1188,10 @@ mod tests {
         runtime.execute("vsplit my_file.rs").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Editor {
+            Some(Command::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::SplitVertical { file_path: Some(path) },
                 register: None,
-            }) if path == "my_file.rs"
+            })) if path == "my_file.rs"
         ));
 
         // Test abbreviations :sp and :vs
@@ -1200,20 +1199,20 @@ mod tests {
         runtime.execute("sp").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Editor {
+            Some(Command::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::SplitHorizontal { file_path: None },
                 register: None,
-            })
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("vs").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Editor {
+            Some(Command::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::SplitVertical { file_path: None },
                 register: None,
-            })
+            }))
         ));
     }
 

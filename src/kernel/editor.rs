@@ -1,8 +1,6 @@
-use vim_input::Action;
-use vim_ui::WindowState;
-
-use crate::kernel::CommandContext;
+use crate::kernel::{CommandContext, RegisterStore, SemanticWindow};
 use crate::model::BufferState;
+use vim_input::Action;
 
 /// Semantic result of executing one editor action against its authoritative
 /// buffer and window state. Application adapters synchronize input mode and
@@ -15,8 +13,8 @@ pub struct ActionExecution {
 pub fn execute_action(
     buffer: &mut vim_buffer::Buffer,
     buffer_context: &mut BufferState,
-    window_state: &mut WindowState,
-    clipboard: &mut vim_clipboard::Clipboard,
+    window_state: &mut SemanticWindow,
+    registers: &mut dyn RegisterStore,
     action: &Action,
     command_context: &CommandContext,
     current_mode: vim_input::Mode,
@@ -63,7 +61,7 @@ pub fn execute_action(
         };
         let replaced = window_state.selections.text(buffer.as_text_buffer());
         if !replaced.is_empty() {
-            clipboard.set_delete_text(replaced);
+            registers.set_delete_text(replaced);
         }
         let mutation = crate::kernel::insert::execute_insert_text(
             buffer,
@@ -110,7 +108,7 @@ pub fn execute_action(
     } else if let Action::DeleteChar { count } = action {
         let text = window_state.selections.text(buffer.as_text_buffer());
         if !text.is_empty() {
-            clipboard.set_delete_text(text);
+            registers.set_delete_text(text);
         }
         let mutation = crate::kernel::normal::execute_delete(
             *count as usize,
@@ -132,7 +130,7 @@ pub fn execute_action(
             &mut window_state.folds,
         ) {
             if !text.is_empty() {
-                clipboard.set_delete_text(text);
+                registers.set_delete_text(text);
             }
             crate::kernel::normal::normalize_visual_state(current_mode, buffer, window_state);
             next_mode = current_mode.is_visual().then_some(vim_input::Mode::Insert);
@@ -147,7 +145,7 @@ pub fn execute_action(
             &mut window_state.folds,
         ) {
             if !text.is_empty() {
-                clipboard.set_delete_text(text);
+                registers.set_delete_text(text);
             }
             crate::kernel::normal::normalize_visual_state(
                 vim_input::Mode::Insert,
@@ -165,7 +163,7 @@ pub fn execute_action(
             .selections
             .has_selection(buffer.as_text_buffer())
     {
-        clipboard.set_yank_text(window_state.selections.text(buffer.as_text_buffer()));
+        registers.set_yank_text(window_state.selections.text(buffer.as_text_buffer()));
         crate::kernel::normal::normalize_visual_state(
             vim_input::Mode::Normal,
             buffer,
@@ -186,9 +184,9 @@ pub fn execute_action(
             buffer_context.treesitter.as_ref().ok(),
         ) {
             match kind {
-                crate::kernel::normal::MotionKind::Linewise => clipboard.set_yank_lines(text),
+                crate::kernel::normal::MotionKind::Linewise => registers.set_yank_lines(text),
                 crate::kernel::normal::MotionKind::Characterwise { .. } => {
-                    clipboard.set_yank_text(text)
+                    registers.set_yank_text(text)
                 }
             }
         }
@@ -211,7 +209,7 @@ pub fn execute_action(
             *start_line,
             *end_line,
         ) {
-            clipboard.set_yank_lines(text);
+            registers.set_yank_lines(text);
         }
         kernel_outcome = Some(crate::kernel::CommandOutcome::no_redraw());
     } else if let Action::DeleteLines {
@@ -226,7 +224,7 @@ pub fn execute_action(
             *start_line,
             *end_line,
         ) {
-            clipboard.set_delete_lines(text);
+            registers.set_delete_lines(text);
             crate::kernel::normal::normalize_visual_state(current_mode, buffer, window_state);
             kernel_outcome = Some(crate::kernel::CommandOutcome::mutation_committed(mutation));
         } else {
@@ -239,7 +237,7 @@ pub fn execute_action(
             &mut window_state.folds,
             *count as usize,
         ) {
-            clipboard.set_delete_lines(text);
+            registers.set_delete_lines(text);
             let next =
                 matches!(action, Action::ChangeLine { .. }).then_some(vim_input::Mode::Insert);
             crate::kernel::normal::normalize_visual_state(
@@ -258,12 +256,12 @@ pub fn execute_action(
             &window_state.selections,
             *count as usize,
         ) {
-            clipboard.set_yank_lines(text);
+            registers.set_yank_lines(text);
         }
         kernel_outcome = Some(crate::kernel::CommandOutcome::no_redraw());
     } else if let Action::Put { count } | Action::PutBefore { count } = action {
-        if !clipboard.is_empty() {
-            let (text, kind) = clipboard.read();
+        if !registers.is_empty() {
+            let (text, kind) = registers.read();
             let mutation = crate::kernel::structural::execute_put(
                 buffer,
                 &mut window_state.selections,
@@ -283,8 +281,8 @@ pub fn execute_action(
             kernel_outcome = Some(crate::kernel::CommandOutcome::no_redraw());
         }
     } else if let Action::PutLines { line, before } = action {
-        if !clipboard.is_empty() {
-            let (text, kind) = clipboard.read();
+        if !registers.is_empty() {
+            let (text, kind) = registers.read();
             let mutation = crate::kernel::structural::execute_put(
                 buffer,
                 &mut window_state.selections,

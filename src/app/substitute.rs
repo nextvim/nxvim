@@ -1,14 +1,13 @@
-use text::{Point, ToOffset};
-use vim_buffer::TextSearch;
 use vim_script::host::RangeStateProvider;
-use vim_ui::WindowId;
 
 use crate::app::App;
 use crate::app::windows::WindowOps;
 
-use super::outcome::CommandOutcome;
+use super::outcome::AppCommandOutcome;
 use super::prompt::{Prompt, PromptChoice, PromptHandler};
 
+/// App orchestration for kernel-owned substitution semantics and interactive
+/// confirmation prompts.
 pub struct SubstituteHandler;
 
 impl SubstituteHandler {
@@ -18,7 +17,7 @@ impl SubstituteHandler {
         replacement: String,
         flags: String,
         range: Option<vim_script::ast::CommandRange>,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         app.model.kernel_mut().search_mut().set_substitution(
             pattern.clone(),
             range.clone(),
@@ -37,7 +36,7 @@ impl SubstituteHandler {
                 Err(err) => {
                     app.model.status = Some(err.message);
                     Self::finish(app);
-                    return CommandOutcome::redraw();
+                    return AppCommandOutcome::redraw();
                 }
             }
         } else {
@@ -45,25 +44,22 @@ impl SubstituteHandler {
             (current, current)
         };
 
-        let start_row = start_line.saturating_sub(1) as u32;
-        let end_row = end_line.saturating_sub(1) as u32;
-
         app.prompt = Some(Prompt {
             handler: PromptHandler::Substitute,
             message: format!("replace with {replacement}? (y/n/a/q/l)"),
             window_id,
-            pattern,
-            replacement,
-            global: flags.contains('g'),
-            row: start_row,
-            end_row,
-            search_offset: 0,
-            current_match: None,
+            substitution: Some(crate::kernel::SubstitutionSession::new(
+                pattern,
+                replacement,
+                flags.contains('g'),
+                start_line.saturating_sub(1) as u32,
+                end_line.saturating_sub(1) as u32,
+            )),
         });
 
         if flags.contains('c') {
             Self::advance(app);
-            CommandOutcome::redraw()
+            AppCommandOutcome::redraw()
         } else {
             let mutations = Self::replace_all_remaining(app);
             Self::finish(app);
@@ -71,9 +67,9 @@ impl SubstituteHandler {
         }
     }
 
-    pub fn respond(app: &mut App, choice: PromptChoice) -> CommandOutcome {
+    pub fn respond(app: &mut App, choice: PromptChoice) -> AppCommandOutcome {
         if app.prompt.is_none() {
-            return CommandOutcome::default();
+            return AppCommandOutcome::default();
         }
 
         let mut mutations = Vec::new();
@@ -100,144 +96,75 @@ impl SubstituteHandler {
         Self::mutation_outcome(mutations)
     }
 
+    fn with_session(
+        app: &mut App,
+        f: impl FnOnce(
+            &mut crate::kernel::SubstitutionSession,
+            &mut vim_buffer::Buffer,
+            &mut vim_buffer::SelectionSet,
+        ),
+    ) {
+        let Some(mut session) = app
+            .prompt
+            .as_mut()
+            .and_then(|prompt| prompt.substitution.take())
+        else {
+            return;
+        };
+        let window_id = app.prompt.as_ref().expect("prompt exists").window_id;
+        let _ = WindowOps::edit_window(
+            &mut app.ui,
+            &mut app.model,
+            window_id,
+            |buffer, _state, window| f(&mut session, buffer, &mut window.selections),
+        );
+        if let Some(prompt) = app.prompt.as_mut() {
+            prompt.substitution = Some(session);
+        }
+    }
+
     fn advance(app: &mut App) {
-        loop {
-            let Some(prompt) = app.prompt.as_mut() else {
-                return;
-            };
-            if prompt.row > prompt.end_row {
-                Self::finish(app);
-                return;
-            }
-
-            let mut found = None;
-            let _ = WindowOps::edit_window(
-                &mut app.ui,
-                &mut app.model,
-                prompt.window_id,
-                |buffer, _context, window_state| {
-                    let text_buffer = buffer.as_text_buffer();
-                    if prompt.row >= text_buffer.row_count() {
-                        return;
-                    }
-                    let line_start = Point::new(prompt.row, 0).to_offset(text_buffer);
-                    let line_end = Point::new(prompt.row, text_buffer.line_len(prompt.row))
-                        .to_offset(text_buffer);
-                    let text: String = text_buffer
-                        .as_rope()
-                        .chunks_in_range(line_start..line_end)
-                        .collect();
-                    if prompt.search_offset > text.len() {
-                        return;
-                    }
-                    let Ok(regex) = vim_regex::Regex::compile(
-                        &prompt.pattern,
-                        vim_regex::CompileOptions::default(),
-                    ) else {
-                        return;
-                    };
-                    if let Some((relative_start, len, _)) =
-                        text[prompt.search_offset..].find_next_pattern_match(&regex, 0)
-                    {
-                        let column = prompt.search_offset + relative_start;
-                        found = Some((line_start + column, len));
-                        window_state.selections.selections.clear();
-                        window_state
-                            .selections
-                            .add(buffer.as_text_buffer(), line_start + column);
-                    }
-                },
-            );
-
-            if let Some(current_match) = found {
-                prompt.current_match = Some(current_match);
-                app.model.status =
-                    Some(format!("replace with {} (y/n/a/q/l)?", prompt.replacement));
-                return;
-            }
-
-            prompt.row += 1;
-            prompt.search_offset = 0;
+        let mut found = false;
+        Self::with_session(app, |session, buffer, selections| {
+            found = session.advance(buffer, selections);
+        });
+        if found {
+            let replacement = app
+                .prompt
+                .as_ref()
+                .and_then(|prompt| prompt.substitution.as_ref())
+                .map(crate::kernel::SubstitutionSession::replacement)
+                .unwrap_or_default();
+            app.model.status = Some(format!("replace with {replacement} (y/n/a/q/l)?"));
+        } else {
+            Self::finish(app);
         }
     }
 
     fn replace_current(app: &mut App) -> Option<crate::kernel::MutationOutcome> {
-        let row_start = app
-            .prompt
-            .as_ref()
-            .map(|prompt| row_start_offset(app, prompt.window_id, prompt.row))
-            .unwrap_or(0);
-        let Some(prompt) = app.prompt.as_mut() else {
-            return None;
-        };
-        let Some((start, len)) = prompt.current_match.take() else {
-            return None;
-        };
-        let replacement_len = prompt.replacement.len();
-        let replacement = prompt.replacement.clone();
         let mut mutation = None;
-        let _ = WindowOps::edit_window(
-            &mut app.ui,
-            &mut app.model,
-            prompt.window_id,
-            |buffer, _context, window_state| {
-                let range = vim_buffer::TextRange::new(
-                    vim_buffer::ByteOffset(start),
-                    vim_buffer::ByteOffset(start + len),
-                )
-                .unwrap();
-                mutation = crate::kernel::transaction(
-                    buffer,
-                    vim_buffer::EditOrigin::VimScript,
-                    None,
-                    |tx| tx.replace(None, range, replacement.as_str()),
-                )
-                .ok();
-                window_state.selections.selections.clear();
-                window_state
-                    .selections
-                    .add(buffer.as_text_buffer(), start + replacement_len);
-            },
-        );
-        prompt.search_offset = start
-            .saturating_sub(row_start)
-            .saturating_add(replacement_len);
-        if !prompt.global {
-            prompt.row += 1;
-            prompt.search_offset = 0;
-        }
+        Self::with_session(app, |session, buffer, selections| {
+            mutation = session.replace_current(buffer, selections);
+        });
         mutation
     }
 
     fn skip_current(app: &mut App) {
-        let row_start = app
-            .prompt
-            .as_ref()
-            .map(|prompt| row_start_offset(app, prompt.window_id, prompt.row))
-            .unwrap_or(0);
-        let Some(prompt) = app.prompt.as_mut() else {
-            return;
-        };
-        let Some((start, len)) = prompt.current_match.take() else {
-            return;
-        };
-        prompt.search_offset = start.saturating_sub(row_start).saturating_add(len.max(1));
-        if !prompt.global {
-            prompt.row += 1;
-            prompt.search_offset = 0;
-        }
+        Self::with_session(app, |session, buffer, _selections| {
+            session.skip_current(buffer);
+        });
     }
 
     fn replace_all_remaining(app: &mut App) -> Vec<crate::kernel::MutationOutcome> {
         let mut mutations = Vec::new();
         loop {
             Self::advance(app);
-            if app
+            let has_match = app
                 .prompt
                 .as_ref()
-                .and_then(|prompt| prompt.current_match)
-                .is_none()
-            {
+                .and_then(|prompt| prompt.substitution.as_ref())
+                .is_some_and(crate::kernel::SubstitutionSession::has_current_match);
+            if !has_match {
                 break;
             }
             mutations.extend(Self::replace_current(app));
@@ -245,15 +172,15 @@ impl SubstituteHandler {
         mutations
     }
 
-    fn mutation_outcome(mutations: Vec<crate::kernel::MutationOutcome>) -> CommandOutcome {
+    fn mutation_outcome(mutations: Vec<crate::kernel::MutationOutcome>) -> AppCommandOutcome {
         if mutations.is_empty() {
-            return CommandOutcome::redraw();
+            return AppCommandOutcome::redraw();
         }
         let mut outcome = crate::kernel::CommandOutcome::no_redraw();
         for mutation in mutations {
             outcome.merge(crate::kernel::CommandOutcome::mutation_committed(mutation));
         }
-        CommandOutcome::from_kernel(outcome)
+        AppCommandOutcome::from_kernel(outcome)
     }
 
     fn finish(app: &mut App) {
@@ -261,13 +188,6 @@ impl SubstituteHandler {
         app.model.status = None;
         app.model.kernel_mut().search_mut().clear();
     }
-}
-
-fn row_start_offset(app: &App, window_id: WindowId, row: u32) -> usize {
-    WindowOps::window_buffer(&app.ui, window_id)
-        .and_then(|buffer_id| app.model.get_buffer(buffer_id).ok())
-        .map(|buffer| Point::new(row, 0).to_offset(buffer.as_text_buffer()))
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

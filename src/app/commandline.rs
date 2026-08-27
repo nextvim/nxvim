@@ -5,7 +5,7 @@ use vim_ui::{Ui, WindowId};
 
 use crate::app::command::{AppCommand, ScriptRequest};
 use crate::app::input::InputAdapter;
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 use crate::app::ui::{ViewEffect, ViewIds};
 use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
@@ -34,7 +34,7 @@ pub fn execute(
     active_window: WindowId,
     action: &Action,
     mode_before: Mode,
-) -> CommandOutcome {
+) -> AppCommandOutcome {
     match action {
         Action::SetToCommand
         | Action::SetToCommandSearchForward
@@ -49,7 +49,7 @@ pub fn execute(
         ),
         Action::Clear if active_window == view_ids.commandline => {
             clear_search_preview(model);
-            CommandOutcome::with_effect(ViewEffect::Focus(editor_focus(ui, view_ids)))
+            AppCommandOutcome::with_effect(ViewEffect::Focus(editor_focus(ui, view_ids)))
         }
         Action::DeleteCharBefore { .. }
             if active_window == view_ids.commandline
@@ -58,7 +58,7 @@ pub fn execute(
             let _ = model.kernel_mut().transition_mode(Mode::Normal);
             input.set_mode(model.kernel().mode());
             clear_search_preview(model);
-            CommandOutcome::with_effect(ViewEffect::Focus(editor_focus(ui, view_ids)))
+            AppCommandOutcome::with_effect(ViewEffect::Focus(editor_focus(ui, view_ids)))
         }
         Action::InsertNewLine { .. }
             if active_window == view_ids.commandline
@@ -73,7 +73,7 @@ pub fn execute(
         Action::MoveDown { .. } if active_window == view_ids.commandline => {
             navigate_history(ui, model, view_ids.commandline, false)
         }
-        _ => CommandOutcome::default(),
+        _ => AppCommandOutcome::default(),
     }
 }
 
@@ -85,7 +85,7 @@ fn enter(
     active_window: WindowId,
     action: &Action,
     mode_before: Mode,
-) -> CommandOutcome {
+) -> AppCommandOutcome {
     let kind = match action {
         Action::SetToCommand => crate::kernel::CommandLineKind::Ex,
         Action::SetToCommandSearchForward => crate::kernel::CommandLineKind::SearchForward,
@@ -118,7 +118,7 @@ fn enter(
     };
     set_text(ui, model, view_ids.commandline, &content);
 
-    let mut outcome = CommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline));
+    let mut outcome = AppCommandOutcome::with_effect(ViewEffect::Focus(view_ids.commandline));
     outcome
         .view_effects
         .push(ViewEffect::SetCommandLineMode(kind_prefix(kind)));
@@ -132,7 +132,7 @@ fn submit(
     command_queue: &mut std::collections::VecDeque<AppCommand>,
     view_ids: ViewIds,
     active_window: WindowId,
-) -> CommandOutcome {
+) -> AppCommandOutcome {
     let _ = model.kernel_mut().transition_mode(Mode::Normal);
     input.set_mode(model.kernel().mode());
     if let Some(command) = current_command(model) {
@@ -171,7 +171,7 @@ fn submit(
         }
     }
     let _ = active_window;
-    CommandOutcome::with_effect(ViewEffect::Focus(editor_focus(ui, view_ids)))
+    AppCommandOutcome::with_effect(ViewEffect::Focus(editor_focus(ui, view_ids)))
 }
 
 fn navigate_history(
@@ -179,7 +179,7 @@ fn navigate_history(
     model: &mut EditorModel,
     commandline_window: WindowId,
     previous: bool,
-) -> CommandOutcome {
+) -> AppCommandOutcome {
     let current = get_text(model).unwrap_or_default();
     let text = if previous {
         model.kernel_mut().command_line_mut().previous(&current)
@@ -196,7 +196,7 @@ fn navigate_history(
             }
         }
     }
-    CommandOutcome::window_redraw(
+    AppCommandOutcome::window_redraw(
         commandline_window,
         crate::kernel::RedrawInvalidationKind::TextRows,
     )

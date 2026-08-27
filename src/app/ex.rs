@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::app::command::{AppCommand, ApplicationRequest, ScriptRequest, SemanticRequest};
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 use crate::kernel::{CommandLineRequest, EditorContext, ExAdmission};
 
 /// Application admission adapter for parsed Ex and script-host requests.
@@ -29,7 +29,7 @@ impl ExDispatcher {
         current: Option<EditorContext>,
         origin: Option<EditorContext>,
         command: AppCommand,
-    ) -> Result<CommandOutcome, String> {
+    ) -> Result<AppCommandOutcome, String> {
         app.sync_kernel_context();
         let synchronized = app.current_context();
         if synchronized != current {
@@ -68,7 +68,7 @@ impl ExDispatcher {
             AppCommand::Script(ScriptRequest::Execute(script)) => {
                 app.command_queue
                     .push_back(AppCommand::Script(ScriptRequest::Execute(script)));
-                Ok(CommandOutcome::default())
+                Ok(AppCommandOutcome::default())
             }
             AppCommand::Script(ScriptRequest::CommandLine(_))
             | AppCommand::Input(_)
@@ -81,7 +81,7 @@ impl ExDispatcher {
         buffer: u64,
         range: vim_script::host::OwnedTextRange,
         text: String,
-    ) -> Result<CommandOutcome, String> {
+    ) -> Result<AppCommandOutcome, String> {
         let id = crate::kernel::BufferId::new(buffer)
             .ok_or_else(|| format!("Invalid buffer ID: {buffer}"))?;
         let buffer = app
@@ -100,7 +100,7 @@ impl ExDispatcher {
             None,
             |transaction| transaction.replace(None, range, text.as_str()),
         )?;
-        Ok(CommandOutcome::from_kernel(
+        Ok(AppCommandOutcome::from_kernel(
             crate::kernel::CommandOutcome::mutation_committed(mutation),
         ))
     }
@@ -111,7 +111,7 @@ impl ExDispatcher {
         name: String,
         value: vim_script::runtime::Value,
         scope: vim_script::host::OptionRequestScope,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         let value = match value {
             vim_script::runtime::Value::Bool(value) => crate::app::config::ConfigValue::Bool(value),
             vim_script::runtime::Value::Integer(value) => {
@@ -122,7 +122,7 @@ impl ExDispatcher {
             }
             _ => {
                 app.model.status = Some(format!("Invalid value type for option: {name}"));
-                return CommandOutcome::statusline();
+                return AppCommandOutcome::statusline();
             }
         };
         let (buffer, window) = match scope {
@@ -156,11 +156,11 @@ impl ExDispatcher {
                             crate::app::config::ConfigValue::String(value) => value,
                         }),
                     });
-                CommandOutcome::redraw()
+                AppCommandOutcome::redraw()
             }
             Err(error) => {
                 app.model.status = Some(format!("Error: {error}"));
-                CommandOutcome::statusline()
+                AppCommandOutcome::statusline()
             }
         }
     }

@@ -7,7 +7,7 @@
 use crate::app::ui::ViewEffect;
 
 #[derive(Debug, Default)]
-pub struct CommandOutcome {
+pub struct AppCommandOutcome {
     pub redraw: crate::kernel::RedrawRequest,
     pub quit: bool,
     pub view_effects: Vec<ViewEffect>,
@@ -15,7 +15,7 @@ pub struct CommandOutcome {
     pub invalidations: Vec<crate::kernel::RedrawInvalidation>,
 }
 
-impl CommandOutcome {
+impl AppCommandOutcome {
     pub fn from_kernel(outcome: crate::kernel::CommandOutcome) -> Self {
         let quit = outcome
             .effects

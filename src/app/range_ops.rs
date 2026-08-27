@@ -5,20 +5,7 @@ use crate::app::App;
 use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
 
-use crate::app::outcome::CommandOutcome;
-
-/// The kind of range-taking Ex command being dispatched. Each variant maps to
-/// exactly one `vim_input::Action` in `RangeCommandHandler::resolve_action`.
-/// Add new ranged Ex commands (`SCRIPT.md` P1.2/P1.3 — yank, put, copy, move,
-/// join, substitute, global, ...) here, rather than inlining a new resolution
-/// pipeline in `dispatcher.rs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RangeOperation {
-    Delete,
-    Yank,
-    Put,
-    Goto,
-}
+use crate::app::outcome::AppCommandOutcome;
 
 /// Live editor state needed to resolve an Ex command's `CommandRange` (`%`,
 /// `.`, `$`, marks, ...) into concrete line numbers.
@@ -69,19 +56,19 @@ impl<'a> RangeStateProvider for EditorRangeStateProvider<'a> {
 /// it. This is the single, reusable seam for `:delete` today and the ranged
 /// commands `SCRIPT.md` P1.2/P1.3 add next (`:yank`, `:put`, `:copy`,
 /// `:move`, `:join`, `:substitute`, `:global`, ...): each new operation is one
-/// `RangeOperation` variant and one arm in `resolve_action`, not a new
-/// dispatcher match arm.
+/// typed `kernel::RangeOperation` variant, resolved here and executed by the
+/// kernel without translating back through input actions.
 pub struct RangeCommandHandler;
 
 impl RangeCommandHandler {
     pub fn execute(
         app: &mut App,
-        operation: RangeOperation,
+        operation: crate::kernel::RangeOperation,
         bang: bool,
         range: Option<vim_script::ast::CommandRange>,
         count: Option<u64>,
         register: Option<char>,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         let active_window = app.ui.focused_window_id();
         let provider = EditorRangeStateProvider {
             ui: &app.ui,
@@ -94,7 +81,7 @@ impl RangeCommandHandler {
                 Ok(bounds) => bounds,
                 Err(err) => {
                     app.model.status = Some(err.message);
-                    return CommandOutcome::redraw();
+                    return AppCommandOutcome::redraw();
                 }
             }
         } else {
@@ -110,50 +97,47 @@ impl RangeCommandHandler {
             }
         }
 
-        let action = Self::resolve_action(operation, start_line, end_line, bang);
-
-        let mut message = format!("[{:?}] Action: {:?}", app.input.mode(), action);
-        if let Some(register) = register {
-            message.push_str(&format!(" (reg: '{register}')"));
-        }
-        app.model.status = Some(message);
-
-        let Some(command_context) = app
-            .model
-            .kernel()
-            .command_context(crate::kernel::CommandKind::Edit)
-        else {
-            app.model.status = Some("No current editor context".to_string());
-            return CommandOutcome::redraw();
-        };
-        crate::app::editor::execute_action(app, active_window, &action, register, &command_context)
-    }
-
-    fn resolve_action(
-        operation: RangeOperation,
-        start_line: u32,
-        end_line: u32,
-        bang: bool,
-    ) -> vim_input::Action {
-        match operation {
-            RangeOperation::Delete => vim_input::Action::DeleteLines {
+        let command = match operation {
+            crate::kernel::RangeOperation::Delete => crate::kernel::RangeCommand::Delete {
                 start_line,
                 end_line,
             },
-            RangeOperation::Yank => vim_input::Action::YankLines {
+            crate::kernel::RangeOperation::Yank => crate::kernel::RangeCommand::Yank {
                 start_line,
                 end_line,
             },
-            // `:put` addresses a single target line; the resolved range's end
-            // (equal to its start when no range was given) is that line.
-            RangeOperation::Put => vim_input::Action::PutLines {
+            crate::kernel::RangeOperation::Put => crate::kernel::RangeCommand::Put {
                 line: end_line,
                 before: bang,
             },
-            RangeOperation::Goto => vim_input::Action::MoveToLine {
-                line: end_line,
-                select: false,
-            },
+            crate::kernel::RangeOperation::Goto => {
+                crate::kernel::RangeCommand::Goto { line: end_line }
+            }
+        };
+
+        if let Some(register) = register.and_then(vim_clipboard::RegisterName::from_char) {
+            app.services.clipboard.grab(register);
         }
+        let mode = app.model.kernel().mode();
+        let mut kernel_outcome = None;
+        let _ = WindowOps::edit_window(
+            &mut app.ui,
+            &mut app.model,
+            active_window,
+            |buffer, _buffer_state, window_state| {
+                kernel_outcome = Some(crate::kernel::range::execute(
+                    buffer,
+                    window_state,
+                    active_window,
+                    &mut app.services.clipboard,
+                    mode,
+                    command,
+                ));
+            },
+        );
+        app.services.clipboard.release();
+        kernel_outcome
+            .map(AppCommandOutcome::from_kernel)
+            .unwrap_or_else(AppCommandOutcome::redraw)
     }
 }

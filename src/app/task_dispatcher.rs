@@ -3,7 +3,7 @@ use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
 use vim_ui::Ui;
 
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 
 pub struct TaskDispatcher;
 
@@ -13,7 +13,7 @@ impl TaskDispatcher {
         model: &mut EditorModel,
         services: &mut crate::app::services::Services,
         result: TaskResult,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         let accepted = match result {
             TaskResult::External(event) => {
                 if let crate::app::external_runtime::ExternalRuntimeEvent::Failed {
@@ -35,7 +35,7 @@ impl TaskDispatcher {
             } => {
                 let buffer_id = completed.buffer_id;
                 let Some(state) = Self::current_buffer_state(model, buffer_id, revision) else {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 };
                 state.treesitter = completed.result.clone();
                 services.treesitter.apply_task_result(task_id, completed);
@@ -48,7 +48,7 @@ impl TaskDispatcher {
                 result,
             } => {
                 let Some(state) = Self::current_buffer_state(model, buffer_id, revision) else {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 };
                 state.index = result.clone();
                 if let Ok(completed) = result {
@@ -65,13 +65,13 @@ impl TaskDispatcher {
                 ..
             } => {
                 if !Self::window_is_current(ui, model, window_id, buffer_id, revision) {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 }
                 let Some(window) = ui
                     .window_mut(window_id)
                     .and_then(vim_ui::Window::window_state_mut)
                 else {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 };
                 let generation = expansion.generation.clone();
                 let exact_rows = expansion.exact_rows.clone();
@@ -81,7 +81,7 @@ impl TaskDispatcher {
                     window.pending_display_map = None;
                 }
                 if window.display_map.apply_expansion(expansion).is_err() {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 }
 
                 let hot_window = window.display_map.hot_window();
@@ -104,10 +104,10 @@ impl TaskDispatcher {
                     .buffer_state(buffer_id)
                     .is_some_and(|state| state.revision == revision)
                 {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 }
                 if !services.files.apply_task_result(task_id, &result) {
-                    return CommandOutcome::default();
+                    return AppCommandOutcome::default();
                 }
                 match result.result {
                     Ok(outcome) => {
@@ -131,9 +131,9 @@ impl TaskDispatcher {
         };
 
         if accepted {
-            CommandOutcome::redraw()
+            AppCommandOutcome::redraw()
         } else {
-            CommandOutcome::default()
+            AppCommandOutcome::default()
         }
     }
 

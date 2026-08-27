@@ -2,14 +2,14 @@
 
 use crate::app::App;
 use crate::app::command::SemanticRequest;
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 use crate::app::substitute::SubstituteHandler;
 
-pub fn execute(app: &mut App, pattern: String, forward: bool) -> CommandOutcome {
+pub fn execute(app: &mut App, pattern: String, forward: bool) -> AppCommandOutcome {
     let window = app.ui.focused_window_id();
     let Some(context) = app.model.kernel().current() else {
         app.model.status = Some("No current editor context".to_owned());
-        return CommandOutcome::statusline();
+        return AppCommandOutcome::statusline();
     };
     app.model.kernel_mut().search_mut().set_pattern(&pattern);
     let mut kernel_outcome = None;
@@ -27,13 +27,13 @@ pub fn execute(app: &mut App, pattern: String, forward: bool) -> CommandOutcome 
             ));
         },
     );
-    kernel_outcome.map_or_else(CommandOutcome::redraw, CommandOutcome::from_kernel)
+    kernel_outcome.map_or_else(AppCommandOutcome::redraw, AppCommandOutcome::from_kernel)
 }
 
 pub fn dispatch(
     app: &mut App,
     command: SemanticRequest,
-) -> Result<CommandOutcome, SemanticRequest> {
+) -> Result<AppCommandOutcome, SemanticRequest> {
     let outcome = match command {
         SemanticRequest::SearchForward { pattern } => execute(app, pattern, true),
         SemanticRequest::SearchBackward { pattern } => execute(app, pattern, false),

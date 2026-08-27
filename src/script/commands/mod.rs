@@ -5,10 +5,9 @@ use vim_script::host::CommandRequest;
 use vim_script::runtime::{RuntimeError, RuntimeErrorKind};
 
 use crate::app::command::{
-    AppCommand as Command, ApplicationRequest, LifecycleRequest, NavigationRequest, PromptRequest,
-    ScriptRequest, SemanticRequest,
+    AppCommand as Command, ApplicationRequest, LifecycleRequest, NavigationRequest, SemanticRequest,
 };
-use crate::app::range_ops::RangeOperation;
+use crate::kernel::RangeOperation;
 
 /// Execute the Ex command request and translate it to a controller Command.
 pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -227,14 +226,14 @@ fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
         Some(argument.to_string())
     };
     match request.command.name.as_str() {
-        "split" | "hsplit" => Ok(Command::Editor {
+        "split" | "hsplit" => Ok(Command::Semantic(SemanticRequest::Editor {
             action: vim_input::Action::SplitHorizontal { file_path },
             register: None,
-        }),
-        "vsplit" => Ok(Command::Editor {
+        })),
+        "vsplit" => Ok(Command::Semantic(SemanticRequest::Editor {
             action: vim_input::Action::SplitVertical { file_path },
             register: None,
-        }),
+        })),
         _ => unreachable!(),
     }
 }

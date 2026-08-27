@@ -13,16 +13,19 @@ mod ids;
 pub(crate) mod insert;
 pub(crate) mod normal;
 mod outcome;
+pub(crate) mod range;
+mod registers;
 pub(crate) mod search;
 mod state;
 pub(crate) mod structural;
+mod substitute;
 mod tabs;
 mod transaction;
 mod windows;
 
 pub use command::{
     CaseChange, CommandContext, CommandKind, CommandLineKind, CommandLineRequest, CommandMetadata,
-    NormalCommand, PendingCommandState, SearchDirection,
+    NormalCommand, PendingCommandState, RangeCommand, RangeOperation, SearchDirection,
 };
 pub use commandline::CommandLineState;
 pub use events::{EditorEvent, EventQueue, OptionName};
@@ -32,11 +35,13 @@ pub use outcome::{
     CommandEffect, CommandOutcome, MutationOutcome, RedrawInvalidation, RedrawInvalidationKind,
     RedrawRequest,
 };
+pub use registers::RegisterStore;
 pub use search::SearchState;
 pub use state::{EditorContext, EditorState};
+pub use substitute::SubstitutionSession;
 pub use tabs::{TabPage, TabPages};
 pub(crate) use transaction::transaction;
-pub use windows::{WindowRecord, Windows};
+pub use windows::{SemanticWindow, WindowRecord, Windows};
 
 pub(crate) fn invalidate_folds(
     folds: &mut Vec<display_map::Fold>,

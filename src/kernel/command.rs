@@ -114,6 +114,24 @@ pub enum SearchDirection {
     Backward,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeOperation {
+    Delete,
+    Yank,
+    Put,
+    Goto,
+}
+
+/// A range-taking semantic command after Ex addresses have been resolved to
+/// concrete one-based line numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeCommand {
+    Delete { start_line: u32, end_line: u32 },
+    Yank { start_line: u32, end_line: u32 },
+    Put { line: u32, before: bool },
+    Goto { line: u32 },
+}
+
 #[derive(Debug, Clone)]
 pub enum NormalCommand {
     MoveLeft {

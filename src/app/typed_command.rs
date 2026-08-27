@@ -96,7 +96,7 @@ pub enum SemanticRequest {
         register: Option<char>,
     },
     RangeOp {
-        operation: crate::app::range_ops::RangeOperation,
+        operation: crate::kernel::RangeOperation,
         bang: bool,
         range: Option<vim_script::ast::CommandRange>,
         count: Option<u64>,

@@ -4,7 +4,7 @@ pub use super::typed_command::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::app::outcome::CommandOutcome;
+    use crate::app::outcome::AppCommandOutcome;
 
     #[test]
     fn kernel_effects_survive_the_app_boundary() {
@@ -16,7 +16,7 @@ mod tests {
             redraw: crate::kernel::RedrawRequest::View,
             invalidations: Vec::new(),
         };
-        let outcome = CommandOutcome::from_kernel(kernel);
+        let outcome = AppCommandOutcome::from_kernel(kernel);
         assert_eq!(outcome.redraw, crate::kernel::RedrawRequest::View);
         assert!(outcome.quit);
         assert_eq!(outcome.kernel_effects.len(), 2);

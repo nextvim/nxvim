@@ -2,10 +2,10 @@
 
 use crate::app::App;
 use crate::app::command::{AppCommand, LifecycleRequest, NavigationRequest};
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 
 /// Handles navigation and layout requests.
-pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
+pub fn dispatch(app: &mut App, command: NavigationRequest) -> AppCommandOutcome {
     match command {
         NavigationRequest::SplitNew { vertical } => {
             let active_window = app.ui.focused_window_id();
@@ -22,10 +22,10 @@ pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
                 None => app.model.create(""),
             };
             match app.new_tab(buffer) {
-                Ok(_) => CommandOutcome::layout(),
+                Ok(_) => AppCommandOutcome::layout(),
                 Err(error) => {
                     app.model.status = Some(error);
-                    CommandOutcome::redraw()
+                    AppCommandOutcome::redraw()
                 }
             }
         }
@@ -33,19 +33,19 @@ pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
             if let Err(error) = app.next_tab(count) {
                 app.model.status = Some(error);
             }
-            CommandOutcome::layout()
+            AppCommandOutcome::layout()
         }
         NavigationRequest::TabPrevious { count } => {
             if let Err(error) = app.previous_tab(count) {
                 app.model.status = Some(error);
             }
-            CommandOutcome::layout()
+            AppCommandOutcome::layout()
         }
         NavigationRequest::TabClose => {
             if let Err(error) = app.close_active_tab() {
                 app.model.status = Some(error);
             }
-            CommandOutcome::layout()
+            AppCommandOutcome::layout()
         }
         NavigationRequest::BufferNext { count } => {
             let active = app.ui.focused_window_id();

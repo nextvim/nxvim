@@ -3,7 +3,7 @@ use crate::app::{
     command::{AppCommand, InputRequest},
 };
 
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 use crate::app::ui::ViewEffect;
 use crate::app::windows::WindowOps;
 use crate::terminal::TerminalSession;
@@ -188,7 +188,7 @@ impl Runtime {
                         self.app.model.status =
                             Some(format!("Pending sequence: {}", pending.display));
                         self.app.model.kernel_mut().set_pending_command(pending);
-                        let outcome = CommandOutcome::statusline();
+                        let outcome = AppCommandOutcome::statusline();
                         should_redraw = should_redraw.max(outcome.redraw);
                         self.apply_outcome(&outcome);
                         continue;
@@ -196,7 +196,7 @@ impl Runtime {
                     AppCommand::Input(InputRequest::Invalid) => {
                         self.app.model.status = Some("Invalid sequence".to_string());
                         self.app.model.kernel_mut().clear_pending_command();
-                        let outcome = CommandOutcome::statusline();
+                        let outcome = AppCommandOutcome::statusline();
                         should_redraw = should_redraw.max(outcome.redraw);
                         self.apply_outcome(&outcome);
                         continue;
@@ -252,7 +252,7 @@ impl Runtime {
                                     "Semantic request unavailable during kernel migration"
                                         .to_string(),
                                 );
-                                let outcome = CommandOutcome::statusline();
+                                let outcome = AppCommandOutcome::statusline();
                                 should_redraw = should_redraw.max(outcome.redraw);
                                 self.apply_outcome(&outcome);
                                 self.app.sync_kernel_layout();
@@ -379,7 +379,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn apply_outcome(&mut self, outcome: &CommandOutcome) {
+    fn apply_outcome(&mut self, outcome: &AppCommandOutcome) {
         self.app
             .queue_redraw(outcome.redraw, &outcome.invalidations);
         if outcome.invalidations.is_empty()

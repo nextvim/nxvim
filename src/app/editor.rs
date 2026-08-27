@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::app::command::{AppCommand, ScriptRequest, SemanticRequest};
 use crate::app::commandline;
 use crate::app::lifecycle::LifecycleHandler;
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 use crate::app::range_ops::RangeCommandHandler;
 
 /// Thin application adapter for kernel-owned editor action execution.
@@ -19,9 +19,9 @@ pub(crate) fn execute_action(
     action: &vim_input::Action,
     register: Option<char>,
     command_context: &crate::kernel::CommandContext,
-) -> CommandOutcome {
+) -> AppCommandOutcome {
     if crate::app::windows::WindowOps::window_buffer(&app.ui, active_window).is_none() {
-        return CommandOutcome::redraw();
+        return AppCommandOutcome::redraw();
     }
 
     app.model
@@ -56,7 +56,7 @@ pub(crate) fn execute_action(
     app.services.clipboard.release();
 
     let Some(mut execution) = execution else {
-        return CommandOutcome::redraw();
+        return AppCommandOutcome::redraw();
     };
     if let Some(mode) = execution.next_mode {
         let mode_outcome = app.model.kernel_mut().transition_mode(mode);
@@ -75,16 +75,16 @@ pub(crate) fn execute_action(
     }
     if !execution.outcome.effects.is_empty() {
         log::trace!("kernel command produced {:?}", execution.outcome.effects);
-        CommandOutcome::from_kernel(execution.outcome)
+        AppCommandOutcome::from_kernel(execution.outcome)
     } else {
-        CommandOutcome::redraw()
+        AppCommandOutcome::redraw()
     }
 }
 
 pub fn dispatch(
     app: &mut App,
     command: SemanticRequest,
-) -> Result<CommandOutcome, SemanticRequest> {
+) -> Result<AppCommandOutcome, SemanticRequest> {
     match command {
         SemanticRequest::RangeOp {
             operation,
@@ -97,7 +97,7 @@ pub fn dispatch(
         )),
         SemanticRequest::ReplaceBuffer { .. } => {
             app.model.status = Some("Typed host mutation requires the script host boundary".into());
-            Ok(CommandOutcome::statusline())
+            Ok(AppCommandOutcome::statusline())
         }
         SemanticRequest::Editor { action, register } => {
             let active_window = app.ui.focused_window_id();
@@ -109,13 +109,13 @@ pub fn dispatch(
                     if let Err(error) = app.next_tab(*count as usize) {
                         app.model.status = Some(error);
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
                 vim_input::Action::PreviousTab { count } => {
                     if let Err(error) = app.previous_tab(*count as usize) {
                         app.model.status = Some(error);
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
                 vim_input::Action::BeginMacro { register } => {
                     if let Err(error) = app
@@ -124,22 +124,22 @@ pub fn dispatch(
                         .begin_macro_recording(register.clone())
                     {
                         app.model.status = Some(error.to_string());
-                        return Ok(CommandOutcome::statusline());
+                        return Ok(AppCommandOutcome::statusline());
                     }
                     app.services.macros.begin(register.clone());
                     app.input.set_in_recording(true);
                     app.model.status = Some(format!("recording @{register}"));
-                    return Ok(CommandOutcome::statusline());
+                    return Ok(AppCommandOutcome::statusline());
                 }
                 vim_input::Action::EndMacro => {
                     let Some(register) = app.model.kernel_mut().end_macro_recording() else {
                         app.model.status = Some("macro recording is not active".to_string());
-                        return Ok(CommandOutcome::statusline());
+                        return Ok(AppCommandOutcome::statusline());
                     };
                     app.services.macros.end();
                     app.input.set_in_recording(false);
                     app.model.status = Some(format!("macro @{register} recorded"));
-                    return Ok(CommandOutcome::statusline());
+                    return Ok(AppCommandOutcome::statusline());
                 }
                 vim_input::Action::ReplayMacro { count, register } => {
                     let (register, count) = match app
@@ -150,7 +150,7 @@ pub fn dispatch(
                         Ok(request) => request,
                         Err(error) => {
                             app.model.status = Some(error.to_string());
-                            return Ok(CommandOutcome::statusline());
+                            return Ok(AppCommandOutcome::statusline());
                         }
                     };
                     let replay_actions = app.services.macros.replay(&register, count);
@@ -162,21 +162,21 @@ pub fn dispatch(
                             },
                         ));
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
                 vim_input::Action::Script { count, script } => {
                     for _ in 0..*count {
                         app.command_queue
                             .push_back(AppCommand::Script(ScriptRequest::Execute(script.clone())));
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
                 vim_input::Action::KeySequence { count, keys } => {
                     let seq = match vim_input::KeySequence::parse(keys) {
                         Ok(s) => s,
                         Err(err) => {
                             app.model.status = Some(format!("Key sequence error: {err}"));
-                            return Ok(CommandOutcome::statusline());
+                            return Ok(AppCommandOutcome::statusline());
                         }
                     };
                     for _ in 0..*count {
@@ -188,7 +188,7 @@ pub fn dispatch(
                             }
                         }
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
                 vim_input::Action::Sequence { count, actions } => {
                     for _ in 0..*count {
@@ -201,7 +201,7 @@ pub fn dispatch(
                             ));
                         }
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
 
                 vim_input::Action::Repeat { count } => {
@@ -217,7 +217,7 @@ pub fn dispatch(
                             }
                         }
                     }
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
                 _ => {
                     if app.model.kernel().recording_target().is_some() {
@@ -234,7 +234,7 @@ pub fn dispatch(
                 .command_context(crate::kernel::CommandKind::Edit)
             else {
                 app.model.status = Some("No current editor context".to_string());
-                return Ok(CommandOutcome::statusline());
+                return Ok(AppCommandOutcome::statusline());
             };
 
             let mut outcome =
@@ -437,7 +437,7 @@ pub fn dispatch(
                 // clearing required
                 if app.model.kernel().search().substitute_text().is_some() {
                     app.model.kernel_mut().search_mut().clear();
-                    return Ok(CommandOutcome::redraw());
+                    return Ok(AppCommandOutcome::redraw());
                 }
             }
 

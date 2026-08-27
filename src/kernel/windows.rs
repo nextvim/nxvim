@@ -1,6 +1,10 @@
 use super::{BufferId, WindowId};
 use std::collections::HashMap;
 
+/// Kernel-facing name for the semantic portion of a projected window.
+/// Concrete storage remains in the UI until window projection is fully moved.
+pub type SemanticWindow = vim_ui::WindowState;
+
 /// Semantic identity and buffer association for an editor window.
 ///
 /// Geometry and rendering state remain in `vim-ui::Window`. This record is

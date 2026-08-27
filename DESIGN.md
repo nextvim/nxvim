@@ -474,13 +474,19 @@ It should not require adding another controller handler, generic fallback, or pa
 1. [x] Remove `ExCommand` dependencies from `kernel/command.rs` and `kernel/state.rs`.
 2. [x] Move command-line state/history/edit semantics into kernel; delete `CommandlineHandler`.
 3. [x] Move search semantics into kernel and remove duplicate search implementations in `app/search.rs` and `app/ex.rs`.
-4. Introduce typed kernel range commands; stop converting Ex ranges back into `vim_input::Action`.
-5. Split substitution semantics from app prompt orchestration.
-6. Merge and delete `lifecycle_ops.rs`.
-7. Dissolve and delete `operations.rs` by moving functions to lifecycle/navigation/UI/kernel owners.
-8. Retire `ExCommand` and promote typed app requests as the only app queue envelope.
-9. Rename or remove app `CommandOutcome` so the kernel/app distinction is explicit.
+4. [x] Introduce typed kernel range commands; stop converting Ex ranges back into `vim_input::Action`.
+5. [x] Split substitution semantics from app prompt orchestration.
+6. [x] Merge and delete `lifecycle_ops.rs`.
+7. [x] Dissolve and delete `operations.rs` by moving functions to lifecycle/navigation/UI/kernel owners.
+8. [x] Retire `ExCommand` and promote typed app requests as the only app queue envelope.
+9. [x] Rename app `CommandOutcome` to `AppCommandOutcome` so the kernel/app distinction is explicit.
 10. Move semantic window state and registers into kernel-owned structures, eliminating concrete `WindowState` and clipboard service dependencies from `kernel/editor.rs`.
+    10.1. Put `SelectionSet` and folds into kernel `WindowRecord`.
+    10.2. Add joint buffer/window borrowing APIs to `EditorState`.
+    10.3. Change `WindowOps::edit_window` to operate on kernel semantic state.
+    10.4. Project kernel selections and folds into UI state before rendering.
+    10.5. Update command-line, range, search, substitution, statusline, rendering, and display-map scheduling consumers.
+    10.6. Separate viewport motions from buffer motions in `kernel/normal.rs`.
 11. Split `kernel/normal.rs` and `kernel/editor.rs` by semantic family without changing ownership or creating handler frameworks.
 12. Extract category execution from `Runtime::run` into one app executor.
 

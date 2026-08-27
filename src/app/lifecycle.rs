@@ -2,27 +2,27 @@
 
 use crate::app::App;
 use crate::app::command::LifecycleRequest;
-use crate::app::outcome::CommandOutcome;
+use crate::app::outcome::AppCommandOutcome;
 
 fn save_async(
     app: &mut App,
     active_window: vim_ui::WindowId,
     path: Option<std::path::PathBuf>,
     force: bool,
-) -> CommandOutcome {
+) -> AppCommandOutcome {
     let Some(buffer_id) = crate::app::windows::WindowOps::window_buffer(&app.ui, active_window)
     else {
-        return CommandOutcome::statusline();
+        return AppCommandOutcome::statusline();
     };
     let Ok(buffer) = app.model.get_buffer(buffer_id) else {
-        return CommandOutcome::statusline();
+        return AppCommandOutcome::statusline();
     };
     if buffer.options().readonly && !force {
         app.model.status = Some(format!(
             "Save failed: ReadOnly (buffer {})",
             buffer_id.get()
         ));
-        return CommandOutcome::statusline();
+        return AppCommandOutcome::statusline();
     }
     let path = match path.or_else(|| buffer.path().map(std::path::Path::to_path_buf)) {
         Some(path) => path,
@@ -31,7 +31,7 @@ fn save_async(
                 "Save failed: No file name (buffer {})",
                 buffer_id.get()
             ));
-            return CommandOutcome::statusline();
+            return AppCommandOutcome::statusline();
         }
     };
     let snapshot = buffer.snapshot();
@@ -67,10 +67,10 @@ fn save_async(
         app.services.files.set_pending_task(buffer_id, task_id);
         app.model.status = Some("Saving file in background...".to_string());
     }
-    CommandOutcome::redraw()
+    AppCommandOutcome::redraw()
 }
 
-pub fn dispatch(app: &mut App, command: LifecycleRequest) -> CommandOutcome {
+pub fn dispatch(app: &mut App, command: LifecycleRequest) -> AppCommandOutcome {
     let active_window = app.ui.focused_window_id();
     match command {
         LifecycleRequest::Save { path, force } => save_async(app, active_window, path, force),
@@ -118,12 +118,12 @@ impl LifecycleOperations {
         active_window: WindowId,
         path: Option<&Path>,
         force: bool,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         match Self::write_result(ui, model, active_window, path, force) {
             Ok(outcome) => outcome,
             Err(error) => {
                 model.status = Some(format!("Save failed: {error}"));
-                CommandOutcome::redraw()
+                AppCommandOutcome::redraw()
             }
         }
     }
@@ -136,7 +136,7 @@ impl LifecycleOperations {
         active_window: WindowId,
         path: Option<&Path>,
         force: bool,
-    ) -> Result<CommandOutcome, vim_buffer::BufferError> {
+    ) -> Result<AppCommandOutcome, vim_buffer::BufferError> {
         let result = match WindowOps::window_buffer(ui, active_window) {
             Some(buffer_id) => model.save(buffer_id, path, force),
             None => Err(vim_buffer::BufferError::NotImplemented(
@@ -149,7 +149,7 @@ impl LifecycleOperations {
             saved.path.display(),
             saved.bytes_written
         ));
-        Ok(CommandOutcome::redraw())
+        Ok(AppCommandOutcome::redraw())
     }
 
     /// Edit a file or create a new buffer in the active window
@@ -159,7 +159,7 @@ impl LifecycleOperations {
         active_window: WindowId,
         path: Option<&Path>,
         force: bool,
-    ) -> Result<CommandOutcome, vim_script::runtime::RuntimeError> {
+    ) -> Result<AppCommandOutcome, vim_script::runtime::RuntimeError> {
         if !force {
             if let Some(buffer_id) = WindowOps::window_buffer(ui, active_window) {
                 if let Ok(buffer) = model.get_buffer(buffer_id) {
@@ -185,7 +185,7 @@ impl LifecycleOperations {
                 .set_window_buffer(active_window, buffer_id);
         }
 
-        Ok(CommandOutcome::redraw())
+        Ok(AppCommandOutcome::redraw())
     }
 
     /// Quit window or application
@@ -194,7 +194,7 @@ impl LifecycleOperations {
         model: &mut EditorModel,
         active_window: WindowId,
         force: bool,
-    ) -> Result<CommandOutcome, vim_script::runtime::RuntimeError> {
+    ) -> Result<AppCommandOutcome, vim_script::runtime::RuntimeError> {
         if !force {
             if let Some(buffer_id) = WindowOps::window_buffer(ui, active_window) {
                 if let Ok(buffer) = model.get_buffer(buffer_id) {
@@ -216,7 +216,7 @@ impl LifecycleOperations {
             .collect();
 
         if non_cmd_windows.len() > 1 {
-            let mut outcome = CommandOutcome::redraw();
+            let mut outcome = AppCommandOutcome::redraw();
             outcome.view_effects.push(ViewEffect::Close(active_window));
             if let Some(&remaining) = non_cmd_windows.iter().find(|&&win| win != active_window) {
                 outcome.view_effects.push(ViewEffect::Focus(remaining));
@@ -224,7 +224,7 @@ impl LifecycleOperations {
             Ok(outcome)
         } else {
             let Some(active_buffer) = WindowOps::window_buffer(ui, active_window) else {
-                return Ok(CommandOutcome::quit());
+                return Ok(AppCommandOutcome::quit());
             };
             let remaining_buffer = model
                 .list()
@@ -240,9 +240,9 @@ impl LifecycleOperations {
                     )
                 })?;
                 WindowOps::switch_to(ui, model, active_window, remaining_buffer);
-                Ok(CommandOutcome::redraw())
+                Ok(AppCommandOutcome::redraw())
             } else {
-                Ok(CommandOutcome::quit())
+                Ok(AppCommandOutcome::quit())
             }
         }
     }
@@ -254,7 +254,7 @@ impl LifecycleOperations {
         active_window: WindowId,
         forward: bool,
         count: usize,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         for _ in 0..count {
             if forward {
                 WindowOps::switch_next_buffer(ui, model, active_window);
@@ -265,14 +265,14 @@ impl LifecycleOperations {
         if let Some(buffer) = WindowOps::window_buffer(ui, active_window) {
             let _ = model.kernel_mut().set_window_buffer(active_window, buffer);
         }
-        CommandOutcome::redraw()
+        AppCommandOutcome::redraw()
     }
 
     /// Quit the application after verifying that no editor buffer has unsaved changes.
     pub fn quit_all(
         model: &mut EditorModel,
         force: bool,
-    ) -> Result<CommandOutcome, vim_script::runtime::RuntimeError> {
+    ) -> Result<AppCommandOutcome, vim_script::runtime::RuntimeError> {
         if !force
             && let Some(buffer) = model
                 .buffers()
@@ -295,25 +295,25 @@ impl LifecycleOperations {
             ));
         }
 
-        Ok(CommandOutcome::quit())
+        Ok(AppCommandOutcome::quit())
     }
 
     /// Window split directional navigation
-    pub fn split_window(active_window: WindowId, horizontal: bool) -> CommandOutcome {
+    pub fn split_window(active_window: WindowId, horizontal: bool) -> AppCommandOutcome {
         let axis = if horizontal {
             SplitAxis::Rows
         } else {
             SplitAxis::Columns
         };
-        CommandOutcome::with_effect(ViewEffect::Split {
+        AppCommandOutcome::with_effect(ViewEffect::Split {
             source: active_window,
             axis,
         })
     }
 
     /// Window focus directional navigation
-    pub fn focus_window(direction: NavigationDirection) -> CommandOutcome {
-        CommandOutcome::with_effect(ViewEffect::FocusDirection(direction))
+    pub fn focus_window(direction: NavigationDirection) -> AppCommandOutcome {
+        AppCommandOutcome::with_effect(ViewEffect::FocusDirection(direction))
     }
 }
 
@@ -324,7 +324,7 @@ impl LifecycleOperations {
 /// `Command::WriteQuitAll`). This is
 /// the single call path for `LifecycleOperations::quit`/`LifecycleOperations::edit`,
 /// so there is exactly one place that turns their `Result` into a
-/// `CommandOutcome`/status message.
+/// `AppCommandOutcome`/status message.
 pub struct LifecycleHandler;
 
 impl LifecycleHandler {
@@ -337,10 +337,10 @@ impl LifecycleHandler {
         model: &mut EditorModel,
         active_window: WindowId,
         action: &Action,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         match action {
             Action::Quit => Self::quit(ui, model, active_window, false),
-            _ => CommandOutcome::default(),
+            _ => AppCommandOutcome::default(),
         }
     }
 
@@ -349,12 +349,12 @@ impl LifecycleHandler {
         model: &mut EditorModel,
         active_window: WindowId,
         force: bool,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         let result = LifecycleOperations::quit(ui, model, active_window, force);
         Self::outcome_or_status(model, result)
     }
 
-    pub fn quit_all(model: &mut EditorModel, force: bool) -> CommandOutcome {
+    pub fn quit_all(model: &mut EditorModel, force: bool) -> AppCommandOutcome {
         let result = LifecycleOperations::quit_all(model, force);
         Self::outcome_or_status(model, result)
     }
@@ -365,7 +365,7 @@ impl LifecycleHandler {
         active_window: WindowId,
         path: Option<&Path>,
         force: bool,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         let result = LifecycleOperations::edit(ui, model, active_window, path, force);
         Self::outcome_or_status(model, result)
     }
@@ -378,7 +378,7 @@ impl LifecycleHandler {
         active_window: WindowId,
         path: Option<&Path>,
         force: bool,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         match LifecycleOperations::write_result(ui, model, active_window, path, force) {
             Ok(mut outcome) => {
                 outcome.merge(Self::quit(ui, model, active_window, force));
@@ -386,7 +386,7 @@ impl LifecycleHandler {
             }
             Err(error) => {
                 model.status = Some(format!("Save failed: {error}"));
-                CommandOutcome::redraw()
+                AppCommandOutcome::redraw()
             }
         }
     }
@@ -398,24 +398,24 @@ impl LifecycleHandler {
         model: &mut EditorModel,
         active_window: WindowId,
         force: bool,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         Self::write_and_quit(ui, model, active_window, None, force)
     }
 
-    pub fn clear_search_highlight(model: &mut EditorModel) -> CommandOutcome {
+    pub fn clear_search_highlight(model: &mut EditorModel) -> AppCommandOutcome {
         model.kernel_mut().search_mut().clear();
-        CommandOutcome::redraw()
+        AppCommandOutcome::redraw()
     }
 
     fn outcome_or_status(
         model: &mut EditorModel,
-        result: Result<CommandOutcome, vim_script::runtime::RuntimeError>,
-    ) -> CommandOutcome {
+        result: Result<AppCommandOutcome, vim_script::runtime::RuntimeError>,
+    ) -> AppCommandOutcome {
         match result {
             Ok(outcome) => outcome,
             Err(error) => {
                 model.status = Some(error.message);
-                CommandOutcome::redraw()
+                AppCommandOutcome::redraw()
             }
         }
     }
@@ -426,7 +426,7 @@ impl LifecycleHandler {
         app_colorscheme: &mut Option<vim_colorscheme::ColorScheme>,
         app_highlighter: &mut Option<textmate::Highlighter<'static>>,
         name: Option<&str>,
-    ) -> CommandOutcome {
+    ) -> AppCommandOutcome {
         if let Some(name) = name {
             if let Some(cs) = vim_colorscheme::ColorScheme::get_by_name(name) {
                 let highlighter = textmate::load_colorscheme(&cs);
@@ -435,10 +435,10 @@ impl LifecycleHandler {
                 ui.set_colorscheme(Some(cs));
                 model.invalidate_all_highlights();
                 model.status = None;
-                CommandOutcome::redraw()
+                AppCommandOutcome::redraw()
             } else {
                 model.status = Some(format!("E185: Cannot find color scheme '{name}'"));
-                CommandOutcome::redraw()
+                AppCommandOutcome::redraw()
             }
         } else {
             if let Some(cs) = app_colorscheme {
@@ -446,7 +446,7 @@ impl LifecycleHandler {
             } else {
                 model.status = Some("default".to_string());
             }
-            CommandOutcome::redraw()
+            AppCommandOutcome::redraw()
         }
     }
 }
