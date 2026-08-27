@@ -187,7 +187,6 @@ fn vim_glob_matches(pattern: &str, subject: &str) -> bool {
     pattern_index == pattern.len()
 }
 
-
 #[derive(Clone, Debug, Default)]
 pub struct ModuleCache {
     pub modules: HashMap<ModuleCacheKey, BytecodeModule>,

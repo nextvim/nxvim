@@ -102,11 +102,8 @@ fn enter(
 
     model.kernel_mut().command_line_mut().enter(kind);
     if model.kernel().command_line().is_search() {
-        model.search_range = None;
-        model.substitute_text = None;
         if selection_text.is_empty() {
-            model.search_pattern = None;
-            model.search_regex = None;
+            clear_search_preview(model);
         } else {
             set_search_preview(model, format!("\\<{selection_text}\\>"));
         }
@@ -243,16 +240,9 @@ fn set_text(ui: &mut Ui, model: &mut EditorModel, commandline_window: WindowId, 
 }
 
 fn set_search_preview(model: &mut EditorModel, pattern: String) {
-    model.search_regex =
-        vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
-    model.search_pattern = Some(pattern);
-    model.search_range = None;
-    model.substitute_text = None;
+    model.kernel_mut().search_mut().set_pattern(pattern);
 }
 
 fn clear_search_preview(model: &mut EditorModel) {
-    model.search_pattern = None;
-    model.search_regex = None;
-    model.search_range = None;
-    model.substitute_text = None;
+    model.kernel_mut().search_mut().clear();
 }

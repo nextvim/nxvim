@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use vim_script::host::CommandRequest;
 use vim_script::runtime::{RuntimeError, RuntimeErrorKind};
 
-use crate::app::command::ExCommand as Command;
+use crate::app::command::{
+    AppCommand as Command, ApplicationRequest, LifecycleRequest, NavigationRequest, PromptRequest,
+    ScriptRequest, SemanticRequest,
+};
 use crate::app::range_ops::RangeOperation;
 
 /// Execute the Ex command request and translate it to a controller Command.
@@ -15,7 +18,7 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "bprevious" | "bprev" => buffers(request),
         "tabnext" | "nexttab" | "tabprevious" | "previoustab" => tabs(request),
         "tabnew" => tab_new(request),
-        "tabclose" => Ok(Command::TabClose),
+        "tabclose" => Ok(Command::Navigation(NavigationRequest::TabClose)),
         "save" | "write" | "update" => files(request),
         "edit" | "enew" | "view" | "visual" | "ex" => edit(request),
         "split" | "hsplit" | "vsplit" => split(request),
@@ -27,19 +30,21 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
         "wqall" | "wqa" | "xa" | "xall" => wqall(request),
         "read" => read(request),
         "file" => file(request),
-        "nohlsearch" | "nohl" => Ok(Command::ClearSearchHighlight),
+        "nohlsearch" | "nohl" => Ok(Command::Application(
+            ApplicationRequest::ClearSearchHighlight,
+        )),
         "pwd" | "cd" | "chdir" | "lcd" | "tcd" | "checktime" | "copy" | "move" | "join"
         | "print" | "change" | "global" | "g" | "vglobal" | "v" | "vimgrep" | "vimgrepadd" => {
             placeholders(request)
         }
         "substitute" | "s" | "&" | "~" | "smagic" | "snomagic" => substitute(request),
-        "" => Ok(Command::RangeOp {
+        "" => Ok(Command::Semantic(SemanticRequest::RangeOp {
             operation: RangeOperation::Goto,
             bang: request.command.bang,
             range: request.command.range,
             count: request.command.count,
             register: request.command.register,
-        }),
+        })),
         "/" => search_forward(request),
         "?" => search_backward(request),
         "delete" => delete(request),
@@ -60,32 +65,36 @@ pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {
 }
 
 fn quit(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::Quit {
+    Ok(Command::Lifecycle(LifecycleRequest::Quit {
         force: request.command.bang,
-    })
+    }))
 }
 
 fn tabs(request: CommandRequest) -> Result<Command, RuntimeError> {
     let count = request.command.count.unwrap_or(1) as usize;
     match request.command.name.as_str() {
-        "tabnext" | "nexttab" => Ok(Command::TabNext { count }),
-        "tabprevious" | "previoustab" => Ok(Command::TabPrevious { count }),
+        "tabnext" | "nexttab" => Ok(Command::Navigation(NavigationRequest::TabNext { count })),
+        "tabprevious" | "previoustab" => Ok(Command::Navigation(NavigationRequest::TabPrevious {
+            count,
+        })),
         _ => unreachable!(),
     }
 }
 
 fn tab_new(request: CommandRequest) -> Result<Command, RuntimeError> {
     let path = request.command.arguments.trim();
-    Ok(Command::TabNew {
+    Ok(Command::Navigation(NavigationRequest::TabNew {
         path: (!path.is_empty()).then(|| PathBuf::from(path)),
-    })
+    }))
 }
 
 fn buffers(request: CommandRequest) -> Result<Command, RuntimeError> {
     let count = request.command.count.unwrap_or(1) as usize;
     match request.command.name.as_str() {
-        "bnext" => Ok(Command::BufferNext { count }),
-        "bprevious" | "bprev" => Ok(Command::BufferPrevious { count }),
+        "bnext" => Ok(Command::Navigation(NavigationRequest::BufferNext { count })),
+        "bprevious" | "bprev" => Ok(Command::Navigation(NavigationRequest::BufferPrevious {
+            count,
+        })),
 
         _ => unreachable!(),
     }
@@ -93,10 +102,10 @@ fn buffers(request: CommandRequest) -> Result<Command, RuntimeError> {
 
 fn files(request: CommandRequest) -> Result<Command, RuntimeError> {
     let argument = request.command.arguments.trim();
-    Ok(Command::Save {
+    Ok(Command::Lifecycle(LifecycleRequest::Save {
         path: (!argument.is_empty()).then(|| PathBuf::from(argument)),
         force: request.command.bang,
-    })
+    }))
 }
 
 fn edit(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -106,10 +115,10 @@ fn edit(request: CommandRequest) -> Result<Command, RuntimeError> {
     } else {
         Some(PathBuf::from(argument))
     };
-    Ok(Command::Edit {
+    Ok(Command::Lifecycle(LifecycleRequest::Edit {
         path,
         force: request.command.bang,
-    })
+    }))
 }
 
 fn saveas(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -121,36 +130,36 @@ fn saveas(request: CommandRequest) -> Result<Command, RuntimeError> {
             "Argument required",
         ));
     }
-    Ok(Command::Save {
+    Ok(Command::Lifecycle(LifecycleRequest::Save {
         path: Some(PathBuf::from(argument)),
         force: request.command.bang,
-    })
+    }))
 }
 
 fn qall(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::QuitAll {
+    Ok(Command::Lifecycle(LifecycleRequest::QuitAll {
         force: request.command.bang,
-    })
+    }))
 }
 
 fn cquit(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::Quit {
+    Ok(Command::Lifecycle(LifecycleRequest::Quit {
         force: request.command.bang,
-    })
+    }))
 }
 
 fn wq(request: CommandRequest) -> Result<Command, RuntimeError> {
     let argument = request.command.arguments.trim();
-    Ok(Command::WriteQuit {
+    Ok(Command::Lifecycle(LifecycleRequest::WriteQuit {
         path: (!argument.is_empty()).then(|| PathBuf::from(argument)),
         force: request.command.bang,
-    })
+    }))
 }
 
 fn wqall(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::WriteQuitAll {
+    Ok(Command::Lifecycle(LifecycleRequest::WriteQuitAll {
         force: request.command.bang,
-    })
+    }))
 }
 
 fn read(_request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -181,33 +190,33 @@ fn placeholders(request: CommandRequest) -> Result<Command, RuntimeError> {
 }
 
 fn delete(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::RangeOp {
+    Ok(Command::Semantic(SemanticRequest::RangeOp {
         operation: RangeOperation::Delete,
         bang: request.command.bang,
         range: request.command.range,
         count: request.command.count,
         register: request.command.register,
-    })
+    }))
 }
 
 fn yank(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::RangeOp {
+    Ok(Command::Semantic(SemanticRequest::RangeOp {
         operation: RangeOperation::Yank,
         bang: request.command.bang,
         range: request.command.range,
         count: request.command.count,
         register: request.command.register,
-    })
+    }))
 }
 
 fn put(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::RangeOp {
+    Ok(Command::Semantic(SemanticRequest::RangeOp {
         operation: RangeOperation::Put,
         bang: request.command.bang,
         range: request.command.range,
         count: request.command.count,
         register: request.command.register,
-    })
+    }))
 }
 
 fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -231,9 +240,9 @@ fn split(request: CommandRequest) -> Result<Command, RuntimeError> {
 }
 
 fn split_new(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::SplitNew {
+    Ok(Command::Navigation(NavigationRequest::SplitNew {
         vertical: request.command.name == "vnew",
-    })
+    }))
 }
 
 fn colorscheme(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -243,21 +252,27 @@ fn colorscheme(request: CommandRequest) -> Result<Command, RuntimeError> {
     } else {
         Some(name.to_owned())
     };
-    Ok(Command::Colorscheme { name: name_opt })
+    Ok(Command::Application(ApplicationRequest::Colorscheme {
+        name: name_opt,
+    }))
 }
 
 fn set(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::Set {
+    Ok(Command::Application(ApplicationRequest::Set {
         arguments: request.command.arguments,
-    })
+    }))
 }
 
 fn syntax(request: CommandRequest) -> Result<Command, RuntimeError> {
     let arg = request.command.arguments.trim();
     if arg == "on" {
-        Ok(Command::Syntax { enable: true })
+        Ok(Command::Application(ApplicationRequest::Syntax {
+            enable: true,
+        }))
     } else if arg == "off" {
-        Ok(Command::Syntax { enable: false })
+        Ok(Command::Application(ApplicationRequest::Syntax {
+            enable: false,
+        }))
     } else {
         Err(RuntimeError::coded(
             "E474",
@@ -270,9 +285,13 @@ fn syntax(request: CommandRequest) -> Result<Command, RuntimeError> {
 fn treesitter(request: CommandRequest) -> Result<Command, RuntimeError> {
     let arg = request.command.arguments.trim();
     if arg == "on" {
-        Ok(Command::Treesitter { enable: true })
+        Ok(Command::Application(ApplicationRequest::Treesitter {
+            enable: true,
+        }))
     } else if arg == "off" {
-        Ok(Command::Treesitter { enable: false })
+        Ok(Command::Application(ApplicationRequest::Treesitter {
+            enable: false,
+        }))
     } else {
         Err(RuntimeError::coded(
             "E474",
@@ -285,9 +304,13 @@ fn treesitter(request: CommandRequest) -> Result<Command, RuntimeError> {
 fn indexer(request: CommandRequest) -> Result<Command, RuntimeError> {
     let arg = request.command.arguments.trim();
     if arg == "on" {
-        Ok(Command::Indexer { enable: true })
+        Ok(Command::Application(ApplicationRequest::Indexer {
+            enable: true,
+        }))
     } else if arg == "off" {
-        Ok(Command::Indexer { enable: false })
+        Ok(Command::Application(ApplicationRequest::Indexer {
+            enable: false,
+        }))
     } else {
         Err(RuntimeError::coded(
             "E474",
@@ -300,9 +323,13 @@ fn indexer(request: CommandRequest) -> Result<Command, RuntimeError> {
 fn inspect(request: CommandRequest) -> Result<Command, RuntimeError> {
     let arg = request.command.arguments.trim();
     if arg == "on" {
-        Ok(Command::Inspect { enable: true })
+        Ok(Command::Application(ApplicationRequest::Inspect {
+            enable: true,
+        }))
     } else if arg == "off" {
-        Ok(Command::Inspect { enable: false })
+        Ok(Command::Application(ApplicationRequest::Inspect {
+            enable: false,
+        }))
     } else {
         Err(RuntimeError::coded(
             "E474",
@@ -313,15 +340,15 @@ fn inspect(request: CommandRequest) -> Result<Command, RuntimeError> {
 }
 
 fn search_forward(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::SearchForward {
+    Ok(Command::Semantic(SemanticRequest::SearchForward {
         pattern: request.command.arguments,
-    })
+    }))
 }
 
 fn search_backward(request: CommandRequest) -> Result<Command, RuntimeError> {
-    Ok(Command::SearchBackward {
+    Ok(Command::Semantic(SemanticRequest::SearchBackward {
         pattern: request.command.arguments,
-    })
+    }))
 }
 
 fn substitute(request: CommandRequest) -> Result<Command, RuntimeError> {
@@ -381,10 +408,10 @@ fn substitute(request: CommandRequest) -> Result<Command, RuntimeError> {
         }
     };
     let range = request.command.range.clone();
-    Ok(Command::Substitute {
+    Ok(Command::Semantic(SemanticRequest::Substitute {
         pattern,
         substitute_text,
         flags,
         range,
-    })
+    }))
 }

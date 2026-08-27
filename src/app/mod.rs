@@ -15,9 +15,7 @@ pub mod external_runtime;
 pub mod input;
 
 pub mod lifecycle;
-pub mod lifecycle_ops;
 pub mod navigation;
-pub mod operations;
 pub mod outcome;
 pub mod prompt;
 pub mod range_ops;

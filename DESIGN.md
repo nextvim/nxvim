@@ -156,21 +156,9 @@ kernel register mutation
 
 For put operations, app should snapshot external clipboard content into an owned kernel command input rather than lend the complete clipboard service.
 
-### `EditorModel` contains semantic state outside `EditorState`
+### Remaining `EditorModel` compatibility façade
 
-Current file:
-
-- `src/model/mod.rs`
-
-Misplaced or transitional fields include:
-
-- command-line mode and buffer identity;
-- command/search history and history cursor;
-- active search pattern and compiled regex;
-- substitution preview state;
-- status text.
-
-Command-line/search/substitution semantic state should move to kernel-owned state. Presentation status/messages may remain app-owned.
+Command-line mode/history and search/substitution-preview state have moved into `EditorState`. `EditorModel` remains a compatibility façade for kernel buffers, command-line buffer identity, analysis state, and presentation status. Presentation status may remain app-owned; remaining façade methods should shrink as callers use explicit kernel APIs.
 
 ## App File Inventory
 
@@ -198,7 +186,7 @@ Status meanings:
 | `src/app/navigation.rs` | KEEP | App coordination of splits, tabs, buffers, and UI projection | Keep orchestration. Move semantic tab/window/buffer selection decisions to kernel APIs and retain only view projection. |
 | `src/app/operations.rs` | MERGE/DELETE | Generic `SharedOperations` for save/edit/quit/buffer switch/split/focus | Dissolve by owner: lifecycle to `lifecycle.rs`, navigation to `navigation.rs`, semantic state changes to kernel, view effects to `ui.rs`. Delete generic type/file. |
 | `src/app/range_ops.rs` | MOVE SEMANTICS, KEEP THIN ADAPTER | Resolves Ex ranges, reconstructs `vim_input::Action`, invokes generic editor path | Kernel should own typed resolved range/operator commands. App may retain access adaptation for current line/marks until semantic window state moves. Remove `RangeCommandHandler` and action reconstruction. |
-| `src/app/search.rs` | MOVE SEMANTICS | Search request dispatch mutates search state and selections directly | Move search state, direction, matching, cursor outcome, and events into kernel. Keep only request routing. Merge with a future app search adapter if any infrastructure remains. |
+| `src/app/search.rs` | KEEP, THIN | Single app projection used by typed and Ex search requests | Kernel owns `SearchState`, regex compilation, direction/matching, and cursor outcomes. Keep only active-window lending and app outcome projection. |
 | `src/app/substitute.rs` | SPLIT | Substitution matching/mutation mixed with interactive prompt orchestration | Move range matching, replacement planning, and transactions into kernel. Keep prompt lifecycle and choice-to-command conversion in app. Delete `SubstituteHandler` after split. |
 | `src/app/prompt.rs` | KEEP | Prompt state and response routing | Keep UI interaction. Prompt payloads should produce typed app/kernel commands rather than call semantic helpers directly. |
 | `src/app/config/mod.rs` | KEEP, REVIEW OWNERSHIP | Shared option registry/store | Keep app/presentation options. Semantic buffer/window options should be exposed through kernel mutation boundaries and typed `OptionSet` events. Avoid a second script-owned store. |
@@ -228,6 +216,7 @@ Their former semantic/controller behavior is now kernel-owned or represented by 
 | `src/kernel/state.rs` | KEEP | Authoritative editor state. It now accepts neutral `CommandMetadata`; absorb command-line/search/register state over time. |
 | `src/kernel/command.rs` | KEEP, REFACTOR | Kernel command/context and neutral metadata types. App-owned command implementations are removed; centralize action traits and reduce repeated action classification. |
 | `src/kernel/editor.rs` | KEEP AS ADMISSION, SPLIT INTERNALLY | Current semantic action admission matrix. Continue dispatching into family modules; replace concrete clipboard/UI state dependencies. It must not grow into another monolithic legacy editor. |
+| `src/kernel/search.rs` | KEEP | Authoritative search pattern/regex/range/substitution-preview state and directional cursor matching. Typed app and Ex search requests converge here through one app projection. |
 | `src/kernel/normal.rs` | KEEP, SPLIT | Authoritative Normal semantics. Split into motion/operator/text-object/marks/folds/history modules because it is already about 2,400 lines. |
 | `src/kernel/insert.rs` | KEEP | Insert/Replace/open-line transaction semantics. |
 | `src/kernel/structural.rs` | KEEP | Put/join/indent structural mutations. |
@@ -255,7 +244,7 @@ Their former semantic/controller behavior is now kernel-owned or represented by 
 
 ### Misplaced semantic behavior to move into kernel
 
-1. search state and cursor matching from `search.rs`, `commandline.rs`, and `EditorModel`;
+1. [x] Search state, regex compilation, cursor matching, and substitution-preview state moved from app/model into `kernel::SearchState` and `kernel::search`; typed and Ex searches share `app::search::execute`.
 3. substitution planning/matching/mutation from `substitute.rs`;
 4. Ex range interpretation and typed range operations from `range_ops.rs`;
 5. remaining repeat/action trait classification from `editor.rs`;
@@ -484,7 +473,7 @@ It should not require adding another controller handler, generic fallback, or pa
 
 1. [x] Remove `ExCommand` dependencies from `kernel/command.rs` and `kernel/state.rs`.
 2. [x] Move command-line state/history/edit semantics into kernel; delete `CommandlineHandler`.
-3. Move search semantics into kernel and remove duplicate search implementations in `app/search.rs` and `app/ex.rs`.
+3. [x] Move search semantics into kernel and remove duplicate search implementations in `app/search.rs` and `app/ex.rs`.
 4. Introduce typed kernel range commands; stop converting Ex ranges back into `vim_input::Action`.
 5. Split substitution semantics from app prompt orchestration.
 6. Merge and delete `lifecycle_ops.rs`.

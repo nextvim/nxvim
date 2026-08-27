@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex, mpsc};
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::app::command::ExCommand as Command;
+use crate::app::command::{
+    AppCommand as Command, ApplicationRequest, LifecycleRequest, NavigationRequest, PromptRequest,
+    ScriptRequest, SemanticRequest,
+};
 use text::{BufferId, BufferSnapshot};
 
 use vim_script::{
@@ -516,7 +519,7 @@ impl Host for EditorHost {
                     let message = request.arguments[0].to_string();
                     sender
                         .send(EmittedCommand {
-                            command: Command::Echo { message },
+                            command: Command::Application(ApplicationRequest::Echo { message }),
                             context: request.context.clone(),
                         })
                         .map_err(|_| {
@@ -596,11 +599,11 @@ impl Host for EditorHost {
                 } => {
                     sender
                         .send(EmittedCommand {
-                            command: Command::ReplaceBuffer {
+                            command: Command::Semantic(SemanticRequest::ReplaceBuffer {
                                 buffer,
                                 range,
                                 text,
-                            },
+                            }),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -623,10 +626,10 @@ impl Host for EditorHost {
                     };
                     sender
                         .send(EmittedCommand {
-                            command: Command::Editor {
+                            command: Command::Semantic(SemanticRequest::Editor {
                                 action,
                                 register: None,
-                            },
+                            }),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -640,9 +643,15 @@ impl Host for EditorHost {
                 }
                 EditorRequestOperation::Tab(operation) => {
                     let command = match operation {
-                        TabRequestOperation::Next { count } => Command::TabNext { count },
-                        TabRequestOperation::Previous { count } => Command::TabPrevious { count },
-                        TabRequestOperation::Close => Command::TabClose,
+                        TabRequestOperation::Next { count } => {
+                            Command::Navigation(NavigationRequest::TabNext { count })
+                        }
+                        TabRequestOperation::Previous { count } => {
+                            Command::Navigation(NavigationRequest::TabPrevious { count })
+                        }
+                        TabRequestOperation::Close => {
+                            Command::Navigation(NavigationRequest::TabClose)
+                        }
                     };
                     sender
                         .send(EmittedCommand {
@@ -675,7 +684,7 @@ impl Host for EditorHost {
                     registration.push_str(&format!(" {event} {pattern} {command}"));
                     sender
                         .send(EmittedCommand {
-                            command: Command::ExecuteScript(registration),
+                            command: Command::Script(ScriptRequest::Execute(registration)),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -690,7 +699,9 @@ impl Host for EditorHost {
                 EditorRequestOperation::Message { text } => {
                     sender
                         .send(EmittedCommand {
-                            command: Command::Echo { message: text },
+                            command: Command::Application(ApplicationRequest::Echo {
+                                message: text,
+                            }),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -705,7 +716,7 @@ impl Host for EditorHost {
                 EditorRequestOperation::Prompt { message } => {
                     sender
                         .send(EmittedCommand {
-                            command: Command::OpenPrompt { message },
+                            command: Command::Prompt(PromptRequest::OpenPrompt { message }),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -799,11 +810,11 @@ impl Host for EditorHost {
                         })?;
                     sender
                         .send(EmittedCommand {
-                            command: Command::SetOption {
+                            command: Command::Application(ApplicationRequest::SetOption {
                                 name: request.name,
                                 value,
                                 scope: request.scope,
-                            },
+                            }),
                             context: request.context,
                         })
                         .map_err(|_| {
@@ -929,10 +940,10 @@ mod tests {
         let cmd = runtime.peek_command("write! output.txt").unwrap();
         assert!(matches!(
             cmd,
-            Command::Save {
+            Command::Lifecycle(LifecycleRequest::Save {
                 path: Some(path),
                 force: true,
-            } if path == PathBuf::from("output.txt")
+            }) if path == PathBuf::from("output.txt")
         ));
     }
 
@@ -1004,7 +1015,10 @@ mod tests {
         runtime.execute_with_context(":q", Some(current)).unwrap();
         let emitted = runtime.try_next_emitted_command().unwrap();
         assert_eq!(emitted.editor_context(), Some(current));
-        assert!(matches!(emitted.command, Command::Quit { force: false }));
+        assert!(matches!(
+            emitted.command,
+            Command::Lifecycle(LifecycleRequest::Quit { force: false })
+        ));
     }
 
     #[test]
@@ -1014,7 +1028,7 @@ mod tests {
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::Quit { force: false })
+                Some(Command::Lifecycle(LifecycleRequest::Quit { force: false }))
             ));
         }
     }
@@ -1027,7 +1041,7 @@ mod tests {
             let force = source.ends_with('!');
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::QuitAll { force: actual }) if actual == force
+                Some(Command::Lifecycle(LifecycleRequest::QuitAll { force: actual })) if actual == force
             ));
         }
     }
@@ -1038,28 +1052,32 @@ mod tests {
         runtime.execute("bnext").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::BufferNext { count: 1 })
+            Some(Command::Navigation(NavigationRequest::BufferNext {
+                count: 1
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("previoustab").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::TabPrevious { count: 1 })
+            Some(Command::Navigation(NavigationRequest::TabPrevious {
+                count: 1
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("tabnew notes.txt").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::TabNew { path: Some(path) }) if path == PathBuf::from("notes.txt")
+            Some(Command::Navigation(NavigationRequest::TabNew { path: Some(path) })) if path == PathBuf::from("notes.txt")
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("tabclose").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::TabClose)
+            Some(Command::Navigation(NavigationRequest::TabClose))
         ));
     }
 
@@ -1069,10 +1087,10 @@ mod tests {
         runtime.execute("write! output.txt").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Save {
+            Some(Command::Lifecycle(LifecycleRequest::Save {
                 path: Some(path),
                 force: true,
-            }) if path == PathBuf::from("output.txt")
+            })) if path == PathBuf::from("output.txt")
         ));
     }
 
@@ -1088,13 +1106,13 @@ mod tests {
         let mut runtime = ScriptRuntime::new();
         runtime.execute(":1,2d a").unwrap();
         let cmd = runtime.try_next_command().unwrap();
-        if let Command::RangeOp {
+        if let Command::Semantic(SemanticRequest::RangeOp {
             operation,
             range,
             count,
             register,
             ..
-        } = cmd
+        }) = cmd
         {
             assert_eq!(operation, crate::app::range_ops::RangeOperation::Delete);
             assert!(range.is_some());
@@ -1112,7 +1130,9 @@ mod tests {
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::ClearSearchHighlight)
+                Some(Command::Application(
+                    ApplicationRequest::ClearSearchHighlight
+                ))
             ));
         }
     }
@@ -1123,17 +1143,19 @@ mod tests {
         runtime.execute(":1,2x").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::WriteQuit {
+            Some(Command::Lifecycle(LifecycleRequest::WriteQuit {
                 path: None,
                 force: false
-            })
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute(":xa").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::WriteQuitAll { force: false })
+            Some(Command::Lifecycle(LifecycleRequest::WriteQuitAll {
+                force: false
+            }))
         ));
     }
 
@@ -1144,7 +1166,7 @@ mod tests {
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::SplitNew { vertical: actual }) if actual == vertical
+                Some(Command::Navigation(NavigationRequest::SplitNew { vertical: actual })) if actual == vertical
             ));
         }
     }
@@ -1201,14 +1223,16 @@ mod tests {
         runtime.execute("colorscheme").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Colorscheme { name: None })
+            Some(Command::Application(ApplicationRequest::Colorscheme {
+                name: None
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("colo tokyonight").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Colorscheme { name: Some(ref name) }) if name == "tokyonight"
+            Some(Command::Application(ApplicationRequest::Colorscheme { name: Some(ref name) })) if name == "tokyonight"
         ));
     }
 
@@ -1218,35 +1242,35 @@ mod tests {
         runtime.execute("message('hello world')").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Echo { ref message }) if message == "hello world"
+            Some(Command::Application(ApplicationRequest::Echo { ref message })) if message == "hello world"
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("message('message')").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Echo { ref message }) if message == "message"
+            Some(Command::Application(ApplicationRequest::Echo { ref message })) if message == "message"
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("echo 'hello world'").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Echo { ref message }) if message == "hello world"
+            Some(Command::Application(ApplicationRequest::Echo { ref message })) if message == "hello world"
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("echo 123").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Echo { ref message }) if message == "123"
+            Some(Command::Application(ApplicationRequest::Echo { ref message })) if message == "123"
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("echo 1+1").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Echo { ref message }) if message == "2"
+            Some(Command::Application(ApplicationRequest::Echo { ref message })) if message == "2"
         ));
 
         let mut runtime = ScriptRuntime::new();
@@ -1254,7 +1278,7 @@ mod tests {
         runtime.execute("echo x").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Echo { ref message }) if message == "123"
+            Some(Command::Application(ApplicationRequest::Echo { ref message })) if message == "123"
         ));
     }
 
@@ -1264,14 +1288,14 @@ mod tests {
         runtime.execute("set number").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Set { ref arguments }) if arguments == "number"
+            Some(Command::Application(ApplicationRequest::Set { ref arguments })) if arguments == "number"
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("se ts=4").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Set { ref arguments }) if arguments == "ts=4"
+            Some(Command::Application(ApplicationRequest::Set { ref arguments })) if arguments == "ts=4"
         ));
     }
 
@@ -1281,14 +1305,18 @@ mod tests {
         runtime.execute("syntax on").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Syntax { enable: true })
+            Some(Command::Application(ApplicationRequest::Syntax {
+                enable: true
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("syn off").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Syntax { enable: false })
+            Some(Command::Application(ApplicationRequest::Syntax {
+                enable: false
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
@@ -1301,14 +1329,18 @@ mod tests {
         runtime.execute("treesitter on").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Treesitter { enable: true })
+            Some(Command::Application(ApplicationRequest::Treesitter {
+                enable: true
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("tre off").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Treesitter { enable: false })
+            Some(Command::Application(ApplicationRequest::Treesitter {
+                enable: false
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
@@ -1321,14 +1353,18 @@ mod tests {
         runtime.execute("indexer on").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Indexer { enable: true })
+            Some(Command::Application(ApplicationRequest::Indexer {
+                enable: true
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("ind off").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::Indexer { enable: false })
+            Some(Command::Application(ApplicationRequest::Indexer {
+                enable: false
+            }))
         ));
 
         let mut runtime = ScriptRuntime::new();
@@ -1349,7 +1385,7 @@ mod tests {
             runtime.execute(source).unwrap();
             assert!(matches!(
                 runtime.try_next_command(),
-                Some(Command::Substitute { ref pattern, .. }) if pattern == "foo" || pattern.is_empty()
+                Some(Command::Semantic(SemanticRequest::Substitute { ref pattern, .. })) if pattern == "foo" || pattern.is_empty()
             ));
         }
     }
@@ -1362,11 +1398,11 @@ mod tests {
         assert!(matches!(
             runtime.try_next_emitted_command(),
             Some(EmittedCommand {
-                command: Command::SetOption {
+                command: Command::Application(ApplicationRequest::SetOption {
                     ref name,
                     value: Value::Bool(true),
                     scope: OptionRequestScope::Global,
-                },
+                }),
                 ..
             }) if name == "nu"
         ));
@@ -1378,14 +1414,14 @@ mod tests {
         runtime.execute("/foo/").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::SearchForward { ref pattern }) if pattern == "foo/"
+            Some(Command::Semantic(SemanticRequest::SearchForward { ref pattern })) if pattern == "foo/"
         ));
 
         let mut runtime = ScriptRuntime::new();
         runtime.execute("?bar?").unwrap();
         assert!(matches!(
             runtime.try_next_command(),
-            Some(Command::SearchBackward { ref pattern }) if pattern == "bar?"
+            Some(Command::Semantic(SemanticRequest::SearchBackward { ref pattern })) if pattern == "bar?"
         ));
     }
 }

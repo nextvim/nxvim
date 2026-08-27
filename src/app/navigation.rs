@@ -14,7 +14,7 @@ pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
                     path: None,
                     force: true,
                 }));
-            crate::app::operations::SharedOperations::split_window(active_window, !vertical)
+            crate::app::lifecycle::LifecycleOperations::split_window(active_window, !vertical)
         }
         NavigationRequest::TabNew { path } => {
             let buffer = match path {
@@ -49,7 +49,7 @@ pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
         }
         NavigationRequest::BufferNext { count } => {
             let active = app.ui.focused_window_id();
-            crate::app::operations::SharedOperations::switch_buffer(
+            crate::app::lifecycle::LifecycleOperations::switch_buffer(
                 &mut app.ui,
                 &mut app.model,
                 active,
@@ -59,7 +59,7 @@ pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
         }
         NavigationRequest::BufferPrevious { count } => {
             let active = app.ui.focused_window_id();
-            crate::app::operations::SharedOperations::switch_buffer(
+            crate::app::lifecycle::LifecycleOperations::switch_buffer(
                 &mut app.ui,
                 &mut app.model,
                 active,

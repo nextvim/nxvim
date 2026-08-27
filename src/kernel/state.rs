@@ -32,6 +32,7 @@ pub struct EditorState {
     last_replayed_macro: Option<String>,
     pending_command: Option<super::PendingCommandState>,
     command_line: super::CommandLineState,
+    search: super::SearchState,
     last_character_search: Option<vim_input::Action>,
     repeat_actions: Option<Vec<vim_input::Action>>,
     recording_repeat: Option<Vec<vim_input::Action>>,
@@ -51,6 +52,7 @@ impl EditorState {
             last_replayed_macro: None,
             pending_command: None,
             command_line: super::CommandLineState::default(),
+            search: super::SearchState::default(),
             last_character_search: None,
             repeat_actions: None,
             recording_repeat: None,
@@ -315,6 +317,14 @@ impl EditorState {
 
     pub fn last_character_search(&self) -> Option<&vim_input::Action> {
         self.last_character_search.as_ref()
+    }
+
+    pub fn search(&self) -> &super::SearchState {
+        &self.search
+    }
+
+    pub fn search_mut(&mut self) -> &mut super::SearchState {
+        &mut self.search
     }
 
     pub fn command_line(&self) -> &super::CommandLineState {

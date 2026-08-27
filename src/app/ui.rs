@@ -195,10 +195,10 @@ pub fn refresh_views(app: &mut crate::app::App, layout: &LayoutSnapshot) {
     let globals = RenderGlobals {
         mode: app.input.mode(),
         status_message: app.model.status.as_deref(),
-        search_pattern: app.model.search_pattern.as_deref(),
-        search_regex: app.model.search_regex.as_ref(),
-        search_range: app.model.search_range.as_ref(),
-        substitute_text: app.model.substitute_text.as_deref(),
+        search_pattern: app.model.kernel().search().pattern(),
+        search_regex: app.model.kernel().search().regex(),
+        search_range: app.model.kernel().search().range(),
+        substitute_text: app.model.kernel().search().substitute_text(),
         colorscheme: colorscheme.as_ref(),
     };
 

@@ -19,11 +19,11 @@ impl SubstituteHandler {
         flags: String,
         range: Option<vim_script::ast::CommandRange>,
     ) -> CommandOutcome {
-        app.model.search_pattern = Some(pattern.clone());
-        app.model.search_regex =
-            vim_regex::Regex::compile(&pattern, vim_regex::CompileOptions::default()).ok();
-        app.model.search_range = range.clone();
-        app.model.substitute_text = Some(replacement.clone());
+        app.model.kernel_mut().search_mut().set_substitution(
+            pattern.clone(),
+            range.clone(),
+            replacement.clone(),
+        );
 
         let window_id = app.ui.focused_window_id();
         let provider = crate::app::range_ops::EditorRangeStateProvider {
@@ -259,10 +259,7 @@ impl SubstituteHandler {
     fn finish(app: &mut App) {
         app.prompt = None;
         app.model.status = None;
-        app.model.search_pattern = None;
-        app.model.search_regex = None;
-        app.model.search_range = None;
-        app.model.substitute_text = None;
+        app.model.kernel_mut().search_mut().clear();
     }
 }
 

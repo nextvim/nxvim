@@ -13,6 +13,7 @@ mod ids;
 pub(crate) mod insert;
 pub(crate) mod normal;
 mod outcome;
+pub(crate) mod search;
 mod state;
 pub(crate) mod structural;
 mod tabs;
@@ -31,6 +32,7 @@ pub use outcome::{
     CommandEffect, CommandOutcome, MutationOutcome, RedrawInvalidation, RedrawInvalidationKind,
     RedrawRequest,
 };
+pub use search::SearchState;
 pub use state::{EditorContext, EditorState};
 pub use tabs::{TabPage, TabPages};
 pub(crate) use transaction::transaction;

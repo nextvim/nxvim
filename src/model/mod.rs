@@ -12,8 +12,6 @@ mod buffers;
 
 use vim_buffer::BufferId;
 
-use vim_regex::Regex;
-
 pub use buffer_state::BufferState;
 pub use buffers::Buffers;
 
@@ -22,11 +20,6 @@ pub struct EditorModel {
     initial_buffer: BufferId,
     pub status: Option<String>,
     pub commandline_buffer: BufferId,
-
-    pub search_pattern: Option<String>,
-    pub search_regex: Option<Regex>,
-    pub search_range: Option<vim_script::ast::CommandRange>,
-    pub substitute_text: Option<String>,
 }
 
 impl EditorModel {
@@ -46,11 +39,6 @@ impl EditorModel {
             initial_buffer,
             status: None,
             commandline_buffer,
-
-            search_pattern: None,
-            search_regex: None,
-            search_range: None,
-            substitute_text: None,
         }
     }
 

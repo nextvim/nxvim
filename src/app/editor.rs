@@ -2,10 +2,9 @@
 
 use crate::app::App;
 
-use crate::app::command::ExCommand as Command;
 use crate::app::command::{AppCommand, ScriptRequest, SemanticRequest};
 use crate::app::commandline;
-use crate::app::lifecycle_ops::LifecycleHandler;
+use crate::app::lifecycle::LifecycleHandler;
 use crate::app::outcome::CommandOutcome;
 use crate::app::range_ops::RangeCommandHandler;
 
@@ -34,7 +33,7 @@ pub(crate) fn execute_action(
 
     let current_mode = app.model.kernel().mode();
     let join_insert_transaction = app.model.kernel().join_insert_transaction();
-    let search_pattern = app.model.search_pattern.clone();
+    let search_pattern = app.model.kernel().search().pattern().map(str::to_owned);
     let mut execution = None;
     let _ = crate::app::windows::WindowOps::edit_window(
         &mut app.ui,
@@ -316,28 +315,28 @@ pub fn dispatch(
 
             let window_effect = match action {
                 vim_input::Action::SplitHorizontal { .. } => Some(
-                    crate::app::operations::SharedOperations::split_window(active_window, true),
+                    crate::app::lifecycle::LifecycleOperations::split_window(active_window, true),
                 ),
                 vim_input::Action::SplitVertical { .. } => Some(
-                    crate::app::operations::SharedOperations::split_window(active_window, false),
+                    crate::app::lifecycle::LifecycleOperations::split_window(active_window, false),
                 ),
                 vim_input::Action::FocusLeftWindow => {
-                    Some(crate::app::operations::SharedOperations::focus_window(
+                    Some(crate::app::lifecycle::LifecycleOperations::focus_window(
                         vim_ui::NavigationDirection::Left,
                     ))
                 }
                 vim_input::Action::FocusRightWindow => {
-                    Some(crate::app::operations::SharedOperations::focus_window(
+                    Some(crate::app::lifecycle::LifecycleOperations::focus_window(
                         vim_ui::NavigationDirection::Right,
                     ))
                 }
                 vim_input::Action::FocusUpWindow => {
-                    Some(crate::app::operations::SharedOperations::focus_window(
+                    Some(crate::app::lifecycle::LifecycleOperations::focus_window(
                         vim_ui::NavigationDirection::Up,
                     ))
                 }
                 vim_input::Action::FocusDownWindow => {
-                    Some(crate::app::operations::SharedOperations::focus_window(
+                    Some(crate::app::lifecycle::LifecycleOperations::focus_window(
                         vim_ui::NavigationDirection::Down,
                     ))
                 }
@@ -397,41 +396,36 @@ pub fn dispatch(
                             let mut runtime = crate::script::ScriptRuntime::new();
                             if let Ok(cmd) = runtime.peek_command(&command_line) {
                                 match cmd {
-                                    Command::SearchForward { pattern }
-                                    | Command::SearchBackward { pattern } => {
+                                    AppCommand::Semantic(SemanticRequest::SearchForward {
+                                        pattern,
+                                    })
+                                    | AppCommand::Semantic(SemanticRequest::SearchBackward {
+                                        pattern,
+                                    }) => {
                                         if pattern.is_empty() {
-                                            app.model.search_pattern = None;
-                                            app.model.search_regex = None;
+                                            app.model.kernel_mut().search_mut().clear();
                                         } else {
-                                            app.model.search_regex = vim_regex::Regex::compile(
-                                                &pattern,
-                                                vim_regex::CompileOptions::default(),
-                                            )
-                                            .ok();
-                                            app.model.search_pattern = Some(pattern);
+                                            app.model
+                                                .kernel_mut()
+                                                .search_mut()
+                                                .set_pattern(pattern);
                                         }
-                                        app.model.search_range = None;
-                                        app.model.substitute_text = None;
                                     }
-                                    Command::Substitute {
+                                    AppCommand::Semantic(SemanticRequest::Substitute {
                                         pattern,
                                         substitute_text,
                                         range,
                                         ..
-                                    } => {
+                                    }) => {
                                         if pattern.is_empty() {
-                                            app.model.search_pattern = None;
-                                            app.model.search_regex = None;
+                                            app.model.kernel_mut().search_mut().clear();
                                         } else {
-                                            app.model.search_regex = vim_regex::Regex::compile(
-                                                &pattern,
-                                                vim_regex::CompileOptions::default(),
-                                            )
-                                            .ok();
-                                            app.model.search_pattern = Some(pattern);
+                                            app.model.kernel_mut().search_mut().set_substitution(
+                                                pattern,
+                                                range,
+                                                substitute_text,
+                                            );
                                         }
-                                        app.model.search_range = range;
-                                        app.model.substitute_text = Some(substitute_text);
                                     }
                                     _ => {}
                                 }
@@ -441,11 +435,8 @@ pub fn dispatch(
                 }
             } else {
                 // clearing required
-                if app.model.substitute_text.is_some() {
-                    app.model.search_pattern = None;
-                    app.model.search_regex = None;
-                    app.model.search_range = None;
-                    app.model.substitute_text = None;
+                if app.model.kernel().search().substitute_text().is_some() {
+                    app.model.kernel_mut().search_mut().clear();
                     return Ok(CommandOutcome::redraw());
                 }
             }

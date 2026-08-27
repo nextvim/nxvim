@@ -10,10 +10,10 @@ use super::outcome::CommandOutcome;
 pub fn dispatch(app: &mut App, command: ApplicationRequest) -> CommandOutcome {
     match command {
         ApplicationRequest::ClearSearchHighlight => {
-            crate::app::lifecycle_ops::LifecycleHandler::clear_search_highlight(&mut app.model)
+            crate::app::lifecycle::LifecycleHandler::clear_search_highlight(&mut app.model)
         }
         ApplicationRequest::Colorscheme { name } => {
-            crate::app::lifecycle_ops::LifecycleHandler::colorscheme(
+            crate::app::lifecycle::LifecycleHandler::colorscheme(
                 &mut app.ui,
                 &mut app.model,
                 &mut app.colorscheme,
