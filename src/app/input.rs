@@ -2,8 +2,7 @@ use crossterm::event::{Event, KeyCode as CKey, KeyEvent, KeyEventKind, KeyModifi
 use std::collections::VecDeque;
 use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
 
-use crate::app::command::AppCommand;
-use crate::app::legacy_command::Command;
+use crate::app::command::{AppCommand, InputRequest, SemanticRequest};
 
 /// Application-level input controller that translates Crossterm events
 /// into Vim actions using `vim_input::Resolver`.
@@ -12,7 +11,7 @@ pub struct InputAdapter {
     keymap: Keymap,
     pending_display: String,
     mappings: Option<vim_input::SharedMappingStore>,
-    mapped_keys: VecDeque<Key>,
+    mapped_keys: VecDeque<(Key, bool)>,
 }
 
 impl InputAdapter {
@@ -54,7 +53,7 @@ impl InputAdapter {
                     None
                 }
             }
-            Event::Paste(text) => Some(AppCommand::Semantic(Command::Editor {
+            Event::Paste(text) => Some(AppCommand::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::InsertText(text),
                 register: None,
             })),
@@ -71,9 +70,13 @@ impl InputAdapter {
     }
 
     pub fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<AppCommand> {
-        if let Some(mapped_key) = self.mapped_keys.pop_front() {
-            self.mapped_keys.push_front(key);
-            return self.feed_key_without_mappings(mapped_key);
+        if let Some((mapped_key, allow_mappings)) = self.mapped_keys.pop_front() {
+            self.mapped_keys.push_front((key, true));
+            return if allow_mappings {
+                self.feed_key_with_buffer(mapped_key, buffer)
+            } else {
+                self.feed_key_without_mappings(mapped_key)
+            };
         }
         let outcome = match self.mappings.clone() {
             Some(mappings) => self
@@ -93,22 +96,24 @@ impl InputAdapter {
         match outcome {
             ResolveOutcome::Resolved(resolved) => {
                 self.pending_display.clear();
-                Some(Command::Editor {
+                Some(AppCommand::Semantic(SemanticRequest::Editor {
                     action: resolved.action,
                     register: resolved.register,
-                })
+                }))
             }
             ResolveOutcome::Mapping(mapping) => {
                 self.pending_display.clear();
                 match mapping.expansion {
-                    vim_input::MappingExpansion::NoOp => Some(Command::Editor {
-                        action: vim_input::Action::NoOp,
-                        register: None,
-                    }),
-                    vim_input::MappingExpansion::Script(script)
-                    | vim_input::MappingExpansion::Expression(script) => {
-                        Some(Command::ExecuteScript(script))
+                    vim_input::MappingExpansion::NoOp => {
+                        Some(AppCommand::Semantic(SemanticRequest::Editor {
+                            action: vim_input::Action::NoOp,
+                            register: None,
+                        }))
                     }
+                    vim_input::MappingExpansion::Script(script)
+                    | vim_input::MappingExpansion::Expression(script) => Some(AppCommand::Script(
+                        crate::app::command::ScriptRequest::Execute(script),
+                    )),
                     vim_input::MappingExpansion::Keys(keys) => {
                         let sequence = vim_input::KeySequence::parse(&keys).ok()?;
                         let mut exact = VecDeque::new();
@@ -119,11 +124,18 @@ impl InputAdapter {
                                 return None;
                             }
                         }
-                        self.mapped_keys.extend(exact);
-                        self.mapped_keys.pop_front().and_then(|key| {
-                            self.feed_key_without_mappings(key)
-                                .map(AppCommand::into_legacy)
-                        })
+                        let allow_mappings = !mapping.flags.non_recursive;
+                        self.mapped_keys
+                            .extend(exact.into_iter().map(|key| (key, allow_mappings)));
+                        self.mapped_keys
+                            .pop_front()
+                            .and_then(|(key, allow_mappings)| {
+                                if allow_mappings {
+                                    self.feed_key_with_buffer(key, None)
+                                } else {
+                                    self.feed_key_without_mappings(key)
+                                }
+                            })
                     }
                 }
             }
@@ -131,15 +143,14 @@ impl InputAdapter {
                 let pending =
                     crate::kernel::PendingCommandState::from_decoder(self.resolver.pending());
                 self.pending_display.clone_from(&pending.display);
-                Some(Command::PendingInput(pending))
+                Some(AppCommand::Input(InputRequest::Pending(pending)))
             }
             ResolveOutcome::Invalid(_) => {
                 self.pending_display.clear();
-                Some(Command::InvalidInput)
+                Some(AppCommand::Input(InputRequest::Invalid))
             }
             ResolveOutcome::Ignored => None,
         }
-        .map(AppCommand::from)
     }
 
     pub fn set_in_recording(&mut self, in_recording: bool) {
@@ -222,26 +233,26 @@ mod tests {
         let event_v = Event::Key(KeyEvent::new(CKey::Char('v'), control));
         assert!(matches!(
             controller.feed_event(event_v),
-            Some(Command::Editor {
+            Some(AppCommand::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::SetToVisualBlock,
                 register: None,
-            })
+            }))
         ));
 
         controller.set_mode(Mode::Normal);
         let event_w = Event::Key(KeyEvent::new(CKey::Char('w'), control));
         assert!(matches!(
             controller.feed_event(event_w),
-            Some(Command::PendingInput(state)) if state.display == "<C-w>"
+            Some(AppCommand::Input(InputRequest::Pending(state))) if state.display == "<C-w>"
         ));
 
         let event_v2 = Event::Key(KeyEvent::new(CKey::Char('v'), control));
         assert!(matches!(
             controller.feed_event(event_v2),
-            Some(Command::Editor {
+            Some(AppCommand::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::SplitVertical { file_path: None },
                 register: None,
-            })
+            }))
         ));
     }
 
@@ -279,11 +290,12 @@ mod tests {
         controller.set_mapping_store(mappings);
         assert!(matches!(
             controller.feed_key_with_buffer(Key::char('\\'), Some(7)),
-            Some(Command::PendingInput(_))
+            Some(AppCommand::Input(InputRequest::Pending(_)))
         ));
         assert!(matches!(
             controller.feed_key_with_buffer(Key::char('w'), Some(7)),
-            Some(Command::ExecuteScript(script)) if script == ":local-write<CR>"
+            Some(AppCommand::Script(crate::app::command::ScriptRequest::Execute(script)))
+                            if script == ":local-write<CR>"
         ));
     }
 
@@ -293,10 +305,10 @@ mod tests {
         let event = Event::Paste("hello world".to_string());
         assert!(matches!(
             controller.feed_event(event),
-            Some(Command::Editor {
+            Some(AppCommand::Semantic(SemanticRequest::Editor {
                 action: vim_input::Action::InsertText(text),
                 register: None,
-            }) if text == "hello world"
+            })) if text == "hello world"
         ));
     }
 }

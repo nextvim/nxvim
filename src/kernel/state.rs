@@ -1,7 +1,7 @@
 use super::{
     BufferId, CommandContext, CommandKind, CommandLineRequest, TabPageId, WindowId, Windows,
 };
-use crate::app::legacy_command::Command;
+use crate::app::command::ExCommand as Command;
 use crate::model::Buffers;
 use std::path::Path;
 

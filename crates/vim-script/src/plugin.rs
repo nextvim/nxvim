@@ -14,6 +14,12 @@ use crate::source::{Diagnostic, SourceId, SourceMap};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ScriptId(pub u32);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackagePath {
+    pub path: PathBuf,
+    pub optional: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RuntimePath {
     pub roots: Vec<PathBuf>,
@@ -34,6 +40,41 @@ impl RuntimePath {
         if !self.roots.iter().any(|existing| existing == &canonical) {
             self.roots.push(canonical);
         }
+    }
+
+    /// Discovers Vim packages without creating another runtime-path authority.
+    /// Package directories are returned in runtime-root order, then package
+    /// name order; `start` packages precede optional `opt` packages.
+    pub fn packages(&self) -> Vec<PackagePath> {
+        let mut packages = Vec::new();
+        for root in &self.roots {
+            for (kind, optional) in [("start", false), ("opt", true)] {
+                let collection = root.join("pack");
+                let Ok(packagers) = fs::read_dir(&collection) else {
+                    continue;
+                };
+                let mut discovered = Vec::new();
+                for packager in packagers.flatten() {
+                    let base = packager.path().join(kind);
+                    let Ok(entries) = fs::read_dir(base) else {
+                        continue;
+                    };
+                    discovered.extend(entries.flatten().filter(|entry| entry.path().is_dir()).map(
+                        |entry| PackagePath {
+                            path: entry.path(),
+                            optional,
+                        },
+                    ));
+                }
+                discovered.sort_by(|left, right| left.path.cmp(&right.path));
+                packages.extend(discovered);
+            }
+        }
+        let mut seen = HashSet::new();
+        packages
+            .into_iter()
+            .filter(|package| seen.insert(package.path.clone()))
+            .collect()
     }
 
     pub fn startup_plugins(&self) -> Vec<PathBuf> {
@@ -495,6 +536,28 @@ mod tests {
                 second.join("after/plugin/z.vim"),
             ]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovers_start_and_optional_packages_in_runtime_order() {
+        let root = std::env::temp_dir().join(format!("nxvim-packages-{}", std::process::id()));
+        for path in [
+            root.join("pack/z/start/zeta"),
+            root.join("pack/a/start/alpha"),
+            root.join("pack/a/opt/optional"),
+        ] {
+            fs::create_dir_all(path).unwrap();
+        }
+        let runtime = RuntimePath::new([root.clone()]);
+        let packages = runtime.packages();
+        assert_eq!(packages.len(), 3);
+        assert_eq!(packages[0].path, root.join("pack/a/start/alpha"));
+        assert!(!packages[0].optional);
+        assert_eq!(packages[1].path, root.join("pack/z/start/zeta"));
+        assert!(!packages[1].optional);
+        assert_eq!(packages[2].path, root.join("pack/a/opt/optional"));
+        assert!(packages[2].optional);
         fs::remove_dir_all(root).unwrap();
     }
 

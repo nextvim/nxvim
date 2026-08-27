@@ -607,6 +607,8 @@ impl HostRuntime {
         }
         let expansion = if rhs.eq_ignore_ascii_case("<nop>") {
             MappingExpansion::NoOp
+        } else if options.expr {
+            MappingExpansion::Expression(rhs.to_owned())
         } else {
             MappingExpansion::Keys(rhs.to_owned())
         };
@@ -761,10 +763,40 @@ impl HostRuntime {
                     diagnostic.message.clone(),
                 )
             })?;
-        let patterns: Vec<_> = split_autocmd_patterns(patterns)
-            .into_iter()
-            .map(|pattern| expand_autocmd_pattern(&pattern))
-            .collect();
+        let raw_patterns = split_autocmd_patterns(patterns);
+        let registered_buffer = match raw_patterns.as_slice() {
+            [pattern] if pattern.eq_ignore_ascii_case("<buffer>") => {
+                Some(request.context.current_buffer.ok_or_else(|| {
+                    RuntimeError::coded(
+                        "E86",
+                        RuntimeErrorKind::HostError,
+                        "<buffer> requires a current buffer",
+                    )
+                })?)
+            }
+            [pattern]
+                if pattern.to_ascii_lowercase().starts_with("<buffer=")
+                    && pattern.ends_with('>') =>
+            {
+                let value = &pattern[8..pattern.len() - 1];
+                Some(value.parse::<u64>().map_err(|_| {
+                    RuntimeError::coded(
+                        "E86",
+                        RuntimeErrorKind::InvalidCommand,
+                        "invalid <buffer=N> ID",
+                    )
+                })?)
+            }
+            _ => None,
+        };
+        let patterns: Vec<_> = if registered_buffer.is_some() {
+            Vec::new()
+        } else {
+            raw_patterns
+                .into_iter()
+                .map(|pattern| expand_autocmd_pattern(&pattern))
+                .collect()
+        };
         for event in events.split(',') {
             if event == "*" || !is_supported_autocmd_event(event) {
                 return Err(RuntimeError::coded(
@@ -780,6 +812,7 @@ impl HostRuntime {
                 group: group.map(str::to_owned),
                 event: event.to_owned(),
                 patterns: patterns.clone(),
+                buffer: registered_buffer,
                 action: action.clone(),
                 once,
                 nested,

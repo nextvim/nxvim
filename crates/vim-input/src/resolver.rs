@@ -76,6 +76,7 @@ pub struct Resolver {
     in_recording: bool,
     mapping_store: Option<SharedMappingStore>,
     mapping_buffer: Option<u64>,
+    pending_mapping: Option<crate::Mapping>,
 }
 
 impl Default for Resolver {
@@ -99,6 +100,7 @@ impl Resolver {
             in_recording: false,
             mapping_store: None,
             mapping_buffer: None,
+            pending_mapping: None,
         }
     }
 
@@ -145,6 +147,14 @@ impl Resolver {
         self.register = None;
         self.waiting_for_register = false;
         self.waiting_for_insert_register = false;
+        self.pending_mapping = None;
+    }
+
+    /// Resolves an exact non-`nowait` mapping after the input ambiguity timeout.
+    pub fn flush_pending_mapping(&mut self) -> Option<ResolveOutcome> {
+        let mapping = self.pending_mapping.take()?;
+        self.reset();
+        Some(ResolveOutcome::Mapping(mapping))
     }
 
     pub fn feed_with_mappings(
@@ -297,6 +307,10 @@ impl Resolver {
             MappingMatch::Complete(mapping) => {
                 self.reset();
                 Some(ResolveOutcome::Mapping(mapping))
+            }
+            MappingMatch::CompleteWithPrefix(mapping) => {
+                self.pending_mapping = Some(mapping);
+                Some(ResolveOutcome::Pending)
             }
             MappingMatch::Prefix => Some(ResolveOutcome::Pending),
             MappingMatch::None => None,

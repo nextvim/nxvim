@@ -54,7 +54,7 @@ The primary reset scope is the semantic layer currently spread across:
 | Phase 4 — Mutation, undo, and redraw contracts | `[~] IN PROGRESS` | Transactions, typed mutation outcomes, display-worker invalidation, and end-to-end redraw request strength are implemented; row-level renderer narrowing and final verification remain |
 | Phase 5 — Unified events and autocommands | `[ ] PENDING` | Not started |
 | Phase 6 — Script host convergence | `[ ] PENDING` | Not started |
-| Phase 7 — External runtime integration | `[ ] PENDING` | Not started |
+| Phase 7 — External runtime integration | `[ ] PENDING` | Prioritized implementation plan recorded; begin with IDs, lifecycle/event contracts, and the `ExternalRuntimeService` seam |
 | Phase 8 — Persistence | `[ ] PENDING` | Not started |
 | Phase 9 — Compatibility expansion | `[ ] PENDING` | Not started |
 | Phase 10 — Compatibility harness | `[ ] PENDING` | Not started |
@@ -968,7 +968,7 @@ Add a deferred event queue for `TextChanged`, `CursorMoved`, and safe-state even
 
 **Tests:** run focused event-order tests if event emission changes buffer/window lifetime behavior.
 
-## 5.3 Connect script autocommands — [ ] PLANNED
+## 5.3 Connect script autocommands — [~] IN PROGRESS
 
 Architecture review:
 
@@ -977,6 +977,7 @@ Architecture review:
 - Current bang handling is too broad: it clears the current group or entire bus rather than implementing Vim's event/pattern-selective removal forms.
 - Current matching does not implement Vim's basename-versus-path rule, full autocmd pattern grammar, `<buffer>` identity, event-specific match subjects, or definition-time environment expansion.
 - `HostRuntime::event_commands` preserves a supplied `HostContext`, and emitted script commands already retain stable context through `EmittedCommand` and `ExDispatcher`; the event bridge must use this route and revalidate before every callback-produced command.
+- [x] `<buffer>` and `<buffer=N>` registrations now resolve stable buffer identity at registration time and match against owned `abuf` event payloads; missing or wrong identities do not match.
 - Nest suppression, the 10-level recursion limit, `eventignore`, `:noautocmd`, autocmd special-variable evaluation, and stale-identity behavior are not implemented yet.
 - The first bridge slice adds `script::AutocmdEventEnvelope`, canonical translation for all current editor events, owned `amatch`/`afile`/`abuf` payload facts, stable host context, and an atomic handler-snapshot API. Runtime translates deferred events at the safe-state boundary but intentionally does not consume callback snapshots until controlled callback execution is connected.
 
@@ -1026,8 +1027,8 @@ The first mapping-ownership slice is implemented:
   - [x] Establish shared ownership at the script-host boundary and expose the handle from `ScriptRuntime`.
   - [x] Define the application mapping model in the input/kernel layer, including origin, mode, scope, flags, script context, and stable mapping ID.
   - [x] Adapt script `:map`/`:noremap`/`:unmap` registration to that model; remove the duplicate script-only store after migration.
-  - [~] Teach the live resolver to query the shared store and recognize mapping prefixes; buffer ID propagation and buffer-local precedence are covered, while `nowait` arbitration remains.
-  - [~] Execute key and `<Nop>` expansions through the controlled input/command path and prevent recursive remapping; expression evaluation and script-context execution remain.
+  - [~] Teach the live resolver to query the shared store and recognize mapping prefixes; buffer ID propagation, buffer-local precedence, and `nowait` arbitration are covered, while timeout fallback and full input integration remain.
+  - [~] Execute key and `<Nop>` expansions through the controlled input/command path; recursive versus non-recursive expansion is now tracked, while expression evaluation and script-context execution remain.
   - [~] Add focused shared-store-to-live-input coverage (global `<leader>` script mapping is covered); buffer-local, `nowait`, expression, and full script-loader integration remain before the 6.1 completion gate.
 - [~] **6.2 Unify script options**
   - [x] Inventory the current option boundary: `app::config::ConfigStore` is the live application authority, while `vim-script::integration::OptionStore` is a duplicate host snapshot; `OptionRequest` already carries owned name, scope, value, and stable buffer/window context.
@@ -1041,20 +1042,20 @@ The first mapping-ownership slice is implemented:
   - [x] Add controlled buffer replacement transactions and window/tab operations through the main kernel command queue; replacements return mutation-committed outcomes and never mutate editor state from the script host.
   - [~] Add capability-gated message and prompt requests that enqueue owned `Echo`/`OpenPrompt` commands; script prompts reuse the generalized substitution `Prompt`/`PromptChoice` input flow without direct UI mutation. Returning the selected choice to a suspended script operation remains.
   - [~] Add capability-gated `RegisterEvent` requests routed through the existing `autocmd` parser/event bus, plus explicit timer/job request and dispatch extension points reserved for Phase 7; callback result delivery and runtime implementations remain.
-  - [~] Revalidate originating context before every queued host operation and reject stale buffer targets during reads/replacements without retargeting; selection/register/mark target revalidation remains with their providers.
+  - [~] Revalidate originating context before every queued host operation and reject stale buffer targets/ranges during reads/replacements without retargeting; selection/register/mark target revalidation remains with their providers.
   - [ ] Run `cargo check -p vim-script` plus `cargo check -p nxvim`.
 - [~] **6.4 Add runtime/plugin loading**
   - [x] Define ordered runtime-path entries with canonicalization and duplicate-root removal.
   - [x] Load `plugin/` scripts once in runtime-path order, then load `after/plugin/` entries afterward; canonical `loaded_scripts` keys prevent duplicate execution.
   - [x] Add focused filesystem ordering coverage for regular versus `after/plugin` precedence, including duplicate runtime-root suppression.
   - [~] Add filetype-script loading from Vim files: `ScriptLoader::load_filetype_scripts` discovers `ftplugin/{type}.vim` and `indent/{type}.vim` in runtime-root order, applies `after/` precedence, passes stable host context, and records capability/compatibility failures instead of aborting the batch; automatic filetype detection and application lifecycle wiring remain.
-  - [ ] Add optional package discovery without making package state a second runtime-path authority.
-  - [ ] Add one focused ordering test if needed and run `cargo check --workspace`.
-- [ ] **Final Phase 6 gate**
-  - [ ] Verify scripts and live editor paths share authoritative mapping and option stores.
-  - [ ] Verify every editor mutation crosses a controlled kernel request/transaction boundary.
-  - [ ] Verify runtime/plugin loading order and duplicate-load policy.
-  - [ ] Run focused migration tests and `cargo check --workspace`.
+  - [x] Add optional package discovery through `RuntimePath::packages()` without introducing a second mutable runtime-path authority; `start` and `opt` packages retain explicit classification.
+  - [x] Add focused package-ordering coverage and run `cargo check --workspace`.
+- [~] **Final Phase 6 gate**
+  - [x] Production scripts and live editor paths share the authoritative `vim-input::MappingStore` and application `ConfigStore`; the duplicate legacy option implementation has been physically removed.
+  - [~] Connected script mutations cross controlled kernel/transaction boundaries (`SetOption`, buffer replacement, window/tab requests); selection/register/mark providers and prompt result delivery remain incomplete.
+  - [x] Runtime/plugin loading order, `after/plugin` precedence, package ordering, and canonical duplicate-load policy are covered by focused tests.
+  - [x] Run focused mapping, option, event, plugin-order tests and `cargo check --workspace`; all passed.
   - [ ] Mark sections 6.1–6.4 and the Phase 6 checkpoint complete.
 
 ## 6.1 Unify script mappings — [~] IN PROGRESS
@@ -1130,49 +1131,177 @@ After events and host integration work:
 
 # Phase 7 — External Runtime Integration
 
-## 7.1 Add timers
+## Phase 7 Checkpoint — [ ] PENDING
 
-Add stable timer IDs and integrate timer readiness with `src/runtime.rs`.
+Phase 7 adds Vim-compatible timers, jobs, channels, and terminal buffers without allowing worker threads to mutate editor or script state. External activity must produce owned events that re-enter through `Services`, `AppCommand`, and the runtime/script scheduler on the main thread.
 
-Timer callbacks should enqueue kernel/script work and never mutate editor state from a worker thread.
+### Existing infrastructure decision
+
+- [ ] Keep `background_worker::WorkerManager` for finite CPU/file work such as display maps, parsing, indexing, and saves.
+- [ ] Do not run persistent processes, pipe readers, sockets, or timer loops as ordinary `BackgroundWorker` tasks: workers are serial per name, use latest-task cancellation sequences, return one type-erased result, and join their thread on drop.
+- [x] Reuse the existing `Services::poll`/`drain_results` and `AppCommand::Service` admission path by adding a dedicated external-runtime manager beside `WorkerManager`.
+- [ ] Reuse stable-ID and stale-owner validation patterns from `TaskId`, `TaskOwner`, and `TaskMetadata`, but define semantic `TimerId`, `JobId`, `ChannelId`, and later `TerminalId` rather than exposing infrastructure task IDs to scripts.
+- [ ] Use bounded queues for process/channel output. Never use an unbounded queue for an untrusted external byte stream.
+- [ ] If shared worker infrastructure is extracted, keep two explicit task policies: `LatestWins` for derived editor work and `Persistent`/explicit cancellation for external runtimes. Do not weaken the current obsolete-result protection.
+
+### Prioritized execution order
+
+1. [~] Freeze external-runtime IDs, lifecycle states, owned event envelopes, queue limits, and shutdown contracts; IDs/events/states and shutdown admission are implemented, while bounded transport queues remain for the transport slices.
+2. [x] Add the main-thread `ExternalRuntimeService` integration seam under `Services`.
+3. [ ] Implement timers and scheduler completion because they establish callback delivery without OS-stream complexity.
+4. [ ] Implement process jobs with bounded stdout/stderr delivery and deterministic exit ordering.
+5. [ ] Generalize process streams into channels, then add pipe/socket transports.
+6. [ ] Add terminal buffers only after job/channel ownership and shutdown are proven.
+7. [ ] Run focused lifecycle tests and the workspace compile gate; update this checkpoint only after all earlier items pass.
+
+## 7.0 Define the external-runtime boundary — [ ] PENDING
+
+### Semantic identities and ownership
+
+- [x] Add non-zero, monotonically allocated `TimerId`, `JobId`, `ChannelId`, and `TerminalId` types in the kernel/runtime ID boundary.
+- [~] Keep semantic IDs distinct from `background_worker::TaskId`; semantic allocation is separate, while transport/task lookup tables arrive with their managers.
+- [x] Define an owned `RuntimeOwner` snapshot containing the originating script task and optional stable buffer/window/tab IDs.
+- [x] Define lifecycle states with legal transitions:
+  - [ ] timer: `Active -> Firing -> Active|Stopped`;
+  - [ ] job: `Starting -> Running -> Exited|Failed|Cancelled`;
+  - [ ] channel: `Opening -> Open -> Closing -> Closed|Failed`;
+  - [ ] terminal: `Starting -> Running -> Exited|Closed`.
+- [ ] Revalidate owner IDs when delivering callbacks; stale editor context must not retarget to the current buffer/window/tab.
+- [ ] Decide and document Vim-facing numeric ID behavior, invalid-ID errors, callback ordering, and whether completed IDs remain queryable for a bounded retention period.
+
+### Owned service events
+
+- [x] Extend `TaskResult` or introduce a sibling `ServiceEvent` enum for `TimerReady`, `JobStarted`, `JobOutput`, `JobExited`, `ChannelMessage`, `ChannelClosed`, and runtime failures.
+- [x] Keep payloads owned (`Vec<u8>`, `String`, IDs, status values); do not pass child handles, borrowed buffers, or VM references across threads.
+- [x] Add monotonically increasing per-source sequence numbers so stdout, stderr, close, and exit events can be delivered deterministically.
+- [x] Route every external event through `AppCommand::Service`; callbacks enqueue script/kernel work and never execute on I/O threads.
+- [ ] Add bounded per-runtime queues plus an explicit overflow policy: pause reads where possible, otherwise emit one overflow error and close the source.
+
+### Service integration
+
+- [x] Add `ExternalRuntimeService` to `src/app/services.rs` beside `WorkerManager`; keep transport internals in a dedicated module/crate rather than expanding editor command code.
+- [x] Add non-blocking `poll` and `drain_events` methods compatible with the current runtime loop.
+- [x] Make `Services::poll` report readiness from both finite background work and external runtimes.
+- [ ] Add dispatch handling that validates semantic ID, lifecycle state, owner, and sequence before completing script scheduler operations.
+- [~] Define deterministic shutdown: the service can stop accepting requests without losing queued events; timer/channel/job teardown and helper-thread joining arrive with their managers.
 
 **Compile gate:** `cargo check -p nxvim`.
 
-**Tests:** defer.
+**Tests:** add ID allocation/state-transition tests and one stale-owner delivery test.
 
-## 7.2 Add external jobs
+## 7.1 Add timers — [ ] PENDING
 
-Add a process manager with:
+### Timer manager
 
-- stable job IDs;
-- command and environment configuration;
-- stdout/stderr streams;
-- cancellation;
-- exit status;
-- bounded buffering;
-- callback/event delivery.
+- [ ] Implement a main-thread-owned `TimerManager` using a deadline heap plus a wakeup mechanism; do not create one sleeping thread per timer.
+- [ ] Support one-shot and repeating timers with stable `TimerId`, delay, repeat count/infinite repeat, callback operation, and owner context.
+- [ ] Use monotonic time (`Instant`) and define zero/overflow delay behavior.
+- [ ] Define repeat scheduling from the prior deadline to limit drift, while coalescing missed ticks so a stalled editor does not enqueue an unbounded callback backlog.
+- [ ] Implement stop, stop-all-for-script, info/query, and idempotent cancellation.
+- [ ] Ensure stopping a timer invalidates already queued readiness events by generation or sequence number.
 
-Do not couple process jobs to terminal buffers yet.
+### Script/runtime delivery
+
+- [ ] Replace the Phase 6 timer extension-point response with real capability-gated host requests and owned responses.
+- [ ] Associate callback completion with the script scheduler rather than returning success before timer registration is committed.
+- [ ] Deliver timer callbacks through the runtime queue with the registration context captured at creation.
+- [ ] Allow callback errors to be reported without stopping unrelated timers; define whether a repeating timer survives its callback error.
+- [ ] Prevent nested polling from firing the same timer concurrently.
+
+**Compile gate:** `cargo check -p vim-script`, then `cargo check -p nxvim`.
+
+**Tests:** focused one-shot, repeat, cancellation-before-delivery, coalescing, callback-error, and stale-context tests using controllable time where possible.
+
+## 7.2 Add external jobs — [ ] PENDING
+
+### Process API and lifecycle
+
+- [ ] Define `JobSpec` with executable/argv kept separate, working directory, environment overrides/removals, stdin policy, stdout/stderr policy, and optional channel attachment.
+- [ ] Do not invoke a shell unless explicitly requested by the API; preserve arguments exactly.
+- [ ] Implement a `JobManager` owning child handles and stable `JobId` records.
+- [ ] Spawn processes without blocking the editor thread; report spawn success/failure as an owned service event.
+- [ ] Track PID when available, start time, lifecycle state, exit status/signal, associated channels, owner, and callback registrations.
+- [ ] Define stop modes (`close stdin`, graceful terminate where supported, force kill) and idempotent job cancellation.
+- [ ] Reap every child process and guarantee exactly one terminal `JobExited` or `JobFailed` event.
+
+### Streaming and backpressure
+
+- [ ] Read stdout and stderr concurrently so one full pipe cannot deadlock the child.
+- [ ] Use bounded byte/chunk queues with configurable conservative defaults and hard upper limits.
+- [ ] Preserve byte streams internally; perform line/raw/NUL transformations only at the Vim callback boundary.
+- [ ] Preserve per-stream order and define cross-stream ordering as sequence-stamped arrival order rather than pretending OS writes are globally ordered.
+- [ ] Batch small reads to avoid one runtime command per byte/line while keeping callback latency bounded.
+- [ ] Implement bounded stdin writes, close semantics, broken-pipe reporting, and cancellation of pending writes.
+
+### Integration policy
+
+- [ ] Reuse `Services` polling and `AppCommand::Service`, not `BackgroundWorker::spawn_task`, for long-lived job I/O.
+- [ ] Background helper threads are acceptable behind `JobManager` if each has explicit cancellation, bounded queues, and non-blocking shutdown; an evented I/O crate may be adopted only if it materially simplifies cross-platform correctness.
+- [ ] Complete suspended script host operations only after spawn/stop/write requests are admitted by the main-thread manager.
+- [ ] Route output and exit callbacks through the script scheduler using the originating `RuntimeOwner`.
+- [ ] Do not couple jobs to terminal buffers in this sub-phase.
 
 **Compile gate:** `cargo check -p nxvim`, then `cargo check --workspace`.
 
-**Tests:** add a focused process lifecycle test only when needed to resolve platform or shutdown issues.
+**Tests:** focused spawn failure, stdout/stderr capture, stdin/close, cancellation, bounded-output overflow, exact-once exit, and shutdown/reaping tests.
 
-## 7.3 Add channels
+## 7.3 Add channels — [ ] PENDING
 
-Add pipe/socket channels with typed messages and script-visible callbacks. Reuse the runtime's command queue and stale-result validation.
+### Shared channel model
+
+- [ ] Extract process stream handling behind a transport-neutral `ChannelManager` only after the job implementation proves the required event shape.
+- [ ] Define stable `ChannelId`, transport kind, mode (`raw`, `nl`, structured message where supported), lifecycle state, owner, peer metadata, and callback registrations.
+- [ ] Support job pipes first, then Unix sockets/TCP as platform support allows; gate platform-specific transports explicitly.
+- [ ] Keep framing separate from transport reads and enforce maximum frame/message sizes.
+- [ ] Implement bounded send/receive queues, half-close semantics, close/error reasons, and idempotent shutdown.
+- [ ] Guarantee that all queued messages precede the final close callback for a channel sequence.
+
+### Script/runtime integration
+
+- [ ] Implement capability-gated open/send/close/status host requests using owned payloads.
+- [ ] Validate channel ID and originating owner before each operation and callback.
+- [ ] Complete scheduler operations when requests are admitted or fail, not merely when placed on a cross-thread queue.
+- [ ] Batch channel callbacks consistently with job output callbacks.
+- [ ] Reserve RPC request IDs and response correlation only after raw/message channels are stable; do not mix RPC semantics into the first slice.
+
+**Compile gate:** `cargo check -p vim-script`, then `cargo check --workspace`.
+
+**Tests:** focused framing, ordering-before-close, backpressure/overflow, half-close, failed-connect, stale-ID, and shutdown tests.
+
+## 7.4 Add terminal buffers — [ ] PENDING
+
+### Prerequisites and ownership
+
+- [ ] Start only after job and channel lifecycle tests pass and deterministic shutdown is implemented.
+- [ ] Define a terminal record linking `TerminalId`, `JobId`, `ChannelId`, owning buffer ID, dimensions, mode, and exit state.
+- [ ] Keep terminal emulator state application-owned; the process and I/O managers own only external resources.
+- [ ] Select or implement a terminal-emulation backend with bounded scrollback and no direct dependency on terminal rendering.
+
+### Buffer and UI integration
+
+- [ ] Add a terminal buffer kind rather than storing escape sequences as ordinary editable text.
+- [ ] Feed channel bytes into emulator state through main-thread service events or bounded batches.
+- [ ] Project emulator cells, cursor, attributes, and scrollback through the existing window/display/render pipeline.
+- [ ] Route terminal-mode input to the job channel while preserving NxVim commands for leaving terminal mode and managing windows.
+- [ ] Propagate window resize events to PTY size updates with stable terminal/job validation.
+- [ ] Define close behavior independently for buffer close, job exit, channel failure, and editor shutdown.
+- [ ] Emit deterministic terminal-open/close/job-exit events without duplicate callbacks.
 
 **Compile gate:** `cargo check --workspace`.
 
-**Tests:** defer.
+**Tests:** defer broad terminal compatibility; add focused input/output, resize, job-exit, buffer-close, bounded-scrollback, and shutdown tests.
 
-## 7.4 Add terminal buffers
+## Final Phase 7 gate — [ ] PENDING
 
-Only after process and channel ownership is stable, add terminal-emulator buffers and connect them to the existing UI/display pipeline.
-
-**Compile gate:** `cargo check --workspace`.
-
-**Tests:** defer until terminal lifecycle behavior is stable.
+- [ ] All external resource types use stable semantic IDs and explicit lifecycle states.
+- [ ] No external thread mutates editor, UI, kernel, or VM state directly.
+- [ ] External byte streams are bounded and have tested overflow/backpressure behavior.
+- [ ] Timer/job/channel callbacks preserve originating script/editor context and reject stale targets without retargeting.
+- [ ] Cancellation and shutdown are deterministic; child processes are reaped and helper threads do not hang editor exit.
+- [ ] `background_worker` remains optimized for finite latest-wins tasks, or any generalized policy preserves its existing stale-result guarantees.
+- [ ] Focused timer, process, channel, and shutdown tests pass.
+- [ ] `cargo check -p vim-script`, `cargo check -p nxvim`, and `cargo check --workspace` pass.
+- [ ] Mark sections 7.0–7.4 and the Phase 7 checkpoint complete.
 
 # Phase 8 — Persistence
 

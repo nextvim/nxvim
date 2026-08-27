@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::ExCommand;
 use crate::bytecode::BytecodeModule;
-use crate::runtime::{RuntimeError, RuntimeErrorKind, RuntimeResult, Value};
+use crate::runtime::Value;
 pub use vim_input::{
     Mapping as CompiledMapping, MappingExpansion, MappingId, MappingStore as KeymapStore,
     SharedMappingStore as SharedKeymapStore,
@@ -24,6 +24,7 @@ pub struct EventHandler {
     pub group: Option<String>,
     pub event: String,
     pub patterns: Vec<String>,
+    pub buffer: Option<u64>,
     pub action: EventAction,
     pub once: bool,
     pub nested: bool,
@@ -118,7 +119,18 @@ impl EventBus {
         let subject = event.pattern.as_deref().unwrap_or("");
         let mut matching = Vec::new();
         handlers.retain(|handler| {
+            let buffer_matches = handler.buffer.is_none_or(|buffer| {
+                event
+                    .payload
+                    .get("abuf")
+                    .and_then(|value| match value {
+                        Value::Integer(value) => Some(*value),
+                        _ => None,
+                    })
+                    .is_some_and(|value| value == buffer as i64)
+            });
             let matches = (allow_non_nested || handler.nested)
+                && buffer_matches
                 && (handler.patterns.is_empty()
                     || handler
                         .patterns
@@ -175,210 +187,6 @@ fn vim_glob_matches(pattern: &str, subject: &str) -> bool {
     pattern_index == pattern.len()
 }
 
-#[derive(Clone, Debug)]
-pub struct OptionDefinition {
-    pub name: String,
-    pub short_name: Option<String>,
-    pub kind: OptionKind,
-    pub scope: OptionValueScope,
-    pub default: Value,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OptionKind {
-    Boolean,
-    Number,
-    String,
-    StringList,
-    Flags,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OptionValueScope {
-    Global,
-    Buffer,
-    Window,
-    GlobalBuffer,
-    GlobalWindow,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct OptionStore {
-    pub definitions: HashMap<String, OptionDefinition>,
-    pub global: HashMap<String, Value>,
-    pub buffers: HashMap<u64, HashMap<String, Value>>,
-    pub windows: HashMap<u64, HashMap<String, Value>>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OptionScope {
-    Global,
-    Buffer(u64),
-    Window(u64),
-}
-
-impl OptionStore {
-    pub fn define(&mut self, definition: OptionDefinition) -> RuntimeResult<()> {
-        validate_option_value(definition.kind, &definition.default)?;
-        if definition.name.is_empty() {
-            return Err(option_error(
-                "E_OPTION_NAME",
-                RuntimeErrorKind::NameError,
-                "option name cannot be empty",
-            ));
-        }
-        if self.definitions.contains_key(&definition.name)
-            || definition.short_name.as_ref().is_some_and(|short| {
-                self.definitions.values().any(|existing| {
-                    existing.name == *short || existing.short_name.as_ref() == Some(short)
-                })
-            })
-        {
-            return Err(option_error(
-                "E_OPTION_EXISTS",
-                RuntimeErrorKind::NameError,
-                format!("option '{}' is already defined", definition.name),
-            ));
-        }
-        self.global
-            .insert(definition.name.clone(), definition.default.clone());
-        self.definitions.insert(definition.name.clone(), definition);
-        Ok(())
-    }
-
-    pub fn get(&self, name: &str, scope: OptionScope) -> RuntimeResult<&Value> {
-        let definition = self.definition(name)?;
-        validate_scope(definition, scope)?;
-        let name = definition.name.as_str();
-        let local = match scope {
-            OptionScope::Global => None,
-            OptionScope::Buffer(buffer) => self.buffers.get(&buffer).and_then(|map| map.get(name)),
-            OptionScope::Window(window) => self.windows.get(&window).and_then(|map| map.get(name)),
-        };
-        local.or_else(|| self.global.get(name)).ok_or_else(|| {
-            option_error(
-                "E_OPTION_STATE",
-                RuntimeErrorKind::Internal,
-                format!("option '{name}' has no value"),
-            )
-        })
-    }
-
-    pub fn set(&mut self, name: &str, scope: OptionScope, value: Value) -> RuntimeResult<()> {
-        let definition = self.definition(name)?;
-        validate_scope(definition, scope)?;
-        validate_option_value(definition.kind, &value)?;
-        let canonical_name = definition.name.clone();
-        match scope {
-            OptionScope::Global => &mut self.global,
-            OptionScope::Buffer(buffer) => self.buffers.entry(buffer).or_default(),
-            OptionScope::Window(window) => self.windows.entry(window).or_default(),
-        }
-        .insert(canonical_name, value);
-        Ok(())
-    }
-
-    pub fn reset(&mut self, name: &str, scope: OptionScope) -> RuntimeResult<()> {
-        let definition = self.definition(name)?;
-        validate_scope(definition, scope)?;
-        let canonical_name = definition.name.clone();
-        let default = definition.default.clone();
-        match scope {
-            OptionScope::Global => {
-                self.global.insert(canonical_name, default);
-            }
-            OptionScope::Buffer(buffer) => {
-                if let Some(values) = self.buffers.get_mut(&buffer) {
-                    values.remove(&canonical_name);
-                    if values.is_empty() {
-                        self.buffers.remove(&buffer);
-                    }
-                }
-            }
-            OptionScope::Window(window) => {
-                if let Some(values) = self.windows.get_mut(&window) {
-                    values.remove(&canonical_name);
-                    if values.is_empty() {
-                        self.windows.remove(&window);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn definition(&self, name: &str) -> RuntimeResult<&OptionDefinition> {
-        self.definitions
-            .get(name)
-            .or_else(|| {
-                self.definitions
-                    .values()
-                    .find(|definition| definition.short_name.as_deref() == Some(name))
-            })
-            .ok_or_else(|| {
-                option_error(
-                    "E_UNKNOWN_OPTION",
-                    RuntimeErrorKind::NameError,
-                    format!("unknown option '{name}'"),
-                )
-            })
-    }
-}
-
-fn validate_scope(definition: &OptionDefinition, requested: OptionScope) -> RuntimeResult<()> {
-    let valid = matches!(
-        (definition.scope, requested),
-        (OptionValueScope::Global, OptionScope::Global)
-            | (OptionValueScope::Buffer, OptionScope::Buffer(_))
-            | (OptionValueScope::Window, OptionScope::Window(_))
-            | (
-                OptionValueScope::GlobalBuffer,
-                OptionScope::Global | OptionScope::Buffer(_)
-            )
-            | (
-                OptionValueScope::GlobalWindow,
-                OptionScope::Global | OptionScope::Window(_)
-            )
-    );
-    if valid {
-        Ok(())
-    } else {
-        Err(option_error(
-            "E_OPTION_SCOPE",
-            RuntimeErrorKind::InvalidCommand,
-            format!("invalid scope for option '{}'", definition.name),
-        ))
-    }
-}
-
-fn validate_option_value(kind: OptionKind, value: &Value) -> RuntimeResult<()> {
-    let valid = match (kind, value) {
-        (OptionKind::Boolean, Value::Bool(_))
-        | (OptionKind::Number, Value::Integer(_))
-        | (OptionKind::String | OptionKind::Flags, Value::String(_)) => true,
-        (OptionKind::StringList, Value::List(values)) => {
-            values.iter().all(|value| matches!(value, Value::String(_)))
-        }
-        _ => false,
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(option_error(
-            "E_OPTION_TYPE",
-            RuntimeErrorKind::TypeError,
-            format!("value does not match option kind {kind:?}"),
-        ))
-    }
-}
-
-fn option_error(
-    code: &'static str,
-    kind: RuntimeErrorKind,
-    message: impl Into<String>,
-) -> RuntimeError {
-    RuntimeError::coded(code, kind, message)
-}
 
 #[derive(Clone, Debug, Default)]
 pub struct ModuleCache {
@@ -400,7 +208,6 @@ pub enum LanguageVersion {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use super::*;
     use crate::resolver::FunctionId;
@@ -420,6 +227,7 @@ mod tests {
             group: group.map(str::to_owned),
             event: "BufWrite".into(),
             patterns: vec![pattern.into()],
+            buffer: None,
             action: EventAction::Bytecode(module()),
             once,
             nested: false,
@@ -431,21 +239,6 @@ mod tests {
             name: "BufWrite".into(),
             pattern: Some(pattern.into()),
             payload: HashMap::new(),
-        }
-    }
-
-    fn definition(
-        name: &str,
-        kind: OptionKind,
-        scope: OptionValueScope,
-        default: Value,
-    ) -> OptionDefinition {
-        OptionDefinition {
-            name: name.into(),
-            short_name: None,
-            kind,
-            scope,
-            default,
         }
     }
 
@@ -465,6 +258,23 @@ mod tests {
         assert_eq!(bus.remove_group("rust"), 1);
         assert!(bus.handlers_for(&event("src/a.rs")).is_empty());
         assert_eq!(bus.remove_group("text"), 1);
+    }
+
+    #[test]
+    fn buffer_scoped_handlers_match_only_their_stable_buffer_id() {
+        let mut bus = EventBus::default();
+        let mut scoped = handler(1, "*", None, false);
+        scoped.buffer = Some(7);
+        bus.register(scoped);
+
+        let mut matching = event("notes.txt");
+        matching.payload.insert("abuf".into(), Value::Integer(7));
+        assert_eq!(bus.handlers_for(&matching).len(), 1);
+        assert!(bus.handlers_for(&event("notes.txt")).is_empty());
+
+        let mut other = event("notes.txt");
+        other.payload.insert("abuf".into(), Value::Integer(8));
+        assert!(bus.handlers_for(&other).is_empty());
     }
 
     #[test]
@@ -525,74 +335,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2]
         );
-    }
-
-    #[test]
-    fn options_validate_types_and_scopes_and_reset_to_fallback() {
-        let mut store = OptionStore::default();
-        store
-            .define(definition(
-                "number",
-                OptionKind::Number,
-                OptionValueScope::Global,
-                Value::Integer(1),
-            ))
-            .unwrap();
-        store
-            .define(definition(
-                "words",
-                OptionKind::StringList,
-                OptionValueScope::GlobalBuffer,
-                Value::List(vec![Value::String(Arc::from("default"))]),
-            ))
-            .unwrap();
-
-        let error = store
-            .set("number", OptionScope::Global, Value::Bool(true))
-            .unwrap_err();
-        assert!(matches!(error.kind, RuntimeErrorKind::TypeError));
-        let error = store.get("number", OptionScope::Buffer(1)).unwrap_err();
-        assert!(matches!(error.kind, RuntimeErrorKind::InvalidCommand));
-
-        let local = Value::List(vec![Value::String(Arc::from("local"))]);
-        store
-            .set("words", OptionScope::Buffer(1), local.clone())
-            .unwrap();
-        assert_eq!(store.get("words", OptionScope::Buffer(1)).unwrap(), &local);
-        store.reset("words", OptionScope::Buffer(1)).unwrap();
-        assert_eq!(
-            store.get("words", OptionScope::Buffer(1)).unwrap(),
-            &Value::List(vec![Value::String(Arc::from("default"))])
-        );
-    }
-
-    #[test]
-    fn options_support_short_names_and_reject_invalid_defaults() {
-        let mut store = OptionStore::default();
-        let mut option = definition(
-            "enabled",
-            OptionKind::Boolean,
-            OptionValueScope::Global,
-            Value::Bool(false),
-        );
-        option.short_name = Some("en".into());
-        store.define(option).unwrap();
-        store
-            .set("en", OptionScope::Global, Value::Bool(true))
-            .unwrap();
-        assert_eq!(
-            store.get("enabled", OptionScope::Global).unwrap(),
-            &Value::Bool(true)
-        );
-
-        let error = store
-            .define(definition(
-                "bad",
-                OptionKind::Boolean,
-                OptionValueScope::Global,
-                Value::Integer(0),
-            ))
-            .unwrap_err();
-        assert!(matches!(error.kind, RuntimeErrorKind::TypeError));
     }
 }

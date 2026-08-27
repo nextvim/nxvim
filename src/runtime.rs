@@ -1,8 +1,11 @@
-use crate::app::{App, command::AppCommand};
+use crate::app::{
+    App,
+    command::{AppCommand, InputRequest},
+};
 
+use crate::app::outcome::CommandOutcome;
 use crate::app::ui::ViewEffect;
 use crate::app::windows::WindowOps;
-use crate::app::legacy_command::{Command, CommandOutcome};
 use crate::terminal::TerminalSession;
 use crate::view::LayoutSnapshot;
 use crossterm::event;
@@ -105,7 +108,7 @@ impl Runtime {
                                 self.app.prompt.as_ref().map(|prompt| prompt.handler)
                             {
                                 commands.push(RuntimeCommand::App(AppCommand::Prompt(
-                                    Command::PromptChoice { handler, choice },
+                                    crate::app::command::PromptRequest::Choice { handler, choice },
                                 )));
                             }
                         }
@@ -181,7 +184,7 @@ impl Runtime {
                 // TODO(cleanup): bypass this bridge one AppCommand category at a
                 // time as its permanent runtime/kernel owner is connected.
                 let command = match command {
-                    AppCommand::Input(Command::PendingInput(pending)) => {
+                    AppCommand::Input(InputRequest::Pending(pending)) => {
                         self.app.model.status =
                             Some(format!("Pending sequence: {}", pending.display));
                         self.app.model.kernel_mut().set_pending_command(pending);
@@ -190,7 +193,7 @@ impl Runtime {
                         self.apply_outcome(&outcome);
                         continue;
                     }
-                    AppCommand::Input(Command::InvalidInput) => {
+                    AppCommand::Input(InputRequest::Invalid) => {
                         self.app.model.status = Some("Invalid sequence".to_string());
                         self.app.model.kernel_mut().clear_pending_command();
                         let outcome = CommandOutcome::statusline();
@@ -211,18 +214,21 @@ impl Runtime {
                         continue;
                     }
                     AppCommand::Lifecycle(command) => {
-                        match crate::app::lifecycle::dispatch(&mut self.app, command) {
-                            Ok(outcome) => {
-                                should_redraw = should_redraw.max(outcome.redraw);
-                                self.apply_outcome(&outcome);
-                                self.app.sync_kernel_layout();
-                                if outcome.quit {
-                                    break 'main_loop;
-                                }
-                                continue;
-                            }
-                            Err(command) => AppCommand::Lifecycle(command).into_legacy(),
+                        let outcome = crate::app::lifecycle::dispatch(&mut self.app, command);
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        self.app.sync_kernel_layout();
+                        if outcome.quit {
+                            break 'main_loop;
                         }
+                        continue;
+                    }
+                    AppCommand::Navigation(command) => {
+                        let outcome = crate::app::navigation::dispatch(&mut self.app, command);
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        self.app.sync_kernel_layout();
+                        continue;
                     }
                     AppCommand::Semantic(command) => {
                         let command = match crate::app::search::dispatch(&mut self.app, command) {
@@ -241,111 +247,90 @@ impl Runtime {
                                 self.app.sync_kernel_layout();
                                 continue;
                             }
-                            Err(command) => AppCommand::Semantic(command).into_legacy(),
-                        }
-                    }
-                    AppCommand::Prompt(command) => {
-                        match crate::app::search::dispatch(&mut self.app, command) {
-                            Ok(outcome) => {
+                            Err(command) => {
+                                self.app.model.status = Some(
+                                    "Semantic request unavailable during kernel migration"
+                                        .to_string(),
+                                );
+                                let outcome = CommandOutcome::statusline();
                                 should_redraw = should_redraw.max(outcome.redraw);
                                 self.apply_outcome(&outcome);
                                 self.app.sync_kernel_layout();
+                                let _ = command;
                                 continue;
                             }
-                            Err(command) => AppCommand::Prompt(command).into_legacy(),
                         }
                     }
-                    AppCommand::Application(command) => {
-                        let command = match crate::app::navigation::dispatch(&mut self.app, command)
-                        {
-                            Ok(outcome) => {
-                                should_redraw = should_redraw.max(outcome.redraw);
-                                self.apply_outcome(&outcome);
-                                self.app.sync_kernel_layout();
-                                continue;
-                            }
-                            Err(command) => command,
-                        };
-                        match crate::app::application::dispatch(&mut self.app, command) {
-                            Ok(outcome) => {
-                                should_redraw = should_redraw.max(outcome.redraw);
-                                self.apply_outcome(&outcome);
-                                self.app.sync_kernel_layout();
-                                continue;
-                            }
-                            Err(command) => AppCommand::Application(command).into_legacy(),
-                        }
+                    AppCommand::Prompt(request) => {
+                        let outcome = crate::app::prompt::dispatch(&mut self.app, request);
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        self.app.sync_kernel_layout();
+                        continue;
                     }
-                    command => {
-                        // TODO(cleanup): bypass this bridge one AppCommand category at a
-                        // time as its permanent runtime/kernel owner is connected.
-                        command.into_legacy()
+                    AppCommand::Script(request) => {
+                        match request {
+                            crate::app::command::ScriptRequest::CommandLine(request) => {
+                                log::trace!(
+                                    "dispatching command-line {:?} in tab {} window {} buffer {}: range={:?} count={:?} register={:?} modifiers={:?} bang={}",
+                                    request.kind,
+                                    request.current.tab.get(),
+                                    request.current.window.get(),
+                                    request.current.buffer.get(),
+                                    request.range,
+                                    request.count,
+                                    request.register,
+                                    request.modifiers,
+                                    request.bang,
+                                );
+                                let current_buffer = crate::app::ui::current_buffer(&self.app);
+                                let _ = self.script.update_state(&self.app.model, current_buffer);
+                                let current = self.app.current_context();
+                                if let Err(err) = crate::kernel::ExDispatcher::dispatch(
+                                    current,
+                                    &request,
+                                    |accepted| {
+                                        self.script
+                                            .execute_with_context(
+                                                &accepted.text,
+                                                Some(accepted.current),
+                                            )
+                                            .map(|_| ())
+                                    },
+                                ) {
+                                    self.app.model.status = Some(err);
+                                }
+                                self.collect_script_events();
+                                self.app.sync_kernel_context();
+                                should_redraw = crate::kernel::RedrawRequest::View;
+                            }
+                            crate::app::command::ScriptRequest::Execute(script_str) => {
+                                let current_buffer = crate::app::ui::current_buffer(&self.app);
+                                let _ = self.script.update_state(&self.app.model, current_buffer);
+                                if let Err(err) = self
+                                    .script
+                                    .execute_with_context(&script_str, self.app.current_context())
+                                {
+                                    self.app.model.status = Some(err);
+                                }
+                                self.collect_script_events();
+                                self.app.sync_kernel_context();
+                                if let Err(err) = self.app.validate_kernel_context() {
+                                    log::warn!("invalid kernel context after script: {err}");
+                                }
+                                should_redraw = crate::kernel::RedrawRequest::View;
+                            }
+                        }
+                        continue;
+                    }
+                    AppCommand::Application(request) => {
+                        let outcome = crate::app::application::dispatch(&mut self.app, request);
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        self.app.sync_kernel_layout();
+                        continue;
                     }
                 };
-                if let Command::CommandLine(ref request) = command {
-                    log::trace!(
-                        "dispatching command-line {:?} in tab {} window {} buffer {}: range={:?} count={:?} register={:?} modifiers={:?} bang={}",
-                        request.kind,
-                        request.current.tab.get(),
-                        request.current.window.get(),
-                        request.current.buffer.get(),
-                        request.range,
-                        request.count,
-                        request.register,
-                        request.modifiers,
-                        request.bang,
-                    );
-                    let current_buffer = crate::app::ui::current_buffer(&self.app);
-                    let _ = self.script.update_state(&self.app.model, current_buffer);
-                    let current = self.app.current_context();
-                    if let Err(err) =
-                        crate::kernel::ExDispatcher::dispatch(current, request, |accepted| {
-                            self.script
-                                .execute_with_context(&accepted.text, Some(accepted.current))
-                                .map(|_| ())
-                        })
-                    {
-                        self.app.model.status = Some(err);
-                    }
-                    self.collect_script_events();
-                    self.app.sync_kernel_context();
-                    should_redraw = crate::kernel::RedrawRequest::View;
-                    continue;
-                }
-                if let Command::ExecuteScript(ref script_str) = command {
-                    let current_buffer = crate::app::ui::current_buffer(&self.app);
-                    let _ = self.script.update_state(&self.app.model, current_buffer);
-                    if let Err(err) = self
-                        .script
-                        .execute_with_context(script_str, self.app.current_context())
-                    {
-                        self.app.model.status = Some(err);
-                    }
-                    self.collect_script_events();
-                    self.app.sync_kernel_context();
-                    if let Err(err) = self.app.validate_kernel_context() {
-                        log::warn!("invalid kernel context after script: {err}");
-                    }
-                    should_redraw = crate::kernel::RedrawRequest::View;
-                    continue;
-                }
-                if let Err(err) = self.app.validate_kernel_context() {
-                    log::warn!("invalid kernel context before command: {err}");
-                    self.app.sync_kernel_context();
-                }
-                self.app.model.status = Some(format!(
-                    "Command unavailable during legacy dispatcher retirement: {command:?}"
-                ));
-                let outcome = CommandOutcome::statusline();
-                should_redraw = should_redraw.max(outcome.redraw);
-                self.apply_outcome(&outcome);
-                self.app.sync_kernel_layout();
-                if let Err(err) = self.app.validate_kernel_context() {
-                    log::warn!("invalid kernel context after command: {err}");
-                }
-                if outcome.quit {
-                    break 'main_loop;
-                }
             }
             if processed_any {
                 self.app.sync_kernel_context();

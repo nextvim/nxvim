@@ -114,6 +114,22 @@ pub(crate) fn normalize_visual_state(
     }
 }
 
+pub(crate) fn execute_history(
+    buffer: &mut vim_buffer::Buffer,
+    undo: bool,
+    count: usize,
+) -> Result<super::CommandOutcome, vim_buffer::BufferError> {
+    let mut outcome = super::CommandOutcome::no_redraw();
+    for _ in 0..count.max(1) {
+        let mutation = if undo { buffer.undo()? } else { buffer.redo()? };
+        let Some(mutation) = mutation else { break };
+        outcome.merge(super::CommandOutcome::mutation_committed(
+            super::MutationOutcome::from_buffer(mutation),
+        ));
+    }
+    Ok(outcome)
+}
+
 pub(crate) fn execute_mark_selection(
     action: &vim_input::Action,
     buffer: &mut vim_buffer::Buffer,
@@ -524,7 +540,7 @@ pub(crate) fn execute_delete_lines(
         .as_rope()
         .chunks_in_range(start..end)
         .collect();
-    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
         tx.delete(
@@ -565,7 +581,7 @@ pub(crate) fn execute_delete_line(
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
         tx.delete(
@@ -595,7 +611,7 @@ pub(crate) fn execute_case_line(
         super::CaseChange::Upper => source.to_uppercase(),
         super::CaseChange::Lower => source.to_lowercase(),
     };
-    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
         tx.replace(
@@ -645,12 +661,7 @@ pub(crate) fn execute_delete_before(
         })
         .collect();
     for range in &ranges {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            range.start.0,
-            range.end.0,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), range.start.0, range.end.0);
     }
     let snapshot = selections.clone();
     let mutation = super::transaction(
@@ -714,12 +725,7 @@ pub(crate) fn execute_case_selection(
         return None;
     }
     for &(start, end, _) in &edits {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            start,
-            end,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     }
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
@@ -780,12 +786,7 @@ pub(crate) fn execute_toggle_case(
         return None;
     }
     for &(start, end, _) in &edits {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            start,
-            end,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     }
     let snapshot = selections.clone();
     super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
@@ -864,12 +865,7 @@ pub(crate) fn execute_delete(
     }
 
     for range in &edits {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            range.start.0,
-            range.end.0,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), range.start.0, range.end.0);
     }
     if edits.is_empty() {
         return None;
@@ -1211,12 +1207,7 @@ pub(crate) fn execute_case_motion_with_syntax(
         return Some(None);
     }
     for &(_, start, end, _) in &edits {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            start,
-            end,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     }
     let selection_snapshot = resolved.selections.clone();
     let mutation = super::transaction(
@@ -1281,12 +1272,7 @@ fn delete_exact_selection(
         return None;
     }
     for range in &ranges {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            range.start.0,
-            range.end.0,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), range.start.0, range.end.0);
     }
     let selection_snapshot = selections.clone();
     super::transaction(
@@ -1997,6 +1983,97 @@ mod tests {
             buffer.as_text_buffer().as_rope().to_string(),
             "one\ntwo\nThree\n"
         );
+    }
+
+    #[test]
+    fn toggle_case_handles_counted_cursors_and_visual_ranges() {
+        let mut buffer = Buffer::new(
+            vim_buffer::BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "Abc DEF",
+        );
+        let mut selections = SelectionSet::new();
+        selections.add(buffer.as_text_buffer(), 0);
+
+        let mutation = execute_toggle_case(&mut buffer, &mut selections, &mut Vec::new(), 3);
+        assert!(mutation.is_some());
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "aBC DEF");
+
+        let mut selections = SelectionSet::new();
+        selections.add(buffer.as_text_buffer(), 4);
+        selections.move_right(true, 3, buffer.as_text_buffer());
+        let mutation = execute_toggle_case(&mut buffer, &mut selections, &mut Vec::new(), 1);
+        assert!(mutation.is_some());
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "aBC def");
+    }
+
+    #[test]
+    fn marks_similar_selection_and_history_execute_in_kernel() {
+        let mut buffer = Buffer::new(
+            vim_buffer::BufferId::new(1).unwrap(),
+            clock::ReplicaId::LOCAL,
+            "one one",
+        );
+        let mut window = WindowState::new(&buffer, vim_ui::Viewport::default());
+        window.selections.clear(buffer.as_text_buffer());
+
+        assert!(execute_mark_selection(
+            &vim_input::Action::SelectSimilar,
+            &mut buffer,
+            &mut window,
+        ));
+        assert!(window.selections.has_selection(buffer.as_text_buffer()));
+        assert!(execute_mark_selection(
+            &vim_input::Action::MarkSet { ch: 'a' },
+            &mut buffer,
+            &mut window,
+        ));
+        let marked_offset = window
+            .selections
+            .primary()
+            .head()
+            .to_offset(buffer.as_text_buffer());
+        window
+            .selections
+            .move_right(false, 4, buffer.as_text_buffer());
+        window
+            .selections
+            .move_right(false, 4, buffer.as_text_buffer());
+        assert!(execute_mark_selection(
+            &vim_input::Action::MarkJump {
+                ch: 'a',
+                select: false,
+            },
+            &mut buffer,
+            &mut window,
+        ));
+        assert_eq!(
+            window
+                .selections
+                .primary()
+                .head()
+                .to_offset(buffer.as_text_buffer()),
+            marked_offset
+        );
+
+        let mut selections = SelectionSet::new();
+        selections.add(buffer.as_text_buffer(), 0);
+        execute_toggle_case(&mut buffer, &mut selections, &mut Vec::new(), 3).unwrap();
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "ONE one");
+        assert!(
+            !execute_history(&mut buffer, true, 1)
+                .unwrap()
+                .effects
+                .is_empty()
+        );
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "one one");
+        assert!(
+            !execute_history(&mut buffer, false, 1)
+                .unwrap()
+                .effects
+                .is_empty()
+        );
+        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "ONE one");
     }
 
     #[test]

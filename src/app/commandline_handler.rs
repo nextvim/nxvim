@@ -3,6 +3,7 @@ use vim_input::{Action, Mode};
 use vim_regex::Regex;
 use vim_ui::{Ui, WindowId};
 
+use crate::app::command::{AppCommand, ScriptRequest};
 use crate::app::input::InputAdapter;
 use crate::app::ui::ViewIds;
 use crate::app::windows::WindowOps;
@@ -195,7 +196,7 @@ impl CommandlineHandler {
                             crate::kernel::CommandLineRequest::parse(current, command_to_execute)
                         }) {
                         Ok(request) => command_queue
-                            .push_back(crate::app::legacy_command::Command::CommandLine(request).into()),
+                            .push_back(AppCommand::Script(ScriptRequest::CommandLine(request))),
                         Err(err) => model.status = Some(err),
                     }
                 }

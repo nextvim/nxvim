@@ -103,6 +103,9 @@ pub type SharedMappingStore = Arc<RwLock<MappingStore>>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MappingMatch {
     Complete(Mapping),
+    /// An exact mapping exists, but a longer mapping is also possible.
+    /// The resolver must wait for another key unless the exact mapping is `nowait`.
+    CompleteWithPrefix(Mapping),
     Prefix,
     None,
 }
@@ -161,7 +164,12 @@ impl MappingStore {
             items: keys.iter().copied().map(crate::KeyPattern::Exact).collect(),
         };
         if let Some(mapping) = self.resolve_sequence(mode, &exact, buffer) {
-            return MappingMatch::Complete(mapping.clone());
+            let has_longer = self.has_longer_prefix(mode, keys, buffer);
+            return if has_longer && !mapping.flags.nowait {
+                MappingMatch::CompleteWithPrefix(mapping.clone())
+            } else {
+                MappingMatch::Complete(mapping.clone())
+            };
         }
         let has_prefix = self
             .global
@@ -185,6 +193,30 @@ impl MappingStore {
         } else {
             MappingMatch::None
         }
+    }
+
+    fn has_longer_prefix(
+        &self,
+        mode: MappingMode,
+        keys: &[crate::Key],
+        buffer: Option<u64>,
+    ) -> bool {
+        self.global
+            .keys()
+            .chain(
+                buffer
+                    .and_then(|id| self.buffer_local.get(&id))
+                    .into_iter()
+                    .flat_map(|store| store.keys()),
+            )
+            .any(|(candidate_mode, sequence)| {
+                *candidate_mode == mode
+                    && sequence.items.len() > keys.len()
+                    && sequence.items[..keys.len()]
+                        .iter()
+                        .zip(keys)
+                        .all(|(pattern, key)| *pattern == crate::KeyPattern::Exact(*key))
+            })
     }
 
     pub fn resolve_sequence(
@@ -280,6 +312,78 @@ mod tests {
                 .0,
             1
         );
+    }
+
+    #[test]
+    fn non_nowait_exact_mapping_reports_ambiguous_longer_prefix() {
+        let mut store = MappingStore::default();
+        store.register(
+            Mapping::new(
+                MappingId(1),
+                vec![MappingMode::Normal],
+                "x".into(),
+                MappingExpansion::NoOp,
+                MappingFlags::default(),
+                MappingScope::Global,
+                MappingOrigin::Script,
+                MappingScriptContext::default(),
+            )
+            .unwrap(),
+        );
+        store.register(
+            Mapping::new(
+                MappingId(2),
+                vec![MappingMode::Normal],
+                "xy".into(),
+                MappingExpansion::NoOp,
+                MappingFlags::default(),
+                MappingScope::Global,
+                MappingOrigin::Script,
+                MappingScriptContext::default(),
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            store.match_keys(MappingMode::Normal, &[crate::Key::char('x')], None),
+            MappingMatch::CompleteWithPrefix(mapping) if mapping.id == MappingId(1)
+        ));
+    }
+
+    #[test]
+    fn nowait_exact_mapping_wins_over_longer_prefix() {
+        let mut store = MappingStore::default();
+        let mut flags = MappingFlags::default();
+        flags.nowait = true;
+        store.register(
+            Mapping::new(
+                MappingId(1),
+                vec![MappingMode::Normal],
+                "x".into(),
+                MappingExpansion::NoOp,
+                flags,
+                MappingScope::Global,
+                MappingOrigin::Script,
+                MappingScriptContext::default(),
+            )
+            .unwrap(),
+        );
+        store.register(
+            Mapping::new(
+                MappingId(2),
+                vec![MappingMode::Normal],
+                "xy".into(),
+                MappingExpansion::NoOp,
+                MappingFlags::default(),
+                MappingScope::Global,
+                MappingOrigin::Script,
+                MappingScriptContext::default(),
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            store.match_keys(MappingMode::Normal, &[crate::Key::char('x')], None),
+            MappingMatch::Complete(mapping) if mapping.id == MappingId(1)
+        ));
     }
 
     #[test]

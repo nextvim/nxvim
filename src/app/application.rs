@@ -1,20 +1,18 @@
 //! Application-owned handling for non-semantic configuration and UI toggles.
 
+use crate::app::command::ApplicationRequest;
 use crate::app::{App, InspectKind};
-use crate::app::legacy_command::Command;
 
 use super::outcome::CommandOutcome;
 
-/// Handles application-level commands that do not require semantic editor
-/// dispatch. Unrecognized commands are returned for the temporary legacy path.
-pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Command> {
-    let outcome = match command {
-        Command::ClearSearchHighlight => {
-            crate::app::lifecycle_ops::LifecycleHandler::clear_search_highlight(
-                &mut app.model,
-            )
+/// Handles application-level requests that do not require semantic editor
+/// dispatch.
+pub fn dispatch(app: &mut App, command: ApplicationRequest) -> CommandOutcome {
+    match command {
+        ApplicationRequest::ClearSearchHighlight => {
+            crate::app::lifecycle_ops::LifecycleHandler::clear_search_highlight(&mut app.model)
         }
-        Command::Colorscheme { name } => {
+        ApplicationRequest::Colorscheme { name } => {
             crate::app::lifecycle_ops::LifecycleHandler::colorscheme(
                 &mut app.ui,
                 &mut app.model,
@@ -23,7 +21,7 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 name.as_deref(),
             )
         }
-        Command::Set { arguments } => {
+        ApplicationRequest::Set { arguments } => {
             let active_window = app.ui.focused_window_id();
             let buffer_id = crate::app::windows::WindowOps::window_buffer(&app.ui, active_window);
             let result = app
@@ -53,34 +51,32 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
             }
             CommandOutcome::redraw()
         }
-        Command::SetOption { .. } => {
+        ApplicationRequest::SetOption { .. } => {
             app.model.status = Some("Typed host mutation requires the script host boundary".into());
             CommandOutcome::statusline()
         }
-        Command::Syntax { enable } => {
+        ApplicationRequest::Syntax { enable } => {
             app.syntax_highlight = enable;
             app.model.invalidate_all_highlights();
             CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::SyntaxHighlighting)
         }
-        Command::Treesitter { enable } => {
+        ApplicationRequest::Treesitter { enable } => {
             app.treesitter_enabled = enable;
             CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::SyntaxHighlighting)
         }
-        Command::Indexer { enable } => {
+        ApplicationRequest::Indexer { enable } => {
             app.indexer_enabled = enable;
             CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
         }
-        Command::Inspect { enable } => {
+        ApplicationRequest::Inspect { enable } => {
             app.inspect = enable;
             CommandOutcome::global_redraw(crate::kernel::RedrawInvalidationKind::Statusline)
         }
-        Command::Echo { message } => {
+        ApplicationRequest::Echo { message } => {
             app.model.status = Some(message.clone());
             app.message = message.clone();
             app.messages.push(message);
             CommandOutcome::statusline()
         }
-        command => return Err(command),
-    };
-    Ok(outcome)
+    }
 }

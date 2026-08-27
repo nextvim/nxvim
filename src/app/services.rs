@@ -31,6 +31,7 @@ pub struct TaskOwner {
 }
 
 pub enum TaskResult {
+    External(crate::app::external_runtime::ExternalRuntimeEvent),
     Treesitter {
         task_id: TaskId,
         revision: u64,
@@ -64,6 +65,7 @@ pub(super) struct TaskMetadata {
 
 pub struct Services {
     background_workers: background_worker::WorkerManager,
+    pub external_runtime: crate::app::external_runtime::ExternalRuntimeService,
     pub clipboard: clipboard::Clipboard,
     pub indexer: indexer::Indexer,
     pub files: files::FilesService,
@@ -102,6 +104,7 @@ impl Services {
 
         Self {
             background_workers,
+            external_runtime: crate::app::external_runtime::ExternalRuntimeService::new(),
             clipboard: clipboard::Clipboard::new(),
             indexer: indexer::Indexer::new(),
             files: files::FilesService::new(),
@@ -127,19 +130,23 @@ impl Services {
             results: &mut self.raw_results,
         };
         let count = self.background_workers.poll(&mut collector);
-        count > 0 || !self.raw_results.is_empty()
+        count > 0 || !self.raw_results.is_empty() || self.external_runtime.has_ready_events()
     }
 
     pub fn drain_results(&mut self) -> Vec<TaskResult> {
+        let external = self
+            .external_runtime
+            .drain_events()
+            .into_iter()
+            .map(TaskResult::External);
         let raw_results = std::mem::take(&mut self.raw_results);
         let mut metadata = self.task_metadata.lock().unwrap();
-        raw_results
-            .into_iter()
-            .filter_map(|result| {
+        external
+            .chain(raw_results.into_iter().filter_map(|result| {
                 let task_id = result.task_id;
                 let metadata = metadata.remove(&task_id)?;
                 Self::decode_result(result, metadata)
-            })
+            }))
             .collect()
     }
 

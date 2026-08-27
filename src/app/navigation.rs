@@ -1,25 +1,22 @@
 //! App-owned tab, buffer, and window request orchestration.
 
 use crate::app::App;
+use crate::app::command::{AppCommand, LifecycleRequest, NavigationRequest};
 use crate::app::outcome::CommandOutcome;
-use crate::app::legacy_command::Command;
 
-/// Handles navigation/layout requests. Other application commands are
-/// returned for the temporary compatibility path.
-pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Command> {
-    let outcome = match command {
-        Command::SplitNew { vertical } => {
+/// Handles navigation and layout requests.
+pub fn dispatch(app: &mut App, command: NavigationRequest) -> CommandOutcome {
+    match command {
+        NavigationRequest::SplitNew { vertical } => {
             let active_window = app.ui.focused_window_id();
-            app.command_queue.push_back(
-                Command::Edit {
+            app.command_queue
+                .push_back(AppCommand::Lifecycle(LifecycleRequest::Edit {
                     path: None,
                     force: true,
-                }
-                .into(),
-            );
+                }));
             crate::app::operations::SharedOperations::split_window(active_window, !vertical)
         }
-        Command::TabNew { path } => {
+        NavigationRequest::TabNew { path } => {
             let buffer = match path {
                 Some(path) => app.model.open_path(path),
                 None => app.model.create(""),
@@ -32,25 +29,25 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 }
             }
         }
-        Command::TabNext { count } => {
+        NavigationRequest::TabNext { count } => {
             if let Err(error) = app.next_tab(count) {
                 app.model.status = Some(error);
             }
             CommandOutcome::layout()
         }
-        Command::TabPrevious { count } => {
+        NavigationRequest::TabPrevious { count } => {
             if let Err(error) = app.previous_tab(count) {
                 app.model.status = Some(error);
             }
             CommandOutcome::layout()
         }
-        Command::TabClose => {
+        NavigationRequest::TabClose => {
             if let Err(error) = app.close_active_tab() {
                 app.model.status = Some(error);
             }
             CommandOutcome::layout()
         }
-        Command::BufferNext { count } => {
+        NavigationRequest::BufferNext { count } => {
             let active = app.ui.focused_window_id();
             crate::app::operations::SharedOperations::switch_buffer(
                 &mut app.ui,
@@ -60,7 +57,7 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 count,
             )
         }
-        Command::BufferPrevious { count } => {
+        NavigationRequest::BufferPrevious { count } => {
             let active = app.ui.focused_window_id();
             crate::app::operations::SharedOperations::switch_buffer(
                 &mut app.ui,
@@ -70,7 +67,5 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 count,
             )
         }
-        command => return Err(command),
-    };
-    Ok(outcome)
+    }
 }

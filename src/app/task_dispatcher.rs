@@ -15,6 +15,19 @@ impl TaskDispatcher {
         result: TaskResult,
     ) -> CommandOutcome {
         let accepted = match result {
+            TaskResult::External(event) => {
+                if let crate::app::external_runtime::ExternalRuntimeEvent::Failed {
+                    message, ..
+                } = event
+                {
+                    model.status = Some(message);
+                    true
+                } else {
+                    // Timer/job/channel callbacks will be admitted through the
+                    // script scheduler in their implementation slices.
+                    false
+                }
+            }
             TaskResult::Treesitter {
                 task_id,
                 revision,

@@ -1,10 +1,12 @@
 use super::{CommandLineRequest, EditorContext};
 use crate::app::App;
+use crate::app::command::ExCommand as Command;
+use crate::app::command::{AppCommand, LifecycleRequest};
 use crate::app::lifecycle_ops::LifecycleHandler;
 use crate::app::operations::SharedOperations;
+use crate::app::outcome::CommandOutcome;
 use crate::app::range_ops::RangeCommandHandler;
 use crate::app::substitute::SubstituteHandler;
-use crate::app::legacy_command::{Command, CommandOutcome};
 
 /// Kernel entry point for an already parsed command-line request.
 ///
@@ -127,13 +129,11 @@ impl ExDispatcher {
             }
             Command::SplitNew { vertical } => {
                 let window = app.ui.focused_window_id();
-                app.command_queue.push_back(
-                    Command::Edit {
+                app.command_queue
+                    .push_back(AppCommand::Lifecycle(LifecycleRequest::Edit {
                         path: None,
                         force: true,
-                    }
-                    .into(),
-                );
+                    }));
                 SharedOperations::split_window(window, !vertical)
             }
             Command::Editor {

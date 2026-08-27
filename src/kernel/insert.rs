@@ -41,7 +41,7 @@ pub(crate) fn execute_open_line(
         }
     };
     let insertion_offset = insertion_point.to_offset(buffer.as_text_buffer());
-    crate::app::legacy_editor::remove_overlapping_folds(
+    super::invalidate_folds(
         folds,
         buffer.as_text_buffer(),
         insertion_offset,
@@ -163,12 +163,7 @@ pub(crate) fn execute_insert_text(
         })
         .collect();
     for &(start, end) in &edits {
-        crate::app::legacy_editor::remove_overlapping_folds(
-            folds,
-            buffer.as_text_buffer(),
-            start,
-            end,
-        );
+        super::invalidate_folds(folds, buffer.as_text_buffer(), start, end);
     }
 
     let selection_snapshot = selections.clone();

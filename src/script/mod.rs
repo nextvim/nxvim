@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, mpsc};
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::app::legacy_command::Command;
+use crate::app::command::ExCommand as Command;
 use text::{BufferId, BufferSnapshot};
 
 use vim_script::{
@@ -566,17 +566,25 @@ impl Host for EditorHost {
                             format!("stale buffer ID: {buffer}"),
                         )
                     })?;
-                    let start = usize::try_from(range.start)
-                        .unwrap_or(usize::MAX)
-                        .min(snapshot.len());
-                    let end = usize::try_from(range.end)
-                        .unwrap_or(usize::MAX)
-                        .min(snapshot.len());
-                    if start > end {
+                    let start = usize::try_from(range.start).map_err(|_| {
+                        RuntimeError::coded(
+                            "E16",
+                            RuntimeErrorKind::InvalidCommand,
+                            "buffer range is out of bounds",
+                        )
+                    })?;
+                    let end = usize::try_from(range.end).map_err(|_| {
+                        RuntimeError::coded(
+                            "E16",
+                            RuntimeErrorKind::InvalidCommand,
+                            "buffer range is out of bounds",
+                        )
+                    })?;
+                    if start > end || end > snapshot.len() {
                         return Err(RuntimeError::coded(
                             "E16",
                             RuntimeErrorKind::InvalidCommand,
-                            "invalid buffer range",
+                            "buffer range is out of bounds",
                         ));
                     }
                     EditorResponse::Text(snapshot.text_for_range(start..end).collect())

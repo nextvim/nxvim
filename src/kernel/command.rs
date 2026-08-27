@@ -1,5 +1,5 @@
 use super::EditorContext;
-use crate::app::legacy_command::Command;
+use crate::app::command::ExCommand as Command;
 
 /// Temporary command categories for the semantic-kernel migration seam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

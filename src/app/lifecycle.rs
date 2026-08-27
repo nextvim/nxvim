@@ -1,8 +1,8 @@
 //! App-owned lifecycle request routing.
 
 use crate::app::App;
+use crate::app::command::LifecycleRequest;
 use crate::app::outcome::CommandOutcome;
-use crate::app::legacy_command::Command;
 
 fn save_async(
     app: &mut App,
@@ -70,27 +70,29 @@ fn save_async(
     CommandOutcome::redraw()
 }
 
-pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Command> {
+pub fn dispatch(app: &mut App, command: LifecycleRequest) -> CommandOutcome {
     let active_window = app.ui.focused_window_id();
-    let outcome = match command {
-        Command::Save { path, force } => save_async(app, active_window, path, force),
-        Command::Quit { force } => crate::app::lifecycle_ops::LifecycleHandler::quit(
+    match command {
+        LifecycleRequest::Save { path, force } => save_async(app, active_window, path, force),
+        LifecycleRequest::Quit { force } => crate::app::lifecycle_ops::LifecycleHandler::quit(
             &mut app.ui,
             &mut app.model,
             active_window,
             force,
         ),
-        Command::QuitAll { force } => {
+        LifecycleRequest::QuitAll { force } => {
             crate::app::lifecycle_ops::LifecycleHandler::quit_all(&mut app.model, force)
         }
-        Command::Edit { path, force } => crate::app::lifecycle_ops::LifecycleHandler::edit(
-            &mut app.ui,
-            &mut app.model,
-            active_window,
-            path.as_deref(),
-            force,
-        ),
-        Command::WriteQuit { path, force } => {
+        LifecycleRequest::Edit { path, force } => {
+            crate::app::lifecycle_ops::LifecycleHandler::edit(
+                &mut app.ui,
+                &mut app.model,
+                active_window,
+                path.as_deref(),
+                force,
+            )
+        }
+        LifecycleRequest::WriteQuit { path, force } => {
             crate::app::lifecycle_ops::LifecycleHandler::write_and_quit(
                 &mut app.ui,
                 &mut app.model,
@@ -99,7 +101,7 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 force,
             )
         }
-        Command::WriteQuitAll { force } => {
+        LifecycleRequest::WriteQuitAll { force } => {
             crate::app::lifecycle_ops::LifecycleHandler::write_and_quit_all(
                 &mut app.ui,
                 &mut app.model,
@@ -107,7 +109,5 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 force,
             )
         }
-        command => return Err(command),
-    };
-    Ok(outcome)
+    }
 }

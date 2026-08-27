@@ -2,17 +2,21 @@
 
 use crate::app::App;
 use crate::app::buffer_handler::BufferHandler;
+use crate::app::command::ExCommand as Command;
+use crate::app::command::{AppCommand, ScriptRequest, SemanticRequest};
 use crate::app::commandline_handler::CommandlineHandler;
 use crate::app::editor_handler::EditorHandler;
 use crate::app::lifecycle_ops::LifecycleHandler;
 use crate::app::outcome::CommandOutcome;
 use crate::app::range_ops::{RangeCommandHandler, RangeOperation};
 use crate::app::window_handler::WindowHandler;
-use crate::app::legacy_command::Command;
 
-pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Command> {
+pub fn dispatch(
+    app: &mut App,
+    command: SemanticRequest,
+) -> Result<CommandOutcome, SemanticRequest> {
     match command {
-        Command::RangeOp {
+        SemanticRequest::RangeOp {
             operation,
             bang,
             range,
@@ -21,11 +25,11 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
         } => Ok(RangeCommandHandler::execute(
             app, operation, bang, range, count, register,
         )),
-        Command::ReplaceBuffer { .. } => {
+        SemanticRequest::ReplaceBuffer { .. } => {
             app.model.status = Some("Typed host mutation requires the script host boundary".into());
             Ok(CommandOutcome::statusline())
         }
-        Command::Editor { action, register } => {
+        SemanticRequest::Editor { action, register } => {
             let active_window = app.ui.focused_window_id();
 
             app.model.status = None;
@@ -81,20 +85,19 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                     };
                     let replay_actions = app.services.macros.replay(&register, count);
                     for rec in replay_actions {
-                        app.command_queue.push_back(
-                            Command::Editor {
+                        app.command_queue.push_back(AppCommand::Semantic(
+                            SemanticRequest::Editor {
                                 action: rec.action,
                                 register: rec.register,
-                            }
-                            .into(),
-                        );
+                            },
+                        ));
                     }
                     return Ok(CommandOutcome::redraw());
                 }
                 vim_input::Action::Script { count, script } => {
                     for _ in 0..*count {
                         app.command_queue
-                            .push_back(Command::ExecuteScript(script.clone()).into());
+                            .push_back(AppCommand::Script(ScriptRequest::Execute(script.clone())));
                     }
                     return Ok(CommandOutcome::redraw());
                 }
@@ -120,13 +123,12 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                 vim_input::Action::Sequence { count, actions } => {
                     for _ in 0..*count {
                         for act in actions {
-                            app.command_queue.push_back(
-                                Command::Editor {
+                            app.command_queue.push_back(AppCommand::Semantic(
+                                SemanticRequest::Editor {
                                     action: (**act).clone(),
                                     register,
-                                }
-                                .into(),
-                            );
+                                },
+                            ));
                         }
                     }
                     return Ok(CommandOutcome::redraw());
@@ -136,13 +138,12 @@ pub fn dispatch(app: &mut App, command: Command) -> Result<CommandOutcome, Comma
                     if let Some(actions) = app.model.kernel().repeat_actions() {
                         for _ in 0..*count {
                             for act in actions {
-                                app.command_queue.push_back(
-                                    Command::Editor {
+                                app.command_queue.push_back(AppCommand::Semantic(
+                                    SemanticRequest::Editor {
                                         action: act.clone(),
                                         register: None,
-                                    }
-                                    .into(),
-                                );
+                                    },
+                                ));
                             }
                         }
                     }
