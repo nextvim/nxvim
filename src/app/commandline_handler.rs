@@ -3,12 +3,13 @@ use vim_input::{Action, Mode};
 use vim_regex::Regex;
 use vim_ui::{Ui, WindowId};
 
+use crate::app::input::InputAdapter;
 use crate::app::ui::ViewIds;
 use crate::app::windows::WindowOps;
-use crate::controller::input::InputController;
 use crate::model::EditorModel;
 
-use super::command::{CommandOutcome, ViewEffect};
+use crate::app::outcome::CommandOutcome;
+use crate::app::ui::ViewEffect;
 
 pub struct CommandlineHandler;
 
@@ -31,8 +32,8 @@ impl CommandlineHandler {
     pub fn execute(
         ui: &mut Ui,
         model: &mut EditorModel,
-        input: &mut InputController,
-        command_queue: &mut std::collections::VecDeque<crate::controller::Command>,
+        input: &mut InputAdapter,
+        command_queue: &mut std::collections::VecDeque<crate::app::command::AppCommand>,
         view_ids: ViewIds,
         active_window: WindowId,
         action: &Action,
@@ -194,7 +195,7 @@ impl CommandlineHandler {
                             crate::kernel::CommandLineRequest::parse(current, command_to_execute)
                         }) {
                         Ok(request) => command_queue
-                            .push_back(crate::controller::Command::CommandLine(request)),
+                            .push_back(crate::app::legacy_command::Command::CommandLine(request).into()),
                         Err(err) => model.status = Some(err),
                     }
                 }

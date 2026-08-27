@@ -59,7 +59,7 @@ The primary reset scope is the semantic layer currently spread across:
 | Phase 9 — Compatibility expansion | `[ ] PENDING` | Not started |
 | Phase 10 — Compatibility harness | `[ ] PENDING` | Not started |
 
-The current implementation is deliberately a compatibility stage: the existing controller remains authoritative for command families not yet migrated in Phase 3, while the kernel is authoritative for buffer ownership, current identity, semantic windows, and tab-page layout membership.
+The controller/dispatcher compatibility layer has been retired. Runtime command routing is app-owned, semantic command execution enters through the kernel boundary, and the kernel remains authoritative for buffer ownership, current identity, semantic windows, tab-page layout membership, mode, transactions, and typed outcomes.
 
 ## Status Legend
 
@@ -261,7 +261,7 @@ The initial ownership, lifecycle, edit-boundary, and context-validation slices a
 - `EditorContext` is synchronized from the focused semantic window.
 - Runtime validates context before and after command/script handling.
 - Buffer, window, and tab identities use existing crate-owned ID types.
-- Runtime behavior remains on the existing controller path.
+- Runtime behavior now uses app-owned routing with kernel semantic execution.
 - `cargo check -p nxvim` passed after the migration.
 - `cargo check --workspace` passed after the migration.
 - Tests were deferred; no safety-sensitive invariant required a new test in this slice.
@@ -439,7 +439,7 @@ The first command-kernel boundary is implemented:
 - Existing handlers remain active behind the compatibility dispatcher.
 - The first Normal-mode vertical slice normalizes `MoveLeft`, `MoveRight`, `MoveUp`, `MoveDown`, `Delete`, and `DeleteMotion` from the authoritative kernel count/context before execution.
 - Kernel outcomes are composable and carry stable IDs or owned payloads for buffer mutation, cursor movement, window/tab changes, options, events, messages, quit requests, background work, and redraw invalidation.
-- The compatibility controller preserves all migrated kernel effects and redraw requests; runtime consumption handles messages, events, background requests, and quit requests while retaining stable-ID mutation/movement effects.
+- App-owned routing preserves kernel effects and redraw requests; runtime consumption handles messages, events, background requests, and quit requests while retaining stable-ID mutation/movement effects.
 - Basic `h/j/k/l` execution now lives in `src/kernel/normal.rs` and no longer enters the legacy `Editor::apply_action` match.
 - The simple `Delete` (`x`) operator now uses a kernel transaction executor with preserved clipboard, fold, selection, and undo behavior; `DeleteMotion` remains compatibility-backed pending motion-range extraction.
 - Command-line submissions now produce a typed kernel request carrying original text, Ex/search kind, current IDs, range, count, register, modifiers, and bang state before entering `vim-script`.

@@ -1,12 +1,32 @@
 //! Application composition and infrastructure adapters.
 //!
-//! This module wires the kernel-owned semantic model, controller-facing
-//! services, UI synchronization, and scripting. The controller remains the
-//! compatibility dispatch path while the kernel migration is underway.
+//! This module wires the kernel-owned semantic model, app-owned command
+//! routing, services, UI synchronization, and scripting. Legacy semantic
+//! implementations are retained only as explicitly named compatibility code.
+pub mod application;
 pub mod args;
+pub mod buffer_handler;
+pub mod command;
+pub mod commandline_handler;
 pub mod config;
+pub mod editor;
+pub mod editor_handler;
+pub mod input;
+pub mod legacy_command;
+pub mod legacy_editor;
+pub mod lifecycle;
+pub mod lifecycle_ops;
+pub mod navigation;
+pub mod operations;
+pub mod outcome;
+pub mod prompt;
+pub mod range_ops;
+pub mod search;
 pub mod services;
+pub mod substitute;
+pub mod task_dispatcher;
 pub mod ui;
+pub mod window_handler;
 pub mod windows;
 
 use windows::WindowOps;
@@ -39,16 +59,16 @@ pub struct App {
     /// Semantic tab pages. The initial migration contains one page and
     /// projects structural changes from `vim-ui` into it.
     pub tabs: crate::kernel::TabPages,
-    pub controller: crate::controller::input::InputController,
+    pub input: input::InputAdapter,
     pub services: services::Services,
     pub ui: ui::Ui,
     pub view_ids: ui::ViewIds,
-    pub command_queue: std::collections::VecDeque<crate::controller::Command>,
+    pub command_queue: std::collections::VecDeque<command::AppCommand>,
     /// Typed invalidations accumulated until the next render boundary.
     pub pending_invalidations: Vec<crate::kernel::RedrawInvalidation>,
     pub pending_redraw: crate::kernel::RedrawRequest,
     pub pending_view_invalidations: Vec<ViewInvalidation>,
-    pub prompt: Option<crate::controller::Prompt>,
+    pub prompt: Option<prompt::Prompt>,
     pub colorscheme: Option<vim_colorscheme::ColorScheme>,
     pub highlighter: Option<textmate::Highlighter<'static>>,
 
@@ -92,7 +112,7 @@ impl App {
         let mut app = Self {
             model,
             tabs,
-            controller: crate::controller::input::InputController::new(vim_input::Mode::Normal),
+            input: input::InputAdapter::new(vim_input::Mode::Normal),
             services: services::Services::new(),
             ui,
             view_ids,

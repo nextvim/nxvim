@@ -1,7 +1,7 @@
 use vim_input::Action;
 use vim_ui::{NavigationDirection, WindowId};
 
-use super::command::CommandOutcome;
+use crate::app::outcome::CommandOutcome;
 
 pub struct WindowHandler;
 
@@ -21,22 +21,22 @@ impl WindowHandler {
     pub fn execute(active_window: WindowId, action: &Action) -> CommandOutcome {
         match action {
             Action::SplitHorizontal { .. } => {
-                super::shared_operations::SharedOperations::split_window(active_window, true)
+                crate::app::operations::SharedOperations::split_window(active_window, true)
             }
             Action::SplitVertical { .. } => {
-                super::shared_operations::SharedOperations::split_window(active_window, false)
+                crate::app::operations::SharedOperations::split_window(active_window, false)
             }
             Action::FocusLeftWindow => {
-                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Left)
+                crate::app::operations::SharedOperations::focus_window(NavigationDirection::Left)
             }
             Action::FocusRightWindow => {
-                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Right)
+                crate::app::operations::SharedOperations::focus_window(NavigationDirection::Right)
             }
             Action::FocusUpWindow => {
-                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Up)
+                crate::app::operations::SharedOperations::focus_window(NavigationDirection::Up)
             }
             Action::FocusDownWindow => {
-                super::shared_operations::SharedOperations::focus_window(NavigationDirection::Down)
+                crate::app::operations::SharedOperations::focus_window(NavigationDirection::Down)
             }
             _ => CommandOutcome::default(),
         }

@@ -1,5 +1,4 @@
 mod app;
-mod controller;
 mod kernel;
 mod model;
 mod runtime;

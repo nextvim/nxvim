@@ -5,9 +5,9 @@ use crate::app::App;
 use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
 
-use super::buffer_handler::BufferHandler;
-use super::command::CommandOutcome;
-use super::editor_handler::EditorHandler;
+use crate::app::buffer_handler::BufferHandler;
+use crate::app::editor_handler::EditorHandler;
+use crate::app::outcome::CommandOutcome;
 
 /// The kind of range-taking Ex command being dispatched. Each variant maps to
 /// exactly one `vim_input::Action` in `RangeCommandHandler::resolve_action`.
@@ -114,7 +114,7 @@ impl RangeCommandHandler {
 
         let action = Self::resolve_action(operation, start_line, end_line, bang);
 
-        let mut message = super::dispatcher::describe_action(app.controller.mode(), &action);
+        let mut message = format!("[{:?}] Action: {:?}", app.input.mode(), action);
         if let Some(register) = register {
             message.push_str(&format!(" (reg: '{register}')"));
         }
@@ -131,7 +131,7 @@ impl RangeCommandHandler {
         let mut outcome = EditorHandler::execute(
             &mut app.ui,
             &mut app.model,
-            &mut app.controller,
+            &mut app.input,
             &mut app.services,
             active_window,
             &action,

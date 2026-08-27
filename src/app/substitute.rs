@@ -6,52 +6,8 @@ use vim_ui::WindowId;
 use crate::app::App;
 use crate::app::windows::WindowOps;
 
-use super::command::CommandOutcome;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PromptChoice {
-    Yes,
-    No,
-    All,
-    Quit,
-    Last,
-}
-
-pub struct Prompt {
-    pub handler: PromptHandler,
-    pub message: String,
-    window_id: WindowId,
-    pattern: String,
-    replacement: String,
-    global: bool,
-    row: u32,
-    end_row: u32,
-    search_offset: usize,
-    current_match: Option<(usize, usize)>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PromptHandler {
-    Substitute,
-    Script,
-}
-
-impl Prompt {
-    pub fn script(message: String, window_id: WindowId) -> Self {
-        Self {
-            handler: PromptHandler::Script,
-            message,
-            window_id,
-            pattern: String::new(),
-            replacement: String::new(),
-            global: false,
-            row: 0,
-            end_row: 0,
-            search_offset: 0,
-            current_match: None,
-        }
-    }
-}
+use super::outcome::CommandOutcome;
+use super::prompt::{Prompt, PromptChoice, PromptHandler};
 
 pub struct SubstituteHandler;
 
@@ -70,7 +26,7 @@ impl SubstituteHandler {
         app.model.substitute_text = Some(replacement.clone());
 
         let window_id = app.ui.focused_window_id();
-        let provider = crate::controller::range::EditorRangeStateProvider {
+        let provider = crate::app::range_ops::EditorRangeStateProvider {
             ui: &app.ui,
             model: &app.model,
             window_id,

@@ -1,7 +1,8 @@
-use crate::app::App;
+use crate::app::{App, command::AppCommand};
 
+use crate::app::ui::ViewEffect;
 use crate::app::windows::WindowOps;
-use crate::controller::{Command, CommandOutcome, Dispatcher, ViewEffect};
+use crate::app::legacy_command::{Command, CommandOutcome};
 use crate::terminal::TerminalSession;
 use crate::view::LayoutSnapshot;
 use crossterm::event;
@@ -18,7 +19,7 @@ pub struct Runtime {
 }
 
 enum RuntimeCommand {
-    Controller(Command),
+    App(AppCommand),
     ScriptHost(crate::script::EmittedCommand),
 }
 
@@ -34,7 +35,7 @@ impl Runtime {
 
         let mut app = App::new(rect, args);
         let mut script = crate::script::ScriptRuntime::with_options(app.config.clone());
-        app.controller.set_mapping_store(script.keymaps());
+        app.input.set_mapping_store(script.keymaps());
         app.init(&mut script, pre_config_cmds, post_config_cmds, scripts);
         app.model
             .kernel_mut()
@@ -70,8 +71,8 @@ impl Runtime {
 
             let mut commands = Vec::new();
 
-            while let Some(cmd) = self.app.command_queue.pop_front() {
-                commands.push(RuntimeCommand::Controller(cmd));
+            while let Some(command) = self.app.command_queue.pop_front() {
+                commands.push(RuntimeCommand::App(command));
             }
             while let Some(command) = self.pending_script_commands.pop_front() {
                 commands.push(command);
@@ -83,8 +84,8 @@ impl Runtime {
                         .services
                         .drain_results()
                         .into_iter()
-                        .map(Command::Task)
-                        .map(RuntimeCommand::Controller),
+                        .map(AppCommand::Service)
+                        .map(RuntimeCommand::App),
                 );
             }
 
@@ -99,23 +100,22 @@ impl Runtime {
                         self.resize(vim_ui::Rect::new(0, 0, width, height));
                         should_redraw = crate::kernel::RedrawRequest::View;
                     } else if self.app.prompt.is_some() {
-                        if let Some(choice) = crate::controller::prompt_choice(&terminal_event) {
+                        if let Some(choice) = crate::app::input::prompt_choice(&terminal_event) {
                             if let Some(handler) =
                                 self.app.prompt.as_ref().map(|prompt| prompt.handler)
                             {
-                                commands.push(RuntimeCommand::Controller(Command::PromptChoice {
-                                    handler,
-                                    choice,
-                                }));
+                                commands.push(RuntimeCommand::App(AppCommand::Prompt(
+                                    Command::PromptChoice { handler, choice },
+                                )));
                             }
                         }
-                    } else if let Some(command) = self.app.controller.feed_event_with_buffer(
+                    } else if let Some(command) = self.app.input.feed_event_with_buffer(
                         terminal_event,
                         self.app
                             .current_context()
                             .map(|context| context.buffer.get()),
                     ) {
-                        commands.push(RuntimeCommand::Controller(command));
+                        commands.push(RuntimeCommand::App(command));
                     }
                 }
             }
@@ -148,7 +148,7 @@ impl Runtime {
 
             let processed_any = !commands.is_empty();
             for command in commands {
-                let RuntimeCommand::Controller(command) = command else {
+                let RuntimeCommand::App(command) = command else {
                     let RuntimeCommand::ScriptHost(emitted) = command else {
                         unreachable!();
                     };
@@ -177,6 +177,110 @@ impl Runtime {
                         }
                     }
                     continue;
+                };
+                // TODO(cleanup): bypass this bridge one AppCommand category at a
+                // time as its permanent runtime/kernel owner is connected.
+                let command = match command {
+                    AppCommand::Input(Command::PendingInput(pending)) => {
+                        self.app.model.status =
+                            Some(format!("Pending sequence: {}", pending.display));
+                        self.app.model.kernel_mut().set_pending_command(pending);
+                        let outcome = CommandOutcome::statusline();
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        continue;
+                    }
+                    AppCommand::Input(Command::InvalidInput) => {
+                        self.app.model.status = Some("Invalid sequence".to_string());
+                        self.app.model.kernel_mut().clear_pending_command();
+                        let outcome = CommandOutcome::statusline();
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        continue;
+                    }
+                    AppCommand::Service(result) => {
+                        let outcome = crate::app::task_dispatcher::TaskDispatcher::dispatch(
+                            &mut self.app.ui,
+                            &mut self.app.model,
+                            &mut self.app.services,
+                            result,
+                        );
+                        should_redraw = should_redraw.max(outcome.redraw);
+                        self.apply_outcome(&outcome);
+                        self.app.sync_kernel_layout();
+                        continue;
+                    }
+                    AppCommand::Lifecycle(command) => {
+                        match crate::app::lifecycle::dispatch(&mut self.app, command) {
+                            Ok(outcome) => {
+                                should_redraw = should_redraw.max(outcome.redraw);
+                                self.apply_outcome(&outcome);
+                                self.app.sync_kernel_layout();
+                                if outcome.quit {
+                                    break 'main_loop;
+                                }
+                                continue;
+                            }
+                            Err(command) => AppCommand::Lifecycle(command).into_legacy(),
+                        }
+                    }
+                    AppCommand::Semantic(command) => {
+                        let command = match crate::app::search::dispatch(&mut self.app, command) {
+                            Ok(outcome) => {
+                                should_redraw = should_redraw.max(outcome.redraw);
+                                self.apply_outcome(&outcome);
+                                self.app.sync_kernel_layout();
+                                continue;
+                            }
+                            Err(command) => command,
+                        };
+                        match crate::app::editor::dispatch(&mut self.app, command) {
+                            Ok(outcome) => {
+                                should_redraw = should_redraw.max(outcome.redraw);
+                                self.apply_outcome(&outcome);
+                                self.app.sync_kernel_layout();
+                                continue;
+                            }
+                            Err(command) => AppCommand::Semantic(command).into_legacy(),
+                        }
+                    }
+                    AppCommand::Prompt(command) => {
+                        match crate::app::search::dispatch(&mut self.app, command) {
+                            Ok(outcome) => {
+                                should_redraw = should_redraw.max(outcome.redraw);
+                                self.apply_outcome(&outcome);
+                                self.app.sync_kernel_layout();
+                                continue;
+                            }
+                            Err(command) => AppCommand::Prompt(command).into_legacy(),
+                        }
+                    }
+                    AppCommand::Application(command) => {
+                        let command = match crate::app::navigation::dispatch(&mut self.app, command)
+                        {
+                            Ok(outcome) => {
+                                should_redraw = should_redraw.max(outcome.redraw);
+                                self.apply_outcome(&outcome);
+                                self.app.sync_kernel_layout();
+                                continue;
+                            }
+                            Err(command) => command,
+                        };
+                        match crate::app::application::dispatch(&mut self.app, command) {
+                            Ok(outcome) => {
+                                should_redraw = should_redraw.max(outcome.redraw);
+                                self.apply_outcome(&outcome);
+                                self.app.sync_kernel_layout();
+                                continue;
+                            }
+                            Err(command) => AppCommand::Application(command).into_legacy(),
+                        }
+                    }
+                    command => {
+                        // TODO(cleanup): bypass this bridge one AppCommand category at a
+                        // time as its permanent runtime/kernel owner is connected.
+                        command.into_legacy()
+                    }
                 };
                 if let Command::CommandLine(ref request) = command {
                     log::trace!(
@@ -229,7 +333,10 @@ impl Runtime {
                     log::warn!("invalid kernel context before command: {err}");
                     self.app.sync_kernel_context();
                 }
-                let outcome = Dispatcher::dispatch(&mut self.app, command);
+                self.app.model.status = Some(format!(
+                    "Command unavailable during legacy dispatcher retirement: {command:?}"
+                ));
+                let outcome = CommandOutcome::statusline();
                 should_redraw = should_redraw.max(outcome.redraw);
                 self.apply_outcome(&outcome);
                 self.app.sync_kernel_layout();
@@ -265,7 +372,13 @@ impl Runtime {
         while self.app.services.has_pending_saves() {
             if self.app.services.poll() {
                 for task_res in self.app.services.drain_results() {
-                    let _ = Dispatcher::dispatch(&mut self.app, Command::Task(task_res));
+                    let outcome = crate::app::task_dispatcher::TaskDispatcher::dispatch(
+                        &mut self.app.ui,
+                        &mut self.app.model,
+                        &mut self.app.services,
+                        task_res,
+                    );
+                    self.apply_outcome(&outcome);
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(5));

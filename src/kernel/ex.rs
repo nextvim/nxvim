@@ -1,10 +1,10 @@
 use super::{CommandLineRequest, EditorContext};
 use crate::app::App;
-use crate::controller::lifecycle_handler::LifecycleHandler;
-use crate::controller::range::RangeCommandHandler;
-use crate::controller::shared_operations::SharedOperations;
-use crate::controller::substitute_handler::SubstituteHandler;
-use crate::controller::{Command, CommandOutcome};
+use crate::app::lifecycle_ops::LifecycleHandler;
+use crate::app::operations::SharedOperations;
+use crate::app::range_ops::RangeCommandHandler;
+use crate::app::substitute::SubstituteHandler;
+use crate::app::legacy_command::{Command, CommandOutcome};
 
 /// Kernel entry point for an already parsed command-line request.
 ///
@@ -127,10 +127,13 @@ impl ExDispatcher {
             }
             Command::SplitNew { vertical } => {
                 let window = app.ui.focused_window_id();
-                app.command_queue.push_back(Command::Edit {
-                    path: None,
-                    force: true,
-                });
+                app.command_queue.push_back(
+                    Command::Edit {
+                        path: None,
+                        force: true,
+                    }
+                    .into(),
+                );
                 SharedOperations::split_window(window, !vertical)
             }
             Command::Editor {
@@ -203,7 +206,7 @@ impl ExDispatcher {
             }
             Command::OpenPrompt { message } => {
                 let window = app.ui.focused_window_id();
-                let prompt = crate::controller::Prompt::script(message, window);
+                let prompt = crate::app::prompt::Prompt::script(message, window);
                 app.model.status = Some(format!("{} (y/n/q)", prompt.message));
                 app.prompt = Some(prompt);
                 CommandOutcome::redraw()

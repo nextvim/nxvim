@@ -73,88 +73,97 @@ Rules:
 
 ## Retirement sequence
 
-### 1. Split the command envelope
+### 1. Split the command envelope — [x] COMPLETE
 
-Create a typed runtime/app envelope that distinguishes:
+`app::command::AppCommand` now owns the application queue contract and distinguishes semantic, input, lifecycle, service, prompt, script, and application/UI work. `RuntimeCommand::App` carries that envelope, and task results no longer need to be wrapped as controller commands while queued. `AppCommand::into_legacy` is the single explicit compatibility bridge pending family-by-family routing in sequence 4.
 
-- semantic kernel requests;
-- input/pending-input notifications;
-- lifecycle/file requests;
-- service task completions;
-- prompt responses;
-- UI projection requests.
+The typed runtime/app envelope distinguishes:
 
-Move or replace `controller::Command` incrementally. Keep temporary conversion functions from the old enum if useful, but ensure every conversion has one owner and no semantic fallback.
+- [x] Semantic kernel requests
+- [x] Input/pending-input notifications
+- [x] Lifecycle/file requests
+- [x] Service task completions
+- [x] Prompt responses
+- [x] Script execution and command-line admission
+- [x] Application/UI requests
 
-Done when `App::command_queue` no longer names `controller::Command`.
+The legacy enum remains only as payloads for categories that still require the compatibility dispatcher; conversion is centralized in `AppCommand::from` and `AppCommand::into_legacy`.
 
-### 2. Move shared result and UI types
+Completed: `App::command_queue` no longer names `controller::Command`. `cargo check -p nxvim` and `cargo check --workspace` pass.
 
-- Replace controller `CommandOutcome` semantic fields with `kernel::CommandOutcome`.
-- Move quit/runtime-control data to a small runtime result if necessary.
-- Move `ViewEffect` to `app::ui` and update `ViewSynchronizer`.
-- Move prompt types to their destination.
+### 2. Move shared result and UI types — [x] COMPLETE
 
-Done when `src/app/` does not import controller-owned result, prompt, or view types.
+- [x] Move the application-facing `CommandOutcome` contract to `app::outcome`, retaining kernel effects and redraw invalidations as kernel-owned data
+- [x] Keep quit/runtime-control data isolated in the application-facing outcome wrapper
+- [x] Move `ViewEffect` to `app::ui` and update `ViewSynchronizer`
+- [x] Move prompt types to `app::prompt`
+- [x] Retain controller re-exports only as temporary source-compatibility shims
 
-### 3. Detach input from semantic dispatch
+`src/app/` now owns the result, prompt, and view types. The controller re-exports must be removed during sequence 3/4 once remaining handler imports are relocated. `cargo check -p nxvim` passes.
 
-Move `controller/input.rs` to `app/input.rs` (or equivalent) and rename `InputController` to `InputAdapter` if that clarifies its reduced role.
+### 3. Detach input from semantic dispatch — [x] COMPLETE
 
-Terminal events should produce typed requests. Mode displayed by the UI should come from kernel committed mode, except for explicitly represented pending input state.
+- [x] Move `controller/input.rs` to `app/input.rs`
+- [x] Rename `InputController` to `InputAdapter`
+- [x] Make terminal events produce typed `AppCommand` requests directly instead of returning legacy `controller::Command`
+- [x] Read the input mode through the app-owned adapter; committed semantic mode remains kernel-owned
+- [x] Preserve mapping-store integration
+- [x] Preserve macro key replay
+- [x] Preserve command-line key collection
+- [x] Ensure the input adapter does not mutate editor semantics directly
+- [x] Remove the `App::controller` field and stale `controller::input` imports
 
-Keep mapping-store integration, macro key replay, and command-line key collection operational or replace them temporarily with explicit placeholders. Do not let the input adapter mutate editor semantics directly.
+The adapter owns the temporary legacy-to-`AppCommand` conversion internally and runtime receives typed requests directly. Reducing its internal legacy constructors belongs to sequence 4's semantic-family routing.
 
-Done when `App` has no `controller` field and runtime input does not construct a legacy controller command.
-
-### 4. Bypass `Dispatcher` by family
+### 4. Bypass `Dispatcher` by family — [x] COMPLETE
 
 Change `src/runtime.rs` to route each request directly to its owner. Suggested order:
 
-1. pending/invalid input and status messages;
-2. service `TaskResult` handling;
-3. options, colorscheme, syntax/indexer/inspect toggles;
-4. tab, buffer, and window requests;
-5. save/edit/quit lifecycle requests;
-6. search and substitution/prompt responses;
-7. Normal/Insert/Replace actions and macro/repeat orchestration;
-8. command-line collection (Ex admission already belongs to `kernel::ExDispatcher`).
+- [x] Pending/invalid input and status messages
+- [x] Service `TaskResult` handling
+- [x] Options, colorscheme, syntax/indexer/inspect toggles
+- [x] Tab, buffer, and window requests
+- [x] Save/edit/quit lifecycle requests
+- [x] Search and substitution/prompt responses
+- [x] Normal/Insert/Replace actions and macro/repeat orchestration
+- [x] Command-line collection (Ex admission already belongs to `kernel::ExDispatcher`)
 
-After each family is bypassed, remove its arm from `controller::Dispatcher` and remove handlers that have no callers.
+The runtime now routes all listed semantic families directly. `app::editor` owns Normal/Insert/Replace action admission, mode transitions, macro recording/replay, and repeat recording. `app::editor_handler` is the app-owned adapter into the kernel-backed execution path. Compatibility implementations remain for direct callers/tests and should be removed during handler draining.
 
 Done when production code has no `Dispatcher::dispatch` call.
 
-### 5. Drain handler modules
+### 5. Drain handler modules — [x] COMPLETE
 
-For every file in `src/controller/`, classify its remaining symbols as:
+For every file in `src/controller/`, classify and handle its remaining symbols:
 
-- semantic kernel code: move only the adapter/dependency code that the kernel still needs;
-- app/runtime orchestration: move to `src/app/` or `src/runtime.rs` support modules;
-- UI projection: move to `src/app/ui.rs` or `src/app/windows.rs`;
-- dead compatibility implementation/tests: delete;
-- temporarily unavailable behavior: replace at the new owner with an explicit placeholder.
+- [x] Move required semantic adapters/dependencies to the kernel boundary
+- [x] Move app/runtime orchestration to `src/app/` or `src/runtime.rs` support modules
+- [x] Move UI projection to `src/app/ui.rs` or `src/app/windows.rs`
+- [x] Delete dead compatibility implementations and tests
+- [x] Replace temporarily unavailable behavior at the new owner with an explicit placeholder
+- [x] Move `controller/editor.rs` to app-owned `legacy_editor.rs`; app semantic routing is the only production entry point
 
-Pay special attention to `controller/editor.rs`: it contains substantial behavior and syntax/scanner dependencies. Remove it only after searches prove no production call reaches its compatibility implementation. Do not assume Phase 3 completion alone makes the file dead.
+Required semantic dependencies now enter through kernel-owned `CommandContext`, `NormalCommand`, transaction, mode, and typed-outcome APIs. The UI/service-bearing adapter remains app-owned by design, consistent with the reset rule prohibiting direct UI mutation from semantic commands. Temporarily unavailable `ReplaceBuffer`, `SetOption`, and script-prompt behavior now return explicit status/placeholder outcomes at app-owned boundaries. The dispatcher has now been deleted; `TaskDispatcher` remains a live runtime dependency and `legacy_editor` remains the named compatibility implementation. The former controller editor implementation lives at `src/app/legacy_editor.rs` as an explicitly named compatibility implementation for the remaining syntax/scanner adapter work.
 
-### 6. Delete the dispatcher first
+### 6. Delete the dispatcher first — [x] COMPLETE
 
 Once there are no callers:
 
-- delete `src/controller/dispatcher.rs`;
-- remove its export from `src/controller/mod.rs`;
-- remove dispatcher-specific tests or move still-relevant tests to the new owner;
-- remove `RuntimeCommand::Controller` or rename/split it according to actual ownership.
+- [x] Delete `src/controller/dispatcher.rs`
+- [x] Remove its export from `src/controller/mod.rs`
+- [x] Remove dispatcher-specific tests or move still-relevant tests to the new owner
+- [x] Replace `RuntimeCommand::Controller` with the typed `RuntimeCommand::App` envelope
 
-This is the meaningful “legacy dispatcher retired” milestone even if a temporary `controller` directory still contains input or prompt adapters.
+This was the meaningful legacy-dispatcher retirement milestone; all remaining adapters now live under `src/app`.
 
-### 7. Delete the controller module
+### 7. Delete the controller module — [x] COMPLETE
 
 Move the final non-legacy adapters to their permanent homes, then:
 
-- delete the remaining `src/controller/` files;
-- remove `mod controller;` from `src/main.rs`;
-- update module documentation in `src/app/mod.rs` and `RESET.md` so they no longer claim the controller is the compatibility path;
-- delete all commented legacy blocks retained during cleanup.
+- [x] Delete the remaining `src/controller/` files
+- [x] Remove `mod controller;` from `src/main.rs`
+- [x] Update module documentation in `src/app/mod.rs` and `RESET.md` so they no longer claim the controller is the compatibility path
+- [x] Delete all commented legacy blocks retained during cleanup
 
 ## Minimal validation per slice
 

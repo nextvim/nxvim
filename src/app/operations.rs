@@ -4,7 +4,8 @@ use vim_ui::{NavigationDirection, SplitAxis, Ui, WindowId};
 use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
 
-use super::command::{CommandOutcome, ViewEffect};
+use crate::app::outcome::CommandOutcome;
+use crate::app::ui::ViewEffect;
 
 pub struct SharedOperations;
 

@@ -3,7 +3,7 @@ use vim_ui::{Ui, WindowId};
 
 use crate::model::EditorModel;
 
-use super::command::CommandOutcome;
+use crate::app::outcome::CommandOutcome;
 
 pub struct BufferHandler;
 
@@ -19,7 +19,7 @@ impl BufferHandler {
         action: &Action,
     ) -> CommandOutcome {
         match action {
-            Action::NextTab { count } => super::shared_operations::SharedOperations::switch_buffer(
+            Action::NextTab { count } => crate::app::operations::SharedOperations::switch_buffer(
                 ui,
                 model,
                 active_window,
@@ -27,7 +27,7 @@ impl BufferHandler {
                 *count as usize,
             ),
             Action::PreviousTab { count } => {
-                super::shared_operations::SharedOperations::switch_buffer(
+                crate::app::operations::SharedOperations::switch_buffer(
                     ui,
                     model,
                     active_window,

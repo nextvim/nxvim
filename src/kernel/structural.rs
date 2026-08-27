@@ -2,7 +2,7 @@ use text::{Bias, Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use vim_buffer::{Buffer, SelectionSet};
 
 fn invalidate(folds: &mut Vec<display_map::Fold>, buffer: &text::Buffer, start: usize, end: usize) {
-    crate::controller::editor::remove_overlapping_folds(folds, buffer, start, end);
+    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer, start, end);
 }
 
 pub(crate) fn execute_put(

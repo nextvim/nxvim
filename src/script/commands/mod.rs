@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use vim_script::host::CommandRequest;
 use vim_script::runtime::{RuntimeError, RuntimeErrorKind};
 
-use crate::controller::{Command, RangeOperation};
+use crate::app::legacy_command::Command;
+use crate::app::range_ops::RangeOperation;
 
 /// Execute the Ex command request and translate it to a controller Command.
 pub fn execute(request: CommandRequest) -> Result<Command, RuntimeError> {

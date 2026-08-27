@@ -7,7 +7,19 @@ use crate::view::{
     WindowLayout, globals::buffer_display_name,
 };
 use text::ToPoint;
-use vim_ui::Window;
+use vim_ui::{NavigationDirection, SplitAxis, Window, WindowId};
+
+/// UI projection requests emitted by application command handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewEffect {
+    Focus(WindowId),
+    Split { source: WindowId, axis: SplitAxis },
+    FocusDirection(NavigationDirection),
+    Close(WindowId),
+    Hide(WindowId),
+    Resize { width: u16, height: u16 },
+    SetCommandLineMode(char),
+}
 
 /// Concrete UI identities. `main` and `commandline` are semantic model windows;
 /// tabline, statusline, and side panels are presentation-only chrome.
@@ -37,10 +49,10 @@ impl ViewSynchronizer {
         ui: &mut Ui,
         model: &mut crate::model::EditorModel,
         view_ids: ViewIds,
-        effect: crate::controller::ViewEffect,
+        effect: ViewEffect,
     ) -> bool {
         match effect {
-            crate::controller::ViewEffect::Focus(window_id) => {
+            crate::app::ui::ViewEffect::Focus(window_id) => {
                 let focused = ui
                     .window(window_id)
                     .is_some_and(vim_ui::Window::has_content)
@@ -50,7 +62,7 @@ impl ViewSynchronizer {
                 }
                 focused
             }
-            crate::controller::ViewEffect::FocusDirection(direction) => {
+            crate::app::ui::ViewEffect::FocusDirection(direction) => {
                 let Some(window_id) = ui
                     .find_neighbor(direction)
                     .filter(|&id| ui.window(id).is_some_and(vim_ui::Window::has_content))
@@ -63,13 +75,13 @@ impl ViewSynchronizer {
                 }
                 focused
             }
-            crate::controller::ViewEffect::Split { source, axis } => {
+            crate::app::ui::ViewEffect::Split { source, axis } => {
                 if source == view_ids.commandline {
                     return false;
                 }
                 Self::split(ui, model, source, axis)
             }
-            crate::controller::ViewEffect::Close(window_id) => {
+            crate::app::ui::ViewEffect::Close(window_id) => {
                 let closed = ui
                     .window(window_id)
                     .is_some_and(vim_ui::Window::has_content)
@@ -79,12 +91,12 @@ impl ViewSynchronizer {
                 }
                 closed
             }
-            crate::controller::ViewEffect::Hide(window_id) => ui.hide_window(window_id).is_ok(),
-            crate::controller::ViewEffect::Resize { width, height } => {
+            crate::app::ui::ViewEffect::Hide(window_id) => ui.hide_window(window_id).is_ok(),
+            crate::app::ui::ViewEffect::Resize { width, height } => {
                 ui.resize(Rect::new(0, 0, width, height));
                 true
             }
-            crate::controller::ViewEffect::SetCommandLineMode(mode) => {
+            crate::app::ui::ViewEffect::SetCommandLineMode(mode) => {
                 if let Some(w) = ui.window_mut(view_ids.commandline) {
                     if let Some(view) = w.view_mut() {
                         view.set_mode(mode);
@@ -181,7 +193,7 @@ pub fn refresh_views(app: &mut crate::app::App, layout: &LayoutSnapshot) {
     app.ui.set_colorscheme(app.colorscheme.clone());
     let colorscheme = app.ui.colorscheme().cloned();
     let globals = RenderGlobals {
-        mode: app.controller.mode(),
+        mode: app.input.mode(),
         status_message: app.model.status.as_deref(),
         search_pattern: app.model.search_pattern.as_deref(),
         search_regex: app.model.search_regex.as_ref(),
@@ -480,7 +492,6 @@ pub fn setup_initial_layout(ui: &mut Ui) -> Result<ViewIds, Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::ViewEffect;
 
     fn fixture() -> (Ui, crate::model::EditorModel, ViewIds) {
         let mut ui = Ui::new(Rect::new(0, 0, 80, 24));

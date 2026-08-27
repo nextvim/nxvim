@@ -3,7 +3,7 @@ use crate::app::windows::WindowOps;
 use crate::model::EditorModel;
 use vim_ui::Ui;
 
-use super::command::CommandOutcome;
+use crate::app::outcome::CommandOutcome;
 
 pub struct TaskDispatcher;
 

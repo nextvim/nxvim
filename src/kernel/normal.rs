@@ -524,7 +524,7 @@ pub(crate) fn execute_delete_lines(
         .as_rope()
         .chunks_in_range(start..end)
         .collect();
-    crate::controller::editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
         tx.delete(
@@ -565,7 +565,7 @@ pub(crate) fn execute_delete_line(
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    crate::controller::editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
         tx.delete(
@@ -595,7 +595,7 @@ pub(crate) fn execute_case_line(
         super::CaseChange::Upper => source.to_uppercase(),
         super::CaseChange::Lower => source.to_lowercase(),
     };
-    crate::controller::editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
+    crate::app::legacy_editor::remove_overlapping_folds(folds, buffer.as_text_buffer(), start, end);
     let snapshot = selections.clone();
     let mutation = super::transaction(buffer, vim_buffer::EditOrigin::User, Some(snapshot), |tx| {
         tx.replace(
@@ -645,7 +645,7 @@ pub(crate) fn execute_delete_before(
         })
         .collect();
     for range in &ranges {
-        crate::controller::editor::remove_overlapping_folds(
+        crate::app::legacy_editor::remove_overlapping_folds(
             folds,
             buffer.as_text_buffer(),
             range.start.0,
@@ -714,7 +714,7 @@ pub(crate) fn execute_case_selection(
         return None;
     }
     for &(start, end, _) in &edits {
-        crate::controller::editor::remove_overlapping_folds(
+        crate::app::legacy_editor::remove_overlapping_folds(
             folds,
             buffer.as_text_buffer(),
             start,
@@ -780,7 +780,7 @@ pub(crate) fn execute_toggle_case(
         return None;
     }
     for &(start, end, _) in &edits {
-        crate::controller::editor::remove_overlapping_folds(
+        crate::app::legacy_editor::remove_overlapping_folds(
             folds,
             buffer.as_text_buffer(),
             start,
@@ -864,7 +864,7 @@ pub(crate) fn execute_delete(
     }
 
     for range in &edits {
-        crate::controller::editor::remove_overlapping_folds(
+        crate::app::legacy_editor::remove_overlapping_folds(
             folds,
             buffer.as_text_buffer(),
             range.start.0,
@@ -1211,7 +1211,7 @@ pub(crate) fn execute_case_motion_with_syntax(
         return Some(None);
     }
     for &(_, start, end, _) in &edits {
-        crate::controller::editor::remove_overlapping_folds(
+        crate::app::legacy_editor::remove_overlapping_folds(
             folds,
             buffer.as_text_buffer(),
             start,
@@ -1281,7 +1281,7 @@ fn delete_exact_selection(
         return None;
     }
     for range in &ranges {
-        crate::controller::editor::remove_overlapping_folds(
+        crate::app::legacy_editor::remove_overlapping_folds(
             folds,
             buffer.as_text_buffer(),
             range.start.0,

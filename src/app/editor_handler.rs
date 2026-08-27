@@ -3,12 +3,12 @@ use vim_input::Action;
 use vim_regex::Regex;
 use vim_ui::{Ui, WindowId};
 
+use crate::app::input::InputAdapter;
 use crate::app::services::Services;
 use crate::app::windows::WindowOps;
-use crate::controller::input::InputController;
 use crate::model::EditorModel;
 
-use super::command::CommandOutcome;
+use crate::app::outcome::CommandOutcome;
 use crate::kernel::CommandContext;
 
 pub struct EditorHandler;
@@ -17,7 +17,7 @@ impl EditorHandler {
     pub fn execute(
         ui: &mut Ui,
         model: &mut EditorModel,
-        input: &mut InputController,
+        input: &mut InputAdapter,
         services: &mut Services,
         active_window: WindowId,
         action: &Action,
@@ -53,17 +53,19 @@ impl EditorHandler {
                             vim_buffer::compile(&search_str).map(std::sync::Arc::new);
                     }
 
-                    if let Ok((mode, outcome)) = super::editor::Editor::new().execute_in_context(
-                        command_context,
-                        active_window,
-                        current_mode,
-                        action,
-                        buffer,
-                        buffer_context,
-                        window_state,
-                        services,
-                        join_insert_transaction,
-                    ) {
+                    if let Ok((mode, outcome)) = crate::app::legacy_editor::Editor::new()
+                        .execute_in_context(
+                            command_context,
+                            active_window,
+                            current_mode,
+                            action,
+                            buffer,
+                            buffer_context,
+                            window_state,
+                            services,
+                            join_insert_transaction,
+                        )
+                    {
                         next_mode = mode;
                         kernel_outcome = Some(outcome);
                     }

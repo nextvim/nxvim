@@ -2,11 +2,12 @@ use crossterm::event::{Event, KeyCode as CKey, KeyEvent, KeyEventKind, KeyModifi
 use std::collections::VecDeque;
 use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, Resolver};
 
-use super::Command;
+use crate::app::command::AppCommand;
+use crate::app::legacy_command::Command;
 
 /// Application-level input controller that translates Crossterm events
 /// into Vim actions using `vim_input::Resolver`.
-pub struct InputController {
+pub struct InputAdapter {
     resolver: Resolver,
     keymap: Keymap,
     pending_display: String,
@@ -14,7 +15,7 @@ pub struct InputController {
     mapped_keys: VecDeque<Key>,
 }
 
-impl InputController {
+impl InputAdapter {
     pub fn new(initial_mode: Mode) -> Self {
         Self {
             resolver: Resolver::new(initial_mode),
@@ -35,11 +36,15 @@ impl InputController {
     }
 
     /// Translate a Crossterm event to a `vim_input::Key` and feed it to the resolver.
-    pub fn feed_event(&mut self, event: Event) -> Option<Command> {
+    pub fn feed_event(&mut self, event: Event) -> Option<AppCommand> {
         self.feed_event_with_buffer(event, None)
     }
 
-    pub fn feed_event_with_buffer(&mut self, event: Event, buffer: Option<u64>) -> Option<Command> {
+    pub fn feed_event_with_buffer(
+        &mut self,
+        event: Event,
+        buffer: Option<u64>,
+    ) -> Option<AppCommand> {
         match event {
             Event::Key(key_event) => {
                 if key_event.kind != KeyEventKind::Release {
@@ -49,10 +54,10 @@ impl InputController {
                     None
                 }
             }
-            Event::Paste(text) => Some(Command::Editor {
+            Event::Paste(text) => Some(AppCommand::Semantic(Command::Editor {
                 action: vim_input::Action::InsertText(text),
                 register: None,
-            }),
+            })),
             _ => None,
         }
     }
@@ -61,11 +66,11 @@ impl InputController {
         self.mappings = Some(mappings);
     }
 
-    pub fn feed_key(&mut self, key: Key) -> Option<Command> {
+    pub fn feed_key(&mut self, key: Key) -> Option<AppCommand> {
         self.feed_key_with_buffer(key, None)
     }
 
-    pub fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<Command> {
+    pub fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<AppCommand> {
         if let Some(mapped_key) = self.mapped_keys.pop_front() {
             self.mapped_keys.push_front(key);
             return self.feed_key_without_mappings(mapped_key);
@@ -79,12 +84,12 @@ impl InputController {
         self.handle_outcome(outcome)
     }
 
-    fn feed_key_without_mappings(&mut self, key: Key) -> Option<Command> {
+    fn feed_key_without_mappings(&mut self, key: Key) -> Option<AppCommand> {
         let outcome = self.resolver.feed(key, &self.keymap);
         self.handle_outcome(outcome)
     }
 
-    fn handle_outcome(&mut self, outcome: ResolveOutcome) -> Option<Command> {
+    fn handle_outcome(&mut self, outcome: ResolveOutcome) -> Option<AppCommand> {
         match outcome {
             ResolveOutcome::Resolved(resolved) => {
                 self.pending_display.clear();
@@ -115,9 +120,10 @@ impl InputController {
                             }
                         }
                         self.mapped_keys.extend(exact);
-                        self.mapped_keys
-                            .pop_front()
-                            .and_then(|key| self.feed_key_without_mappings(key))
+                        self.mapped_keys.pop_front().and_then(|key| {
+                            self.feed_key_without_mappings(key)
+                                .map(AppCommand::into_legacy)
+                        })
                     }
                 }
             }
@@ -133,6 +139,7 @@ impl InputController {
             }
             ResolveOutcome::Ignored => None,
         }
+        .map(AppCommand::from)
     }
 
     pub fn set_in_recording(&mut self, in_recording: bool) {
@@ -141,6 +148,28 @@ impl InputController {
 
     pub fn in_recording(&self) -> bool {
         self.resolver.in_recording()
+    }
+}
+
+/// Converts a terminal event into a response to the active confirmation prompt.
+pub fn prompt_choice(event: &crossterm::event::Event) -> Option<crate::app::prompt::PromptChoice> {
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+    let Event::Key(key) = event else {
+        return None;
+    };
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('y' | 'Y') => Some(crate::app::prompt::PromptChoice::Yes),
+        KeyCode::Char('n' | 'N') => Some(crate::app::prompt::PromptChoice::No),
+        KeyCode::Char('a' | 'A') => Some(crate::app::prompt::PromptChoice::All),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(crate::app::prompt::PromptChoice::Quit)
+        }
+        KeyCode::Char('q' | 'Q') | KeyCode::Esc => Some(crate::app::prompt::PromptChoice::Quit),
+        KeyCode::Char('l' | 'L') => Some(crate::app::prompt::PromptChoice::Last),
+        _ => None,
     }
 }
 
@@ -188,7 +217,7 @@ mod tests {
     #[test]
     fn control_v_and_control_w_control_v_resolve_to_distinct_actions() {
         let control = CMod::CONTROL;
-        let mut controller = InputController::new(Mode::Normal);
+        let mut controller = InputAdapter::new(Mode::Normal);
 
         let event_v = Event::Key(KeyEvent::new(CKey::Char('v'), control));
         assert!(matches!(
@@ -246,7 +275,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let mut controller = InputController::new(Mode::Normal);
+        let mut controller = InputAdapter::new(Mode::Normal);
         controller.set_mapping_store(mappings);
         assert!(matches!(
             controller.feed_key_with_buffer(Key::char('\\'), Some(7)),
@@ -260,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_paste_event_resolves_to_insert_text() {
-        let mut controller = InputController::new(Mode::Normal);
+        let mut controller = InputAdapter::new(Mode::Normal);
         let event = Event::Paste("hello world".to_string());
         assert!(matches!(
             controller.feed_event(event),

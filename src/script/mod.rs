@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, mpsc};
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::controller::Command;
+use crate::app::legacy_command::Command;
 use text::{BufferId, BufferSnapshot};
 
 use vim_script::{
@@ -1088,7 +1088,7 @@ mod tests {
             ..
         } = cmd
         {
-            assert_eq!(operation, crate::controller::RangeOperation::Delete);
+            assert_eq!(operation, crate::app::range_ops::RangeOperation::Delete);
             assert!(range.is_some());
             assert_eq!(count, None);
             assert_eq!(register, Some('a'));

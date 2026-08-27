@@ -5,8 +5,8 @@ use vim_ui::{Ui, WindowId};
 
 use crate::model::EditorModel;
 
-use super::command::CommandOutcome;
-use super::shared_operations::SharedOperations;
+use crate::app::operations::SharedOperations;
+use crate::app::outcome::CommandOutcome;
 
 /// Handles application lifecycle operations — quit, edit, and the write+quit
 /// combinations (`:wq`, `:wqall`) — whether they originate from a resolved
