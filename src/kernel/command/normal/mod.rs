@@ -4,6 +4,7 @@
 
 pub mod motions;
 pub mod operators;
+pub mod windows;
 
 use vim_buffer::MutationOutcome;
 use vim_input::Action;
@@ -26,9 +27,20 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         }
         Action::Undo { count } => undo(editor, ctx.window, count),
         Action::Redo { count } => redo(editor, ctx.window, count),
+        Action::SplitHorizontal { .. } => windows::split_horizontal(editor, ctx),
+        Action::SplitVertical { .. } => windows::split_vertical(editor, ctx),
+        Action::CloseWindow => windows::close_window(editor, ctx),
+        Action::OnlyWindow => windows::only_window(editor, ctx),
+        Action::FocusLeftWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Left),
+        Action::FocusRightWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Right),
+        Action::FocusUpWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Up),
+        Action::FocusDownWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Down),
+        Action::NextTab { count } => windows::next_tab(editor, count),
+        Action::PreviousTab { count } => windows::previous_tab(editor, count),
         _ => Outcome::default(),
     }
 }
+
 
 fn undo(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     replay_history(editor, window, count, transaction::undo)

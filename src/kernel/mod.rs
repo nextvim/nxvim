@@ -18,7 +18,7 @@ use vim_input::Action;
 
 use buffer::BufferStore;
 use command::CommandContext;
-use ids::WindowId;
+use ids::{WindowId, TabPageId};
 use mode::Mode;
 use outcome::Outcome;
 use window::{
@@ -78,6 +78,11 @@ impl Editor {
         self.current
     }
 
+    pub fn tabs(&self) -> &TabStore {
+        &self.tabs
+    }
+
+
     pub fn buffer(&self, id: BufferId) -> Option<&Buffer> {
         self.buffers.get(id)
     }
@@ -112,6 +117,36 @@ impl Editor {
         &mut self.windows
     }
 
+    pub(crate) fn tabs_mut(&mut self) -> &mut TabStore {
+        &mut self.tabs
+    }
+
+    pub(crate) fn set_current_window(&mut self, window_id: WindowId) {
+        self.current.window = window_id;
+        if let Some(win) = self.windows.get(window_id) {
+            self.current.buffer = win.buffer_id();
+        }
+    }
+
+    pub(crate) fn set_current_tab(&mut self, tab_id: TabPageId) {
+        self.current.tab = tab_id;
+        self.tabs.set_active(tab_id);
+        if let Some(tab) = self.tabs.get(tab_id) {
+            let active_win = tab.active_window();
+            self.set_current_window(active_win);
+        }
+    }
+
+    /// Reassigns any window displaying `deleted_id` to show `fallback_id`.
+    /// This structurally enforces Rule 4.3 (buffers and windows have independent lifetimes).
+    pub fn handle_buffer_deleted(&mut self, deleted_id: BufferId, fallback_id: BufferId) {
+        for (_, win) in self.windows.iter_mut() {
+            if win.buffer_id() == deleted_id {
+                win.set_buffer(fallback_id);
+            }
+        }
+    }
+
     /// Borrows the window and the buffer it shows at the same time, split
     /// so motions can read buffer text while updating the window's
     /// selection in the same call.
@@ -129,6 +164,7 @@ impl Editor {
         (win, buffer)
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -244,4 +280,57 @@ mod tests {
         assert_eq!(text_of(&editor), "bar baz");
         assert!(!outcome.mutated);
     }
+
+    #[test]
+    fn split_and_close_window_smoke_test() {
+        let mut editor = Editor::new("line1\nline2\n");
+        let initial_win = editor.current_context().window;
+        let initial_buf = editor.current_context().buffer;
+
+        editor.execute(Action::SplitVertical { file_path: None });
+        let split_win = editor.current_context().window;
+        assert_ne!(initial_win, split_win, "split should create a new window");
+        assert_eq!(editor.current_context().buffer, initial_buf, "split window should share same buffer");
+
+        editor.execute(Action::MoveDown { count: 1, select: false });
+        assert_eq!(cursor(&editor), Point::new(1, 0));
+
+        editor.execute(Action::FocusLeftWindow);
+        assert_eq!(editor.current_context().window, initial_win, "focus should move to left window");
+        assert_eq!(cursor(&editor), Point::new(0, 0), "original window cursor should be unaffected");
+
+        editor.execute(Action::FocusRightWindow);
+        assert_eq!(editor.current_context().window, split_win);
+        editor.execute(Action::CloseWindow);
+        assert_eq!(editor.current_context().window, initial_win, "focus should revert to sibling window");
+        assert!(editor.window(split_win).is_none(), "closed window should be removed from store");
+        assert!(editor.buffer(initial_buf).is_some(), "buffer should not be destroyed by closing window");
+    }
+
+    #[test]
+    fn tab_navigation_smoke_test() {
+        let mut editor = Editor::new("tab1 text");
+        let tab1_id = editor.current_context().tab;
+        let tab1_win = editor.current_context().window;
+
+        let tab2_win = {
+            let win = Window::new(editor.current_context().buffer, editor.current_buffer());
+            editor.windows_mut().insert(win)
+        };
+        let tab2_page = TabPage::new(tab2_win);
+        let tab2_id = editor.tabs_mut().insert(tab2_page);
+
+        editor.set_current_tab(tab2_id);
+        assert_eq!(editor.current_context().tab, tab2_id);
+        assert_eq!(editor.current_context().window, tab2_win);
+
+        editor.execute(Action::PreviousTab { count: 1 });
+        assert_eq!(editor.current_context().tab, tab1_id);
+        assert_eq!(editor.current_context().window, tab1_win);
+
+        editor.execute(Action::NextTab { count: 1 });
+        assert_eq!(editor.current_context().tab, tab2_id);
+        assert_eq!(editor.current_context().window, tab2_win);
+    }
 }
+

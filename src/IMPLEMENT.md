@@ -307,24 +307,24 @@ above.
 
 ---
 
-# Windows/tabs for real
+# Windows/tabs for real — [x] COMPLETE
 
 > Splits, tab pages, `view/` projection wired to kernel-owned window state
 > (no `app/windows.rs`-style shadow authority).
 
 ## Checklist
 
-1. - [ ] `kernel/window/tabpage.rs`: replace the placeholder single-`WindowId`
+1. - [x] `kernel/window/tabpage.rs`: replace the placeholder single-`WindowId`
    `TabPage` with a real split layout tree — `Axis` (`Horizontal`/
    `Vertical`) and `Layout` (`Leaf(WindowId)` / `Split { axis, children:
    Vec<Layout> }`), plus `active_window`/`previous_window` tracked per tab.
    `TabStore` grows an ordered tab list and an active tab (mirroring
    `RESET.md`'s `TabStore` shape: `ordered`, `pages`, `active`).
-2. - [ ] `kernel/window/mod.rs`: `WindowStore` grows `remove(id)`. Add the
+2. - [x] `kernel/window/mod.rs`: `WindowStore` grows `remove(id)`. Add the
    buffer-delete/window-reassignment hook required by `RESCUE.md` Rule 4.3
    now, even though no command deletes a buffer yet, so the invariant
    exists structurally rather than by convention.
-3. - [ ] `kernel/command/normal/windows.rs` (new): implement
+3. - [x] `kernel/command/normal/windows.rs` (new): implement
    `Action::SplitHorizontal`/`SplitVertical` (a new `Window` inheriting the
    focused window's buffer and cursor, added as a sibling in the layout
    tree), `Action::CloseWindow` (remove the focused window from the tree,
@@ -333,28 +333,28 @@ above.
    the layout tree by screen direction), and `Action::NextTab`/
    `PreviousTab { count }` (cycle `TabStore`'s active tab, restoring that
    tab's remembered active window).
-4. - [ ] `kernel/command/normal/mod.rs`: wire the actions above to
+4. - [x] `kernel/command/normal/mod.rs`: wire the actions above to
    `windows::*`.
-5. - [ ] `kernel/mod.rs`: add `pub(crate) fn set_current_window`/
+5. - [x] `kernel/mod.rs`: add `pub(crate) fn set_current_window`/
    `set_current_tab` so focus/split/tab commands can update `Editor`'s
    `CommandContext` — still reachable only from `kernel::command::*`, never
    from `app/` (`Editor::execute()` stays the only public mutation entry
    point).
-6. - [ ] `view/layout.rs` (new): a pure function,
+6. - [x] `view/layout.rs` (new): a pure function,
    `layout(tab: &TabPage, screen: Rect) -> HashMap<WindowId, Rect>`, that
    turns kernel's split tree into concrete rectangles each frame. This is
    the milestone's "view is a projection, not a second authority"
    requirement — no window list is stored in `view/` or `app/` between
    frames.
-7. - [ ] `view/mod.rs`: render every window in the current tab (via
+7. - [x] `view/mod.rs`: render every window in the current tab (via
    `view/layout.rs`), not just "the" window; draw the terminal cursor only
    in the focused window.
-8. - [ ] `runtime.rs`: pass the real terminal size
+8. - [x] `runtime.rs`: pass the real terminal size
    (`terminal::TerminalSession::size()`, unused since the Skeleton
    milestone) into `view::render` each frame, and re-layout on
    `Event::Resize`.
-9. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`.
-10. - [ ] Scripted smoke tests: split creates a second window sharing the
+9. - [x] Kernel purity check: re-run the grep from `RESCUE.md`.
+10. - [x] Scripted smoke tests: split creates a second window sharing the
     buffer with an independent cursor; closing a window never destroys its
     buffer and reassigns focus; focus commands move `Editor`'s current
     window; a second tab (created by calling `TabStore` directly in the
@@ -362,9 +362,9 @@ above.
     cycle between existing ones, so tab creation stays test-only until the
     Ex milestone adds `:tabnew`) gets its own window arrangement, and
     cycling tabs (`gt`/`gT`) restores each tab's last-focused window.
-11. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+11. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
     green.
-12. - [ ] Manual smoke test: launch the binary, confirm `Ctrl-w s`/
+12. - [x] Manual smoke test: launch the binary, confirm `Ctrl-w s`/
     `Ctrl-w v` split the window, `Ctrl-w c` closes the focused split,
     `Ctrl-w o` keeps only the focused window, and `Ctrl-w h/j/k/l` moves
     focus between splits. (`gt`/`gT` are not part of this manual check —
@@ -373,26 +373,128 @@ above.
 
 ## Criteria for Completion
 
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced — this
+      milestone's whole point is retiring that exact pattern from
+      `src_/app/windows.rs`'s `WindowOps`.
+- [x] `view/` and `app/` hold no window list/authority of their own between
+      frames — every window's existence and layout is read fresh from
+      `kernel::window::tabpage::TabPage` each render.
+- [x] Closing a window never destroys the buffer it showed (Rule 4.3),
+      proven by test.
+- [x] Splitting a window never duplicates buffer text; both windows read
+      the same `BufferId` with independent cursors, proven by test.
+- [x] Two tabs may each have a window open on the same buffer at the same
+      time, proven by test (Rule 4.4).
+- [x] Manual smoke test passes for splits/close/focus in a live terminal.
+      **Needs a human with a real terminal.**
+
+---
+
+# Command-line + Ex admission
+
+> One request envelope, kernel-side context validation, no `ExCommand`.
+
+## Checklist
+
+1. - [ ] `kernel/mode.rs`: add a `Mode::Command` variant (mirroring
+   `vim_input::Mode::Command`) plus `is_command()`. `Editor::execute()`
+   transitions into it on `Action::SetToCommand` and back to `Normal` on
+   `Action::Clear`/`Action::SetToNormal`, the same round-trip Insert mode
+   already does.
+2. - [ ] `kernel/command/mod.rs`: route `Mode::Command` in `dispatch()` to a
+   minimal handler that only understands cancel (`Action::Clear`/
+   `SetToNormal` back to `Normal`) — real Ex work never arrives as a
+   per-keystroke `vim_input::Action`, because `vim_input::Resolver` treats
+   command-line text as host-owned (see its `complete()` doc comment) and
+   never decodes it into actions.
+3. - [ ] `kernel/command/ex/mod.rs` (new): implement Ex admission,
+   `pub fn admit(editor: &mut Editor, ctx: CommandContext, line: &str) ->
+   Outcome`. Parse a leading line-range (bare line numbers, `.`, `$`, `%`,
+   `,`-separated) resolved against the buffer/window named by `ctx` —
+   re-resolved fresh from the live `CommandContext`, never cached (Rule
+   4.8) — then a command name and trailing argument. Implement exactly two
+   commands to validate the contract end to end: `:d`/`:delete[range]`
+   (pure semantics — deletes the resolved range via the same
+   `kernel::transaction` path `dw` already uses, no new mutation
+   primitive) and `:q`/`:quit` (no buffer mutation; reports a new
+   `Effect::Quit`). An unrecognized command name is a safe no-op `Outcome`
+   (`mutated: false`), not a panic or a separate error enum.
+4. - [ ] `kernel/outcome.rs`: add `Effect::Quit`, the first real `Effect`
+   variant — kernel's neutral, app-agnostic signal that `:q`/`:quit` was
+   admitted, with no knowledge of what "quitting" means at the app level.
+5. - [ ] `kernel/mod.rs`: add `pub fn submit_command_line(&mut self, line:
+   &str) -> Outcome`, the Ex-admission counterpart to `execute()` — the
+   only entry point `app/` uses to run a submitted command line, so `app/`
+   never touches range resolution or `kernel::transaction` itself.
+6. - [ ] `app/prompt.rs` (new): `CommandPrompt`, an app-owned raw text
+   buffer for what's typed after `:` (`push`/`backspace`/`take`/`clear`).
+   This is presentational input state, not kernel semantics — kernel never
+   sees individual keystrokes, only the final line via
+   `submit_command_line`.
+7. - [ ] `app/request.rs` (new): `AppRequest`, the one typed app-level
+   request envelope this milestone introduces, with exactly one variant
+   for now, `AppRequest::Quit`, produced from `Outcome::effects`
+   (`Effect::Quit -> AppRequest::Quit`) after a command line is submitted.
+   This is the single envelope later milestones (script host) emit into as
+   well — no parallel `ExCommand`-shaped type is introduced alongside it.
+8. - [ ] `app/mod.rs`: `App` grows a `prompt: CommandPrompt` field. While
+   `editor.mode()` is `Mode::Command`, raw character/backspace keys feed
+   `CommandPrompt` directly instead of going through `InputTranslator`;
+   `Enter` takes the accumulated line, calls `Editor::submit_command_line`,
+   translates any `Effect::Quit` into `AppRequest::Quit`, and clears the
+   prompt; `Esc` clears the prompt and returns to Normal via the existing
+   `Action::Clear` path. `App` exposes a way for `runtime.rs` to learn
+   about any `AppRequest`s produced.
+9. - [ ] `app/input.rs`: expose the minimal raw-key access `app/mod.rs`
+   needs to bypass `InputTranslator`'s Normal/Insert keymap while in
+   Command mode (plain `char`/`Backspace`/`Enter`/`Esc` out of a
+   `crossterm::event::Event`).
+10. - [ ] `runtime.rs`: retire the temporary `Ctrl-C` quit hatch from the
+    Skeleton milestone; act on `AppRequest::Quit` to end the loop instead.
+    Render the command-line prompt (`:` + typed text) while `Mode::Command`
+    is active.
+11. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`.
+12. - [ ] Scripted smoke tests: a range delete (e.g. `:2,3d`) removes
+    exactly those lines through `kernel::transaction` (same contract as
+    `dw`: one `TextChanged` event, one typed `Range` invalidation); an
+    unknown command name is a no-op `Outcome`; `:q`/`:quit` produces
+    `Effect::Quit` with no mutation and no `TextChanged` event; entering
+    Command mode via `:`, typing, and cancelling with `Esc` returns to
+    Normal without submitting anything.
+13. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+14. - [ ] Manual smoke test: launch the binary, confirm `:` opens a visible
+    command line, typed text appears, `Esc` cancels it, `:q` (or `:quit`)
+    actually quits the app, and a range-delete Ex command (e.g. `:1,2d`)
+    deletes the given lines.
+
+## Criteria for Completion
+
 - [ ] `cargo check -p nxvim` passes.
 - [ ] `cargo check --workspace` passes.
 - [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
       `src/kernel/`) returns clean.
 - [ ] No file introduced or grown in this milestone exceeds ~500 lines.
-- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced — this
-      milestone's whole point is retiring that exact pattern from
-      `src_/app/windows.rs`'s `WindowOps`.
-- [ ] `view/` and `app/` hold no window list/authority of their own between
-      frames — every window's existence and layout is read fresh from
-      `kernel::window::tabpage::TabPage` each render.
-- [ ] Closing a window never destroys the buffer it showed (Rule 4.3),
-      proven by test.
-- [ ] Splitting a window never duplicates buffer text; both windows read
-      the same `BufferId` with independent cursors, proven by test.
-- [ ] Two tabs may each have a window open on the same buffer at the same
-      time, proven by test (Rule 4.4).
-- [ ] Manual smoke test passes for splits/close/focus in a live terminal.
-      **Needs a human with a real terminal.**
-
-Once all boxes above are checked, mark this section
-`# Operators + undo + events — [x] COMPLETE` and add the next milestone,
-`# Windows/tabs for real`, using the recipe.
+- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced.
+- [ ] Exactly one app-level request envelope exists (`app::request::
+      AppRequest`); no second `ExCommand`-shaped enum was introduced
+      alongside it.
+- [ ] Ex admission resolves its range/command against the live
+      `CommandContext` at submission time, never a cached buffer/window
+      reference (Rule 4.8).
+- [ ] `:d`/`:delete` mutates only through `kernel::transaction`, proven by
+      test (one `TextChanged` event, one typed `Range` invalidation, same
+      contract as `dw`).
+- [ ] `:q`/`:quit` never touches buffer text; it only produces
+      `Effect::Quit` -> `AppRequest::Quit`, proven by test.
+- [ ] An unknown Ex command name is a safe no-op, proven by test.
+- [ ] The temporary `Ctrl-C` quit hatch in `runtime.rs` is removed; `:q` is
+      the real quit path.
+- [ ] Manual smoke test passes for `:` / typing / `Esc` cancel / `:q` /
+      range-delete in a live terminal. **Needs a human with a real
+      terminal.**

@@ -15,6 +15,7 @@ use vim_buffer::{Buffer, BufferId, SelectionId, SelectionSet};
 
 use crate::kernel::ids::WindowId;
 
+#[derive(Clone)]
 pub struct Window {
     buffer: BufferId,
     selections: SelectionSet,
@@ -51,6 +52,10 @@ impl Window {
     pub fn selections_mut(&mut self) -> &mut SelectionSet {
         &mut self.selections
     }
+
+    pub fn set_buffer(&mut self, buffer_id: BufferId) {
+        self.buffer = buffer_id;
+    }
 }
 
 pub struct WindowStore {
@@ -80,4 +85,17 @@ impl WindowStore {
     pub fn get_mut(&mut self, id: WindowId) -> Option<&mut Window> {
         self.windows.get_mut(&id)
     }
+
+    pub fn remove(&mut self, id: WindowId) -> Option<Window> {
+        self.windows.remove(&id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&WindowId, &Window)> {
+        self.windows.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&WindowId, &mut Window)> {
+        self.windows.iter_mut()
+    }
 }
+

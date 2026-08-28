@@ -19,7 +19,7 @@ const PLACEHOLDER_TEXT: &str = "NxVim skeleton\n\nh/j/k/l move the cursor.\ni en
 fn main() -> io::Result<()> {
     let mut session = terminal::TerminalSession::enter()?;
     let mut app = app::App::new(PLACEHOLDER_TEXT);
-    let result = runtime::run(&mut app, &mut io::stdout());
+    let result = runtime::run(&mut app, &session, &mut io::stdout());
     session.restore()?;
     result
 }

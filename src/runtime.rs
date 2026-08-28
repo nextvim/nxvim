@@ -12,11 +12,12 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crate::app::{App, input::InputTranslator};
 use crate::view;
 
-pub fn run(app: &mut App, out: &mut impl Write) -> io::Result<()> {
+pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut impl Write) -> io::Result<()> {
+    let mut screen = session.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
     let mut input = InputTranslator::new();
     // Temporary debug status (mode + last resolved action), see `view::render`.
     let mut status = format!("-- {:?} -- last: (none)", app.editor().mode());
-    view::render(out, app.editor(), &status)?;
+    view::render(out, app.editor(), &status, screen)?;
 
     loop {
         if !event::poll(Duration::from_millis(50))? {
@@ -33,8 +34,9 @@ pub fn run(app: &mut App, out: &mut impl Write) -> io::Result<()> {
             return Ok(());
         }
 
-        if matches!(ev, Event::Resize(_, _)) {
-            view::render(out, app.editor(), &status)?;
+        if let Event::Resize(columns, rows) = ev {
+            screen = vim_ui::Rect::new(0, 0, columns, rows);
+            view::render(out, app.editor(), &status, screen)?;
             continue;
         }
 
@@ -51,6 +53,6 @@ pub fn run(app: &mut App, out: &mut impl Write) -> io::Result<()> {
         } else {
             status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
         }
-        view::render(out, app.editor(), &status)?;
+        view::render(out, app.editor(), &status, screen)?;
     }
 }
