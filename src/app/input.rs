@@ -9,11 +9,14 @@
 //! milestones teach it more.
 
 use crossterm::event::{Event, KeyCode as CKey, KeyEvent, KeyEventKind, KeyModifiers as CMod};
-use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, ResolvedAction, Resolver};
+use std::collections::VecDeque;
+use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, ResolvedAction, Resolver, SharedMappingStore};
 
 pub struct InputTranslator {
     resolver: Resolver,
     keymap: Keymap,
+    mappings: Option<SharedMappingStore>,
+    mapped_keys: VecDeque<(Key, bool)>,
 }
 
 impl InputTranslator {
@@ -21,6 +24,17 @@ impl InputTranslator {
         Self {
             resolver: Resolver::new(Mode::Normal),
             keymap: Keymap::vim_defaults(),
+            mappings: None,
+            mapped_keys: VecDeque::new(),
+        }
+    }
+
+    pub fn with_mappings(mappings: SharedMappingStore) -> Self {
+        Self {
+            resolver: Resolver::new(Mode::Normal),
+            keymap: Keymap::vim_defaults(),
+            mappings: Some(mappings),
+            mapped_keys: VecDeque::new(),
         }
     }
 
@@ -30,11 +44,73 @@ impl InputTranslator {
     /// (partial key sequences, unmapped keys, ignored event kinds) — the
     /// caller has nothing to execute yet.
     pub fn translate(&mut self, event: Event) -> Option<ResolvedAction> {
+        self.translate_with_buffer(event, None)
+    }
+
+    pub fn translate_with_buffer(&mut self, event: Event, current_buffer: Option<u64>) -> Option<ResolvedAction> {
         match event {
             Event::Key(key_event) if key_event.kind != KeyEventKind::Release => {
                 let key = translate_key(key_event)?;
-                match self.resolver.feed(key, &self.keymap) {
-                    ResolveOutcome::Resolved(resolved) => Some(resolved),
+                let mut action = self.feed_key_with_buffer(key, current_buffer);
+                while action.is_none() && !self.mapped_keys.is_empty() {
+                    if let Some((k, allow)) = self.mapped_keys.pop_front() {
+                        let outcome = if allow {
+                            match &self.mappings {
+                                Some(m) => self.resolver.feed_with_mappings(k, &self.keymap, m.clone(), current_buffer),
+                                None => self.resolver.feed(k, &self.keymap),
+                            }
+                        } else {
+                            self.resolver.feed(k, &self.keymap)
+                        };
+                        action = self.handle_outcome(outcome, current_buffer);
+                    }
+                }
+                action
+            }
+            _ => None,
+        }
+    }
+
+    fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<ResolvedAction> {
+        let outcome = match &self.mappings {
+            Some(mappings) => self.resolver.feed_with_mappings(
+                key,
+                &self.keymap,
+                mappings.clone(),
+                buffer,
+            ),
+            None => self.resolver.feed(key, &self.keymap),
+        };
+        self.handle_outcome(outcome, buffer)
+    }
+
+
+    fn handle_outcome(&mut self, outcome: ResolveOutcome, _buffer: Option<u64>) -> Option<ResolvedAction> {
+        match outcome {
+            ResolveOutcome::Resolved(resolved) => Some(resolved),
+            ResolveOutcome::Mapping(mapping) => {
+                match mapping.expansion {
+                    vim_input::MappingExpansion::NoOp => {
+                        Some(ResolvedAction {
+                            action: vim_input::Action::NoOp,
+                            register: None,
+                        })
+                    }
+                    vim_input::MappingExpansion::Keys(keys) => {
+                        if let Ok(sequence) = vim_input::KeySequence::parse(&keys) {
+                            let mut exact = VecDeque::new();
+                            for pattern in sequence.items {
+                                if let vim_input::KeyPattern::Exact(k) = pattern {
+                                    exact.push_back(k);
+                                } else {
+                                    return None;
+                                }
+                            }
+                            let allow_mappings = !mapping.flags.non_recursive;
+                            self.mapped_keys.extend(exact.into_iter().map(|k| (k, allow_mappings)));
+                        }
+                        None
+                    }
                     _ => None,
                 }
             }

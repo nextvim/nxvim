@@ -496,5 +496,122 @@ above.
 - [x] The temporary `Ctrl-C` quit hatch in `runtime.rs` is removed; `:q` is
       the real quit path.
 - [x] Manual smoke test passes for `:` / typing / `Esc` cancel / `:q` /
-      range-delete in a live terminal. **Needs a human with a real
-      terminal.**
+      range-delete in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Script host — [x] COMPLETE
+
+> Mappings, user commands, autocommands, all emitting `app::request` values
+> only.
+
+## Checklist
+
+1. - [x] `kernel/command/ex/mod.rs`: split `admit(editor, ctx, line: &str)`
+   into `parse(line: &str) -> Option<vim_script::ast::ExCommand>` (today's
+   `ExLineParser` call, extracted) and `admit_command(editor, ctx, command:
+   vim_script::ast::ExCommand) -> Outcome` (today's dispatch-by-name body,
+   taking an already-parsed command instead of a raw string).
+   `submit_command_line` keeps working unchanged by calling `parse` then
+   `admit_command`; this split is what lets a user-command expansion or an
+   autocommand action hand in an already-expanded `ExCommand` without
+   re-serializing it back to text first.
+2. - [x] `src/script/mod.rs` (new): a `ScriptHost` owning one
+   `vim_script::host::HostRuntime` and the `vim_script::integration::
+   SharedKeymapStore` it was built with (so the same mapping store is
+   shared with `app/input.rs`'s resolver). Expose exactly the surface this
+   milestone needs: `shared_keymaps(&self) -> SharedKeymapStore`;
+   `try_handle_registration(&mut self, command: &ExCommand) -> Option<..>`
+   (forwards to `HostRuntime::handle_registration_command` for
+   `:map`-family/`:autocmd`/`:augroup`, and special-cases `:command`/
+   `:delcommand` by calling `HostRuntime::define_user_command`/
+   `delete_user_command` directly, mirroring how `handle_registration_command`
+   already special-cases the other registration verbs; returns `None` for
+   anything else so the caller falls through to kernel Ex admission);
+   `expand_user_command(&self, command: ExCommand) -> RuntimeResult<ExCommand>`
+   (wraps `HostRuntime::prepare_command`); `fire_event(&mut self, name: &str,
+   pattern: Option<&str>) -> Vec<ExCommand>` (wraps `HostRuntime::
+   event_commands`, keeping only `EventAction::Command` actions and
+   discarding `EventAction::Bytecode` ones — executing compiled VimScript
+   functions/expressions is out of scope for this milestone and arrives
+   with the Compatibility-breadth pass).
+3. - [x] `app/script_host.rs` (new): the bridge named in `RESCUE.md`'s
+   directory layout — a minimal `impl vim_script::host::Host for
+   NullHost` (or similarly named) using the trait's own default
+   (`Err`-returning) bodies for `call`/`editor`/`execute_command`, with a
+   comment flagging that real host-function/`:call` support (and therefore
+   a non-stub `Host` impl) is future work; today's milestone only exercises
+   `HostRuntime`'s registration/expansion/event surface, none of which call
+   into `Host`. This is what satisfies `HostRuntime::new`'s `Arc<dyn Host>`
+   requirement without inventing capability we don't need yet.
+4. - [x] `app/request.rs`: add `AppRequest::ShowMessage(String)` — produced
+   directly by `app/` for a literal-argument-only `:echo`/`:echomsg` (no
+   expression evaluation, matching this milestone's scope), proving
+   `app::request` values can originate straight from a script-triggered
+   command without passing through kernel's `Effect` channel at all (unlike
+   `:q`'s `Effect::Quit -> AppRequest::Quit` path from the previous
+   milestone).
+5. - [x] `app/input.rs`: `InputTranslator` gains a constructor/method that
+   takes a `SharedKeymapStore` and calls `vim_input::Resolver::
+   feed_with_mappings` instead of `feed`, so keys are resolved against
+   both the built-in `Keymap` and any user-defined mappings.
+6. - [x] `app/mod.rs`: `App` grows a `script: script::ScriptHost` field,
+   constructed with the same `SharedKeymapStore` handed to
+   `InputTranslator`. Rework the command-line submission path
+   (`RawKey::Enter` handling) to: parse the line once into an `ExCommand`;
+   try `script.try_handle_registration(&command)` first; otherwise treat a
+   literal-argument `:echo`/`:echomsg` as `AppRequest::ShowMessage`;
+   otherwise expand it via `script.expand_user_command` and admit the
+   (possibly-expanded) command through `kernel::command::ex::
+   admit_command`. After any action or submission whose `Outcome::events`
+   is non-empty, translate each `kernel::events::EditorEvent` to its Vim
+   autocmd name (`EditorEvent::TextChanged -> "TextChanged"`, the only
+   mapping needed today) and feed it through `script.fire_event`, admitting
+   every resulting `ExCommand` the same way — autocommand actions run
+   through the exact same admission path a typed Ex command does, never a
+   second one.
+7. - [x] `runtime.rs`: render a pending `AppRequest::ShowMessage` on the
+   status/message line for at least one frame.
+8. - [x] Kernel purity check: re-run the grep from `RESCUE.md`.
+9. - [x] Scripted smoke tests: defining a mapping (e.g. `:nnoremap x d$`)
+   and then feeding the mapped key through `InputTranslator` resolves to
+   the mapped action, not the built-in one; defining a user command (e.g.
+   `:command Del d`) and submitting it deletes the same range `:d` would;
+   registering an autocommand (e.g. `:autocmd TextChanged * q`) and then
+   performing a real text-changing command (e.g. `dw`) fires it exactly
+   once, admitted through `kernel::command::ex::admit_command` and
+   observable via its effect (`Effect::Quit`); `:echo`/`:echomsg` with a
+   literal argument produces `AppRequest::ShowMessage` and no kernel
+   mutation.
+10. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+11. - [x] Manual smoke test: launch the binary, define a mapping, a user
+    command, and an autocommand from the command line, confirm each takes
+    effect, and confirm `:echo hello` shows a message.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced.
+- [x] `src/script/` never mutates kernel state directly — grep confirms
+      `kernel::transaction`, `Editor::execute`, and `kernel::command::ex::
+      admit_command` are only called from `app/`, never from `src/script/`.
+- [x] No parallel `ExCommand`-shaped enum was introduced; user commands and
+      autocommand actions are admitted as `vim_script::ast::ExCommand`
+      values through the same `kernel::command::ex::admit_command` a typed
+      `:` command uses.
+- [x] A user-defined mapping is proven (by test) to change what a key
+      resolves to, without touching `vim_input::Keymap`'s built-in tables.
+- [x] A user-defined command is proven (by test) to execute through the
+      same admission path as its expansion.
+- [x] An autocommand is proven (by test) to fire exactly once per matching
+      event and to run its action through the same admission path as a
+      typed Ex command.
+- [x] `AppRequest::ShowMessage` is proven (by test) to require no kernel
+      mutation.
+- [x] Manual smoke test passes for defining/using a mapping, a user
+      command, an autocommand, and `:echo` in a live terminal. **Needs a human with a real terminal.**

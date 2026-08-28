@@ -6,6 +6,7 @@
 mod app;
 mod kernel;
 mod runtime;
+mod script;
 mod terminal;
 mod view;
 

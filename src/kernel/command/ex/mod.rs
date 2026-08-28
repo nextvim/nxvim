@@ -18,7 +18,7 @@ use vim_buffer::{ByteOffset, Edit, EditOrigin, PlannedEdit, TextRange};
 use vim_input::Action;
 use vim_script::SourceId;
 use vim_script::ex_parser::ExLineParser;
-use vim_script::ast::{Address, CommandRange};
+use vim_script::ast::{Address, CommandRange, ExCommand};
 
 pub fn dispatch(editor: &mut Editor, _ctx: CommandContext, action: Action) -> Outcome {
     match action {
@@ -45,14 +45,20 @@ pub fn exit(editor: &mut Editor) -> Outcome {
     }
 }
 
+pub fn parse(line: &str) -> Option<ExCommand> {
+    ExLineParser::new(SourceId(0), line, 0).parse().ok().map(|p| p.command)
+}
+
 /// Admissions check and executor for Ex commands submitted from the app/prompt.
 pub fn admit(editor: &mut Editor, ctx: CommandContext, line: &str) -> Outcome {
-    let parsed = match ExLineParser::new(SourceId(0), line, 0).parse() {
-        Ok(p) => p,
-        Err(_) => return Outcome::default(),
-    };
+    if let Some(command) = parse(line) {
+        admit_command(editor, ctx, command)
+    } else {
+        Outcome::default()
+    }
+}
 
-    let command = parsed.command;
+pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExCommand) -> Outcome {
     match command.name.as_str() {
         "d" | "delete" => {
             let current_row = if let Some(win) = editor.window(ctx.window) {

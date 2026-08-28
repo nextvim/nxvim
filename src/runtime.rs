@@ -14,7 +14,7 @@ use crate::view;
 
 pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut impl Write) -> io::Result<()> {
     let mut screen = session.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
-    let mut input = InputTranslator::new();
+    let mut input = InputTranslator::with_mappings(app.shared_keymaps());
     // Temporary debug status (mode + last resolved action), see `view::render`.
     let mut status = format!("-- {:?} -- last: (none)", app.editor().mode());
     let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
@@ -45,9 +45,6 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
         if is_command_mode {
             if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
                 let outcome = app.handle_raw_key(raw_key);
-                if let Some(crate::app::request::AppRequest::Quit) = app.take_request() {
-                    return Ok(());
-                }
                 status = format!(
                     "-- {:?} -- mutated: {} invalidation: {:?} events: {}",
                     app.editor().mode(),
@@ -57,7 +54,8 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
                 );
             }
         } else {
-            if let Some(resolved) = input.translate(ev) {
+            let buf_id = app.editor().current_context().buffer.get();
+            if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id)) {
                 let action_desc = format!("{:?}", resolved.action);
                 let outcome = app.handle_action(resolved.action);
                 status = format!(
@@ -69,6 +67,15 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
                 );
             } else {
                 status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
+            }
+        }
+
+        if let Some(request) = app.take_request() {
+            match request {
+                crate::app::request::AppRequest::Quit => return Ok(()),
+                crate::app::request::AppRequest::ShowMessage(msg) => {
+                    status = msg;
+                }
             }
         }
 
