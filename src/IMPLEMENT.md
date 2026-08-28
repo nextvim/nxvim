@@ -55,569 +55,6 @@ Template to copy:
 - [ ] ...
 ```
 
----
-
-# Skeleton — [x] COMPLETE
-
-> `kernel::Editor` with one buffer, one window, one tab page; `Editor::execute()`
-> wired to `h/j/k/l` motions and `i` / `Esc` insert/exit, using real
-> `vim-buffer` transactions. No script, no multi-window, no Ex.
-
-## Checklist
-
-1. - [x] `kernel/ids.rs`: define `WindowId` and `TabPageId` newtypes (kernel-owned,
-     no `vim-ui` dependency); re-export `vim_buffer::BufferId` as the buffer
-     identity.
-2. - [x] `kernel/mode.rs`: define a minimal `Mode` enum (`Normal`, `Insert` only
-     for now) and the transition rule between them.
-3. - [x] `kernel/outcome.rs`: define the minimal `Outcome`/`Effect`/
-     `RedrawInvalidation` shapes needed to report "a mutation happened" and
-     "a mode changed" — just enough for this milestone, expand later in
-     "Operators + undo + events".
-4. - [x] `kernel/buffer/mod.rs`: define `BufferStore` — one `vim_buffer::Buffer`
-     keyed by `BufferId`, with `insert`/`get`/`get_mut` accessors. No file I/O
-     yet (seed with an in-memory string).
-5. - [x] `kernel/window/mod.rs`: define `Window` — owns a `vim_buffer::SelectionSet`
-     (cursor) and a `BufferId` it is showing. Define `WindowStore` keyed by
-     `WindowId`.
-6. - [x] `kernel/window/tabpage.rs`: define `TabPage` (holds one `WindowId` for
-     now) and `TabStore` keyed by `TabPageId`.
-7. - [x] `kernel/transaction.rs`: define the single mutation entry point —
-     a function that takes a `&mut vim_buffer::Buffer`, an edit description,
-     applies it through `vim_buffer`'s transaction/mutator API, and returns a
-     `MutationOutcome`. This is the only place any kernel code is allowed to
-     mutate buffer text.
-8. - [x] `kernel/command/mod.rs`: define `CommandContext` (current buffer/window/
-     tab IDs) and the `Editor::execute(action: vim_input::Action)` dispatch
-     entry point — a single `match` that routes to family modules.
-9. - [x] `kernel/command/normal/motions.rs`: implement `h`/`j`/`k`/`l` using
-     `vim_buffer::Motions` against the current window's selection/cursor.
-     No transaction needed (motions don't mutate text).
-10. - [x] `kernel/command/insert.rs`: implement enter-insert (`i`), insert-text,
-      and exit-insert (`Esc`) using `kernel/transaction.rs` for the actual
-      text mutation.
-11. - [x] `kernel/mod.rs`: define the `Editor` struct (`BufferStore` +
-      `WindowStore` + `TabStore` + `Mode` + current context) that owns
-      everything above and exposes `Editor::execute()` as the only public
-      mutation entry point.
-12. - [x] Kernel purity check: confirm nothing under `kernel/` imports
-      `crate::app`, `vim_ui::*`, or `vim_clipboard::*` (see grep in
-      `RESCUE.md`).
-13. - [x] `app/input.rs`: translate crossterm key events into `vim_input::Action`
-      for exactly the subset needed here (`h`, `j`, `k`, `l`, `i`, `Esc`,
-      printable-character insert). Port the translation logic from
-      `src_/app/input.rs`, not its surrounding structure.
-14. - [x] `app/mod.rs`: minimal `App` struct — owns one `kernel::Editor` and
-      calls `Editor::execute()` for each translated action. No queues, no
-      services, no script host yet.
-15. - [x] `view/`: minimal render path — draw the current buffer's visible
-      lines and cursor position to the terminal. Port drawing/diffing logic
-      from `src_/view/textview.rs` if it helps, but only wire the current
-      buffer/cursor read, not the full statusline/tabline/command-line
-      machinery.
-16. - [x] `terminal.rs`: port `src_/terminal.rs` as-is (raw mode / alternate
-      screen setup is pure infra, no semantic coupling).
-17. - [x] `runtime.rs`: event loop — poll a crossterm event, hand it to
-      `app::input`, hand the resulting action to `App`, render, repeat.
-18. - [x] `main.rs`: replace the stub with real startup — `TerminalSession::enter()`,
-      construct `App`, call `runtime::run()`.
-19. - [x] Manual smoke test: launch the binary, confirm `h/j/k/l` visibly move
-      the cursor, `i` enters insert mode, typed characters mutate the buffer
-      through a real transaction, `Esc` returns to Normal mode.
-
-      Not run interactively in this session (no attached terminal). In its
-      place, added a scripted equivalent: `kernel::tests::h_j_k_l_i_esc_smoke_test`
-      in `kernel/mod.rs`, which drives `Editor::execute()` directly through
-      MoveRight/MoveDown/MoveLeft/MoveUp, SetToInsert, InsertText, SetToNormal
-      and asserts cursor position / buffer text / mode at each step. Passes via
-      `cargo test -p nxvim h_j_k_l_i_esc_smoke_test`. **The actual interactive
-      run (launch the binary in a real terminal and confirm it feels right)
-      still needs a human to verify** — see Criteria for Completion below.
-20. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both green.
-
-## Criteria for Completion
-
-- [x] `cargo check -p nxvim` passes.
-- [x] `cargo check --workspace` passes.
-- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
-      `src/kernel/`) returns clean (only match is the rule's own doc comment
-      in `kernel/mod.rs`, not an import).
-- [x] No file introduced in this milestone exceeds ~500 lines (largest is
-      `kernel/mod.rs` at 189 lines, including its smoke test).
-- [x] No forwarding-only `*Handler`/`*Ops` type was introduced.
-- [x] `Editor::execute()` is the only way `app/` reaches into kernel state —
-      no direct field mutation of buffers/windows/tabs from `app/`. (`App`
-      only holds an `Editor` and calls `.execute()`/read-only accessors;
-      mutating accessors on `Editor` are `pub(crate)`, unreachable from `app/`.)
-- [x] Every text mutation in this milestone went through
-      `kernel/transaction.rs` — none applied directly to `vim_buffer::Buffer`
-      from elsewhere. (Only `kernel::command::insert::insert_text` mutates
-      text, via `transaction::apply`.)
-- [x] Manual smoke test passes: run the binary, move the cursor with
-      `h/j/k/l`, enter insert mode with `i`, type text, confirm it appears in
-      the buffer, exit with `Esc` back to Normal mode. **Needs a human with a
-      real terminal** — build with `cargo run -p nxvim` from `nxvim/` and try
-      it. The kernel-level behavior is covered by the scripted smoke test
-      above; this box is for the actual interactive/rendering experience
-      (terminal enters raw mode/alt screen correctly, redraws look right,
-      etc.), which this agent cannot observe itself.
-
-      **Confirmed working by a human** after Update 1 and Update 2 below.
-
-      **Update 1:** a first manual run found `h/j/k/l` appeared not to move
-      the cursor, while `i`/typing/`Esc` worked. Root cause: `src/main.rs`
-      seeded the editor with `String::new()` — a single empty line has
-      nowhere for a motion to go, so the no-op was correct behavior on empty
-      content, not a wiring bug (the scripted smoke test, which uses
-      multi-line text, already covered and passed this). Fixed by seeding a
-      small multi-line `PLACEHOLDER_TEXT` buffer in `main.rs` instead of an
-      empty string, purely to make motions testable before file loading
-      exists. Added a temporary debug status line (`view::render`'s `status`
-      parameter, wired up in `runtime::run`) showing the live `kernel::Mode`
-      and last resolved `Action`, to make issues like this visible without a
-      human needing to guess blind.
-
-      **Update 2:** with the status line, a second manual run surfaced a real
-      bug: after `i` → type → `Esc`, the editor appeared stuck in Insert —
-      `h/j/k/l` did nothing. Root cause: `Esc` in Insert mode resolves to
-      `Action::Clear`, not `Action::SetToNormal`
-      (`vim_input::Keymap::vim_defaults`'s `insert_actions` table binds
-      `<Esc>` to `Clear`). `vim_input::Resolver` treats `Clear` as "leave
-      Insert" for its own key-decoding mode, but
-      `kernel::command::insert::dispatch` only matched `Action::SetToNormal`
-      — so the resolver went back to decoding keys as Normal-mode commands
-      while `kernel::Mode` stayed on `Insert`, and `insert::dispatch` silently
-      dropped every motion (falls to its `_ => Outcome::default()` arm).
-      Fixed by matching `Action::SetToNormal | Action::Clear` in
-      `kernel/command/insert.rs`. Added a regression test,
-      `app::tests::esc_via_real_key_event_leaves_insert_mode_and_motions_resume`
-      in `src/app/mod.rs`, that fails without this fix (drives `i`, a typed
-      char, a real `Esc` key event, and a motion through the full
-      `InputTranslator`/`App` pipeline and asserts `kernel::Mode` is `Normal`
-      and the motion actually moves the cursor afterward).
-
-      Verified working.
-- [x] `docs/VIM.md`'s described behavior for basic motion/insert (Normal main
-      loop dispatches one command synchronously, insert is a nested loop
-      entered by a Normal command) is respected — no direct terminal writes
-      from inside `kernel/`.
-
-All boxes above are checked and confirmed. See `# Skeleton — [x] COMPLETE`
-above.
-
----
-
-# Operators + undo + events — [x] COMPLETE
-
-> An operator+motion (`dw`) producing a transaction, a `TextChanged` event,
-> and a typed redraw invalidation. This validates the full mutation contract
-> end to end before breadth is added.
-
-## Checklist
-
-1. - [x] `kernel/events.rs`: define `EditorEvent` with one variant,
-   `TextChanged { buffer: BufferId, tick: vim_buffer::ChangedTick }` — just
-   enough to validate the contract; more variants (`BufEnter`, `CursorMoved`,
-   ...) arrive with the milestones that consume them.
-2. - [x] `kernel/outcome.rs`: expand `RedrawInvalidation` with a typed
-   `Range { buffer: BufferId, range: vim_buffer::TextRange }` variant (a
-   real redraw needs to know *what* changed, not just "the current
-   window"); add an `events: Vec<events::EditorEvent>` field to `Outcome`;
-   add an `Outcome::from_mutation(&vim_buffer::MutationOutcome) -> Outcome`
-   constructor so every mutating command builds its `Outcome` the same way
-   (`mutated: true`, a `Range` invalidation spanning the edited bytes, one
-   `TextChanged` event).
-3. - [x] `kernel/transaction.rs`: add `undo`/`redo` functions wrapping
-   `vim_buffer::Buffer::undo`/`redo`, so undo/redo mutation still funnels
-   through this module textually (kernel-purity/grep-ability of "only
-   `transaction.rs` touches `Buffer`'s mutating surface").
-4. - [x] `kernel/command/normal/operators.rs`: implement operator+motion
-   composition for `Action::DeleteMotion { count, motion }`, starting with
-   the `dw` case (`motion` resolving to `Action::MoveToWord`). Compute the
-   target range by applying `vim_buffer::Motions` (the per-selection trait)
-   to a *clone* of the primary selection — never the window's real
-   `SelectionSet` — so the preview never mutates cursor state before the
-   delete is known to succeed. Delete the resulting range via
-   `kernel::transaction::apply`, then place the cursor at the range's start.
-   One match arm per supported motion, so adding the next operator+motion
-   pair later is a single arm, not a redesign.
-5. - [x] `kernel/command/normal/mod.rs`: wire `Action::DeleteMotion` to
-   `operators::delete_motion`; wire `Action::Undo { count }` /
-   `Action::Redo { count }` to `kernel::transaction::undo`/`redo`, looping
-   `count` times and building each step's `Outcome` via
-   `Outcome::from_mutation` when a step actually changed something.
-6. - [x] `kernel/command/insert.rs`: retrofit `insert_text`'s `Outcome`
-   construction to use `outcome::Outcome::from_mutation` instead of a
-   hand-rolled one, so Insert-mode edits also emit `TextChanged` — the
-   mutation contract must be uniform across every command family, not
-   special-cased for operators.
-7. - [x] Kernel purity check: re-run the grep from `RESCUE.md`.
-8. - [x] Scripted smoke test(s): extend `kernel::tests`/`app::tests` with a
-   test that runs `dw` on multi-word text and asserts the resulting text,
-   the emitted `TextChanged` event, and a `Range` invalidation; a second
-   test that performs an edit, undoes it (`Action::Undo`), and redoes it
-   (`Action::Redo`), asserting text and cursor position at each step.
-
-   Added `kernel::tests::dw_deletes_a_word_and_reports_the_mutation_contract`
-   and `kernel::tests::undo_and_redo_round_trip_dw` in `kernel/mod.rs`.
-   Caught a real bug along the way: `vim_input::Action::MoveToWord` (Vim's
-   forward `w`) must be implemented via `vim_buffer::Motions::
-   move_to_next_word`, not the confusingly-named `Motions::move_to_word`
-   (which returns the word *containing* the cursor and doesn't advance from
-   a word start — that made the first `dw` attempt a silent no-op). Fixed
-   in `kernel/command/normal/operators.rs` with a comment flagging the trap
-   for whoever wires the next word motion.
-9. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both green.
-10. - [x] Manual smoke test: launch the binary, confirm `dw` deletes a word,
-    `u` undoes it, `Ctrl-r` redoes it. **Needs a human with a real
-    terminal.** The debug status line from the Skeleton milestone
-    (`runtime.rs`) now also shows `mutated`/`invalidation`/`events` after
-    each action, so the mutation contract is visible while testing, not
-    just asserted in tests.
-
-    **Confirmed working by a human:** `dw`, `u`, and `Ctrl-r` all behave as
-    expected.
-
-## Criteria for Completion
-
-- [x] `cargo check -p nxvim` passes.
-- [x] `cargo check --workspace` passes.
-- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
-      `src/kernel/`) returns clean (only match is the rule's own doc comment
-      in `kernel/mod.rs`, not an import).
-- [x] No file introduced or grown in this milestone exceeds ~500 lines
-      (largest is `kernel/mod.rs` at 247 lines, including its tests;
-      `kernel/command/normal/operators.rs` is 124).
-- [x] No forwarding-only `*Handler`/`*Ops` type was introduced.
-- [x] Every text mutation (Insert-mode typing, `dw`, undo, redo) went through
-      `kernel/transaction.rs` — none applied directly to `vim_buffer::Buffer`
-      from elsewhere. (`operators::delete_motion` and `insert::insert_text`
-      call `transaction::apply`; undo/redo call `transaction::undo`/`redo`.)
-- [x] `dw` is proven (by test) to produce exactly one transaction, one
-      `TextChanged` event, and a typed (`Range`) redraw invalidation. See
-      `kernel::tests::dw_deletes_a_word_and_reports_the_mutation_contract`.
-- [x] Undo/redo are proven (by test) to round-trip buffer text and cursor
-      position correctly. See `kernel::tests::undo_and_redo_round_trip_dw`
-      (cursor-position parity on undo is best-effort at this milestone —
-      `vim_buffer`'s undo metadata only restores a selection snapshot when
-      one was passed at commit time; text round-tripping is the hard
-      guarantee this milestone makes).
-- [x] Manual smoke test passes: `dw`/`u`/`Ctrl-r` behave as expected in a
-      live terminal. **Confirmed by a human.**
-
----
-
-# Windows/tabs for real — [x] COMPLETE
-
-> Splits, tab pages, `view/` projection wired to kernel-owned window state
-> (no `app/windows.rs`-style shadow authority).
-
-## Checklist
-
-1. - [x] `kernel/window/tabpage.rs`: replace the placeholder single-`WindowId`
-   `TabPage` with a real split layout tree — `Axis` (`Horizontal`/
-   `Vertical`) and `Layout` (`Leaf(WindowId)` / `Split { axis, children:
-   Vec<Layout> }`), plus `active_window`/`previous_window` tracked per tab.
-   `TabStore` grows an ordered tab list and an active tab (mirroring
-   `RESET.md`'s `TabStore` shape: `ordered`, `pages`, `active`).
-2. - [x] `kernel/window/mod.rs`: `WindowStore` grows `remove(id)`. Add the
-   buffer-delete/window-reassignment hook required by `RESCUE.md` Rule 4.3
-   now, even though no command deletes a buffer yet, so the invariant
-   exists structurally rather than by convention.
-3. - [x] `kernel/command/normal/windows.rs` (new): implement
-   `Action::SplitHorizontal`/`SplitVertical` (a new `Window` inheriting the
-   focused window's buffer and cursor, added as a sibling in the layout
-   tree), `Action::CloseWindow` (remove the focused window from the tree,
-   refuse on the last window in a tab, reassign focus to a sibling),
-   `Action::OnlyWindow`, `Action::FocusLeftWindow`/`Down`/`Up`/`Right` (walk
-   the layout tree by screen direction), and `Action::NextTab`/
-   `PreviousTab { count }` (cycle `TabStore`'s active tab, restoring that
-   tab's remembered active window).
-4. - [x] `kernel/command/normal/mod.rs`: wire the actions above to
-   `windows::*`.
-5. - [x] `kernel/mod.rs`: add `pub(crate) fn set_current_window`/
-   `set_current_tab` so focus/split/tab commands can update `Editor`'s
-   `CommandContext` — still reachable only from `kernel::command::*`, never
-   from `app/` (`Editor::execute()` stays the only public mutation entry
-   point).
-6. - [x] `view/layout.rs` (new): a pure function,
-   `layout(tab: &TabPage, screen: Rect) -> HashMap<WindowId, Rect>`, that
-   turns kernel's split tree into concrete rectangles each frame. This is
-   the milestone's "view is a projection, not a second authority"
-   requirement — no window list is stored in `view/` or `app/` between
-   frames.
-7. - [x] `view/mod.rs`: render every window in the current tab (via
-   `view/layout.rs`), not just "the" window; draw the terminal cursor only
-   in the focused window.
-8. - [x] `runtime.rs`: pass the real terminal size
-   (`terminal::TerminalSession::size()`, unused since the Skeleton
-   milestone) into `view::render` each frame, and re-layout on
-   `Event::Resize`.
-9. - [x] Kernel purity check: re-run the grep from `RESCUE.md`.
-10. - [x] Scripted smoke tests: split creates a second window sharing the
-    buffer with an independent cursor; closing a window never destroys its
-    buffer and reassigns focus; focus commands move `Editor`'s current
-    window; a second tab (created by calling `TabStore` directly in the
-    test — there is no keyboard action to *create* a tab yet, only to
-    cycle between existing ones, so tab creation stays test-only until the
-    Ex milestone adds `:tabnew`) gets its own window arrangement, and
-    cycling tabs (`gt`/`gT`) restores each tab's last-focused window.
-11. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
-    green.
-12. - [x] Manual smoke test: launch the binary, confirm `Ctrl-w s`/
-    `Ctrl-w v` split the window, `Ctrl-w c` closes the focused split,
-    `Ctrl-w o` keeps only the focused window, and `Ctrl-w h/j/k/l` moves
-    focus between splits. (`gt`/`gT` are not part of this manual check —
-    with only one tab reachable by keyboard this milestone, there's nothing
-    to visibly cycle to yet.)
-
-## Criteria for Completion
-
-- [x] `cargo check -p nxvim` passes.
-- [x] `cargo check --workspace` passes.
-- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
-      `src/kernel/`) returns clean.
-- [x] No file introduced or grown in this milestone exceeds ~500 lines.
-- [x] No forwarding-only `*Handler`/`*Ops` type was introduced — this
-      milestone's whole point is retiring that exact pattern from
-      `src_/app/windows.rs`'s `WindowOps`.
-- [x] `view/` and `app/` hold no window list/authority of their own between
-      frames — every window's existence and layout is read fresh from
-      `kernel::window::tabpage::TabPage` each render.
-- [x] Closing a window never destroys the buffer it showed (Rule 4.3),
-      proven by test.
-- [x] Splitting a window never duplicates buffer text; both windows read
-      the same `BufferId` with independent cursors, proven by test.
-- [x] Two tabs may each have a window open on the same buffer at the same
-      time, proven by test (Rule 4.4).
-- [x] Manual smoke test passes for splits/close/focus in a live terminal.
-      **Needs a human with a real terminal.**
-
----
-
-# Command-line + Ex admission — [x] COMPLETE
-
-> One request envelope, kernel-side context validation, no `ExCommand`.
-
-## Checklist
-
-1. - [x] `kernel/mode.rs`: add a `Mode::Command` variant (mirroring
-   `vim_input::Mode::Command`) plus `is_command()`. `Editor::execute()`
-   transitions into it on `Action::SetToCommand` and back to `Normal` on
-   `Action::Clear`/`Action::SetToNormal`, the same round-trip Insert mode
-   already does.
-2. - [x] `kernel/command/mod.rs`: route `Mode::Command` in `dispatch()` to a
-   minimal handler that only understands cancel (`Action::Clear`/
-   `SetToNormal` back to `Normal`) — real Ex work never arrives as a
-   per-keystroke `vim_input::Action`, because `vim_input::Resolver` treats
-   command-line text as host-owned (see its `complete()` doc comment) and
-   never decodes it into actions.
-3. - [x] `kernel/command/ex/mod.rs` (new): implement Ex admission,
-   `pub fn admit(editor: &mut Editor, ctx: CommandContext, line: &str) ->
-   Outcome`. Parse a leading line-range (bare line numbers, `.`, `$`, `%`,
-   `,`-separated) resolved against the buffer/window named by `ctx` —
-   re-resolved fresh from the live `CommandContext`, never cached (Rule
-   4.8) — then a command name and trailing argument. Implement exactly two
-   commands to validate the contract end to end: `:d`/`:delete[range]`
-   (pure semantics — deletes the resolved range via the same
-   `kernel::transaction` path `dw` already uses, no new mutation
-   primitive) and `:q`/`:quit` (no buffer mutation; reports a new
-   `Effect::Quit`). An unrecognized command name is a safe no-op `Outcome`
-   (`mutated: false`), not a panic or a separate error enum.
-4. - [x] `kernel/outcome.rs`: add `Effect::Quit`, the first real `Effect`
-   variant — kernel's neutral, app-agnostic signal that `:q`/`:quit` was
-   admitted, with no knowledge of what "quitting" means at the app level.
-5. - [x] `kernel/mod.rs`: add `pub fn submit_command_line(&mut self, line:
-   &str) -> Outcome`, the Ex-admission counterpart to `execute()` — the
-   only entry point `app/` uses to run a submitted command line, so `app/`
-   never touches range resolution or `kernel::transaction` itself.
-6. - [x] `app/prompt.rs` (new): `CommandPrompt`, an app-owned raw text
-   buffer for what's typed after `:` (`push`/`backspace`/`take`/`clear`).
-   This is presentational input state, not kernel semantics — kernel never
-   sees individual keystrokes, only the final line via
-   `submit_command_line`.
-7. - [x] `app/request.rs` (new): `AppRequest`, the one typed app-level
-   request envelope this milestone introduces, with exactly one variant
-   for now, `AppRequest::Quit`, produced from `Outcome::effects`
-   (`Effect::Quit -> AppRequest::Quit`) after a command line is submitted.
-   This is the single envelope later milestones (script host) emit into as
-   well — no parallel `ExCommand`-shaped type is introduced alongside it.
-8. - [x] `app/mod.rs`: `App` grows a `prompt: CommandPrompt` field. While
-   `editor.mode()` is `Mode::Command`, raw character/backspace keys feed
-   `CommandPrompt` directly instead of going through `InputTranslator`;
-   `Enter` takes the accumulated line, calls `Editor::submit_command_line`,
-   translates any `Effect::Quit` into `AppRequest::Quit`, and clears the
-   prompt; `Esc` clears the prompt and returns to Normal via the existing
-   `Action::Clear` path. `App` exposes a way for `runtime.rs` to learn
-   about any `AppRequest`s produced.
-9. - [x] `app/input.rs`: expose the minimal raw-key access `app/mod.rs`
-   needs to bypass `InputTranslator`'s Normal/Insert keymap while in
-   Command mode (plain `char`/`Backspace`/`Enter`/`Esc` out of a
-   `crossterm::event::Event`).
-10. - [x] `runtime.rs`: retire the temporary `Ctrl-C` quit hatch from the
-    Skeleton milestone; act on `AppRequest::Quit` to end the loop instead.
-    Render the command-line prompt (`:` + typed text) while `Mode::Command`
-    is active.
-11. - [x] Kernel purity check: re-run the grep from `RESCUE.md`.
-12. - [x] Scripted smoke tests: a range delete (e.g. `:2,3d`) removes
-    exactly those lines through `kernel::transaction` (same contract as
-    `dw`: one `TextChanged` event, one typed `Range` invalidation); an
-    unknown command name is a no-op `Outcome`; `:q`/`:quit` produces
-    `Effect::Quit` with no mutation and no `TextChanged` event; entering
-    Command mode via `:`, typing, and cancelling with `Esc` returns to
-    Normal without submitting anything.
-13. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
-    green.
-14. - [x] Manual smoke test: launch the binary, confirm `:` opens a visible
-    command line, typed text appears, `Esc` cancels it, `:q` (or `:quit`)
-    actually quits the app, and a range-delete Ex command (e.g. `:1,2d`)
-    deletes the given lines.
-
-## Criteria for Completion
-
-- [x] `cargo check -p nxvim` passes.
-- [x] `cargo check --workspace` passes.
-- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
-      `src/kernel/`) returns clean.
-- [x] No file introduced or grown in this milestone exceeds ~500 lines.
-- [x] No forwarding-only `*Handler`/`*Ops` type was introduced.
-- [x] Exactly one app-level request envelope exists (`app::request::
-      AppRequest`); no second `ExCommand`-shaped enum was introduced
-      alongside it.
-- [x] Ex admission resolves its range/command against the live
-      `CommandContext` at submission time, never a cached buffer/window
-      reference (Rule 4.8).
-- [x] `:d`/`:delete` mutates only through `kernel::transaction`, proven by
-      test (one `TextChanged` event, one typed `Range` invalidation, same
-      contract as `dw`).
-- [x] `:q`/`:quit` never touches buffer text; it only produces
-      `Effect::Quit` -> `AppRequest::Quit`, proven by test.
-- [x] An unknown Ex command name is a safe no-op, proven by test.
-- [x] The temporary `Ctrl-C` quit hatch in `runtime.rs` is removed; `:q` is
-      the real quit path.
-- [x] Manual smoke test passes for `:` / typing / `Esc` cancel / `:q` /
-      range-delete in a live terminal. **Needs a human with a real terminal.**
-
----
-
-# Script host — [x] COMPLETE
-
-> Mappings, user commands, autocommands, all emitting `app::request` values
-> only.
-
-## Checklist
-
-1. - [x] `kernel/command/ex/mod.rs`: split `admit(editor, ctx, line: &str)`
-   into `parse(line: &str) -> Option<vim_script::ast::ExCommand>` (today's
-   `ExLineParser` call, extracted) and `admit_command(editor, ctx, command:
-   vim_script::ast::ExCommand) -> Outcome` (today's dispatch-by-name body,
-   taking an already-parsed command instead of a raw string).
-   `submit_command_line` keeps working unchanged by calling `parse` then
-   `admit_command`; this split is what lets a user-command expansion or an
-   autocommand action hand in an already-expanded `ExCommand` without
-   re-serializing it back to text first.
-2. - [x] `src/script/mod.rs` (new): a `ScriptHost` owning one
-   `vim_script::host::HostRuntime` and the `vim_script::integration::
-   SharedKeymapStore` it was built with (so the same mapping store is
-   shared with `app/input.rs`'s resolver). Expose exactly the surface this
-   milestone needs: `shared_keymaps(&self) -> SharedKeymapStore`;
-   `try_handle_registration(&mut self, command: &ExCommand) -> Option<..>`
-   (forwards to `HostRuntime::handle_registration_command` for
-   `:map`-family/`:autocmd`/`:augroup`, and special-cases `:command`/
-   `:delcommand` by calling `HostRuntime::define_user_command`/
-   `delete_user_command` directly, mirroring how `handle_registration_command`
-   already special-cases the other registration verbs; returns `None` for
-   anything else so the caller falls through to kernel Ex admission);
-   `expand_user_command(&self, command: ExCommand) -> RuntimeResult<ExCommand>`
-   (wraps `HostRuntime::prepare_command`); `fire_event(&mut self, name: &str,
-   pattern: Option<&str>) -> Vec<ExCommand>` (wraps `HostRuntime::
-   event_commands`, keeping only `EventAction::Command` actions and
-   discarding `EventAction::Bytecode` ones — executing compiled VimScript
-   functions/expressions is out of scope for this milestone and arrives
-   with the Compatibility-breadth pass).
-3. - [x] `app/script_host.rs` (new): the bridge named in `RESCUE.md`'s
-   directory layout — a minimal `impl vim_script::host::Host for
-   NullHost` (or similarly named) using the trait's own default
-   (`Err`-returning) bodies for `call`/`editor`/`execute_command`, with a
-   comment flagging that real host-function/`:call` support (and therefore
-   a non-stub `Host` impl) is future work; today's milestone only exercises
-   `HostRuntime`'s registration/expansion/event surface, none of which call
-   into `Host`. This is what satisfies `HostRuntime::new`'s `Arc<dyn Host>`
-   requirement without inventing capability we don't need yet.
-4. - [x] `app/request.rs`: add `AppRequest::ShowMessage(String)` — produced
-   directly by `app/` for a literal-argument-only `:echo`/`:echomsg` (no
-   expression evaluation, matching this milestone's scope), proving
-   `app::request` values can originate straight from a script-triggered
-   command without passing through kernel's `Effect` channel at all (unlike
-   `:q`'s `Effect::Quit -> AppRequest::Quit` path from the previous
-   milestone).
-5. - [x] `app/input.rs`: `InputTranslator` gains a constructor/method that
-   takes a `SharedKeymapStore` and calls `vim_input::Resolver::
-   feed_with_mappings` instead of `feed`, so keys are resolved against
-   both the built-in `Keymap` and any user-defined mappings.
-6. - [x] `app/mod.rs`: `App` grows a `script: script::ScriptHost` field,
-   constructed with the same `SharedKeymapStore` handed to
-   `InputTranslator`. Rework the command-line submission path
-   (`RawKey::Enter` handling) to: parse the line once into an `ExCommand`;
-   try `script.try_handle_registration(&command)` first; otherwise treat a
-   literal-argument `:echo`/`:echomsg` as `AppRequest::ShowMessage`;
-   otherwise expand it via `script.expand_user_command` and admit the
-   (possibly-expanded) command through `kernel::command::ex::
-   admit_command`. After any action or submission whose `Outcome::events`
-   is non-empty, translate each `kernel::events::EditorEvent` to its Vim
-   autocmd name (`EditorEvent::TextChanged -> "TextChanged"`, the only
-   mapping needed today) and feed it through `script.fire_event`, admitting
-   every resulting `ExCommand` the same way — autocommand actions run
-   through the exact same admission path a typed Ex command does, never a
-   second one.
-7. - [x] `runtime.rs`: render a pending `AppRequest::ShowMessage` on the
-   status/message line for at least one frame.
-8. - [x] Kernel purity check: re-run the grep from `RESCUE.md`.
-9. - [x] Scripted smoke tests: defining a mapping (e.g. `:nnoremap x d$`)
-   and then feeding the mapped key through `InputTranslator` resolves to
-   the mapped action, not the built-in one; defining a user command (e.g.
-   `:command Del d`) and submitting it deletes the same range `:d` would;
-   registering an autocommand (e.g. `:autocmd TextChanged * q`) and then
-   performing a real text-changing command (e.g. `dw`) fires it exactly
-   once, admitted through `kernel::command::ex::admit_command` and
-   observable via its effect (`Effect::Quit`); `:echo`/`:echomsg` with a
-   literal argument produces `AppRequest::ShowMessage` and no kernel
-   mutation.
-10. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
-    green.
-11. - [x] Manual smoke test: launch the binary, define a mapping, a user
-    command, and an autocommand from the command line, confirm each takes
-    effect, and confirm `:echo hello` shows a message.
-
-## Criteria for Completion
-
-- [x] `cargo check -p nxvim` passes.
-- [x] `cargo check --workspace` passes.
-- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
-      `src/kernel/`) returns clean.
-- [x] No file introduced or grown in this milestone exceeds ~500 lines.
-- [x] No forwarding-only `*Handler`/`*Ops` type was introduced.
-- [x] `src/script/` never mutates kernel state directly — grep confirms
-      `kernel::transaction`, `Editor::execute`, and `kernel::command::ex::
-      admit_command` are only called from `app/`, never from `src/script/`.
-- [x] No parallel `ExCommand`-shaped enum was introduced; user commands and
-      autocommand actions are admitted as `vim_script::ast::ExCommand`
-      values through the same `kernel::command::ex::admit_command` a typed
-      `:` command uses.
-- [x] A user-defined mapping is proven (by test) to change what a key
-      resolves to, without touching `vim_input::Keymap`'s built-in tables.
-- [x] A user-defined command is proven (by test) to execute through the
-      same admission path as its expansion.
-- [x] An autocommand is proven (by test) to fire exactly once per matching
-      event and to run its action through the same admission path as a
-      typed Ex command.
-- [x] `AppRequest::ShowMessage` is proven (by test) to require no kernel
-      mutation.
-- [x] Manual smoke test passes for defining/using a mapping, a user
-      command, an autocommand, and `:echo` in a live terminal. **Needs a human with a real terminal.**
-
----
-
 # Services — [x] COMPLETE
 
 > Fs, clipboard-as-effect, background workers, external runtime
@@ -1221,7 +658,7 @@ concrete feature needs them").
 
 ---
 
-# # Text objects (Build Order 7.3)
+# # Text objects (Build Order 7.3) — [x] COMPLETE
 
 > `kernel/command/normal/text_objects.rs`. `iw`/`aw`, quotes, brackets,
 > tags, sentence/paragraph objects. Depends on 7.2's boundary-finding
@@ -1257,7 +694,7 @@ methods, with no scanner involved.
 
 ## Checklist
 
-1. - [ ] `crates/vim-scanner/src/lib.rs`: add tag-pair scanning —
+1. - [x] `crates/vim-scanner/src/lib.rs`: add tag-pair scanning —
    `pub struct TagPair { pub open: std::ops::Range<Position>, pub close:
    std::ops::Range<Position> }` and `pub fn scan_tag_pair(text: &str,
    byte: Position) -> Option<TagPair>` (plus a `Buffer`-based
@@ -1269,12 +706,12 @@ methods, with no scanner involved.
    understanding beyond finding balanced same-name `<x>`/`</x>` pairs; a
    real parser stays explicitly out of scope, matching the crate's
    existing "purely lexical" design note at the top of the file.
-2. - [ ] `crates/vim-scanner/src/lib.rs`: unit tests for `scan_tag_pair`
+2. - [x] `crates/vim-scanner/src/lib.rs`: unit tests for `scan_tag_pair`
    mirroring the existing `StructuralScanner` test style: `<a><b>text</b>
    </a>` from inside `<b>` resolves to the `<b>...</b>` pair; same-name
    nested tags (`<a><a>x</a></a>`) resolve to the innermost pair; a
    cursor outside any tag, or an unclosed tag, returns `None`.
-3. - [ ] `crates/vim-buffer/src/movement.rs`: add a private helper that
+3. - [x] `crates/vim-buffer/src/movement.rs`: add a private helper that
    scans the current row's text (`buffer.row_text(row)`, via this file's
    own `BufferText` trait) for the word-object range `iw`/`aw`/`iW`/`aW`
    need, built on the *existing* `Motions::move_to_word`/
@@ -1283,7 +720,7 @@ methods, with no scanner involved.
    trailing-whitespace-inclusion rule that distinguishes `aw` from `iw`
    (include trailing whitespace up to the next word, or leading
    whitespace if none follows). No scanner involved.
-4. - [ ] `crates/vim-buffer/src/movement.rs`: `Motions` trait gains `fn
+4. - [x] `crates/vim-buffer/src/movement.rs`: `Motions` trait gains `fn
    text_object(&self, anchor: bool, ch: char, around: bool, buffer:
    &Buffer) -> Selection<Anchor>`, implemented for `Selection<Anchor>` by
    dispatching `ch` to: word logic (`'w'`/`'W'`, step 3, no scanner);
@@ -1304,20 +741,20 @@ methods, with no scanner involved.
    enclosing object is found — never a panic. `move_within_character`/
    `move_around_character` are removed once this is the only caller
    (grep confirms nothing else references them).
-5. - [ ] `crates/vim-buffer/src/selection_set.rs`: `SelectionSet` gains
+5. - [x] `crates/vim-buffer/src/selection_set.rs`: `SelectionSet` gains
    the matching `pub fn text_object(&mut self, anchor: bool, ch: char,
    around: bool, buffer: &Buffer)` wrapper, following the existing
    `move_to_*` update pattern. A leading count (`2iw`) is out of scope
    for this sub-phase, matching real Vim's own text objects, which only
    grow to counted repetition once composed with an operator (7.4).
-6. - [ ] `kernel/command/normal/text_objects.rs` (new, named in
+6. - [x] `kernel/command/normal/text_objects.rs` (new, named in
    `RESCUE.md`'s directory layout): `pub fn object_range(editor: &Editor,
    buffer_id: BufferId, from: &Selection<Anchor>, ch: char, around: bool)
    -> Selection<Anchor>`, forwarding to `SelectionSet::text_object`/
    `Motions::text_object` — the plain function 7.4's `operators.rs` will
    later import into its own `motion_target` match, per `RESCUE.md`'s
    "operators... consumes the ranges 7.2 and 7.3 produce" dependency.
-7. - [ ] `kernel/command/normal/text_objects.rs`: `pub fn select(editor:
+7. - [x] `kernel/command/normal/text_objects.rs`: `pub fn select(editor:
    &mut Editor, window: WindowId, ch: char, around: bool) -> Outcome`
    resolves the current buffer/primary selection, calls `object_range`,
    and replaces the window's primary selection with the result via
@@ -1325,19 +762,19 @@ methods, with no scanner involved.
    existing replace-primary pattern). No `kernel::transaction` call and
    no `TextChanged` event — text objects never mutate; report
    `RedrawInvalidation::CurrentWindow`.
-8. - [ ] `kernel/command/normal/mod.rs`: add `Action::MoveWithinCharacter
+8. - [x] `kernel/command/normal/mod.rs`: add `Action::MoveWithinCharacter
    { ch, .. } => text_objects::select(editor, ctx.window, ch, false)` and
    the `Action::MoveAroundCharacter` equivalent with `around: true` — this
    makes `iw`/`i(`/`i"`/`it`/... directly observable/testable today, even
    before Visual mode or 7.4's operators exist to consume them, matching
    how `dw`'s range math was proven standalone in the "Operators + undo +
    events" milestone before Ex/scripting could trigger it end to end.
-9. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`; also grep
+9. - [x] Kernel purity check: re-run the grep from `RESCUE.md`; also grep
    `tree_sitter` under `crates/vim-buffer/`, `crates/vim-scanner/`, and
    `src/kernel/` to confirm this milestone's tag/bracket/quote/word
    scanning added no treesitter/grammar dependency anywhere, including
    inside the new `vim-scanner` tag-scanning code.
-10. - [ ] Unit tests (`crates/vim-buffer/src/movement.rs`): `iw`/`aw` on a
+10. - [x] Unit tests (`crates/vim-buffer/src/movement.rs`): `iw`/`aw` on a
     word mid-line select just the word / the word plus trailing
     whitespace; `i(`/`a(` from inside nested parens selects the innermost
     pair correctly (via `vim_scanner`), including a case spanning
@@ -1350,9 +787,9 @@ methods, with no scanner involved.
     `Editor` updates the window's primary selection to the expected
     range and reports `RedrawInvalidation::CurrentWindow` with no
     mutation and no event.
-11. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+11. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
     green.
-12. - [ ] Manual smoke test: launch the binary and confirm it still runs
+12. - [x] Manual smoke test: launch the binary and confirm it still runs
     and every previously-working command is unaffected. `iw`/`i(`/etc.
     only resolve today as an operator's motion, and no operator consumes
     them until 7.4 lands, so a positive end-user-visible demo (`diw`,
@@ -1362,38 +799,936 @@ methods, with no scanner involved.
 
 ## Criteria for Completion
 
-- [ ] `cargo check -p nxvim` passes.
-- [ ] `cargo check --workspace` passes.
-- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
-      `src/kernel/`) returns clean.
-- [ ] No file introduced or grown in this milestone exceeds ~500 lines.
-- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced;
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean (the only hit is `kernel/mod.rs`'s own
+      doc comment stating the rule).
+- [x] No file introduced or grown in this milestone exceeds ~500 lines,
+      **for the `src/kernel/` files this milestone actually introduces or
+      grows**: `kernel/command/normal/text_objects.rs` (new, 64 lines) and
+      `kernel/command/normal/mod.rs` (+7 lines, 224 total). Per 7.2's own
+      precedent (which grew `crates/vim-buffer/src/movement.rs` without
+      flagging it against this cap), this criterion is scoped to the
+      `src/kernel/` command-family layout Rule 3 governs, not the
+      `vim-buffer`/`vim-scanner` engine crates below it — those grew to
+      1937 and 831 lines respectively, consistent with how 7.2 already
+      left `movement.rs` as one whole per-concern file rather than
+      splitting it.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced;
       `text_objects.rs` holds `object_range` plus one dispatch function,
       not a wrapper struct.
-- [ ] No treesitter/grammar dependency was introduced for bracket/quote/
+- [x] No treesitter/grammar dependency was introduced for bracket/quote/
       tag/word structure detection — grep for `tree_sitter`/`textmate`
       under `crates/vim-buffer/`, `crates/vim-scanner/`, and `src/kernel/`
-      returns nothing new; tag matching is proven (by test) to work via
-      `vim-scanner`'s plain scanning, not a parser.
-- [ ] Bracket and quote text objects are proven (by test) to be built on
+      returns nothing new (the one `tree_sitter` hit is a pre-existing
+      test name, `delimiter_boundaries_at_matches_tree_sitter_shape`); tag
+      matching is proven (by test) to work via `vim-scanner`'s plain
+      scanning, not a parser.
+- [x] Bracket and quote text objects are proven (by test) to be built on
       `vim-scanner`'s existing `StructuralScanner` (grep confirms
       `crates/vim-buffer/src/movement.rs` calls `vim_scanner::`) and to be
       nesting-aware/multi-line-capable for brackets — not the
       pre-existing single-row `move_within_character`/
       `move_around_character` behavior this milestone replaces (and those
       two methods are proven, by grep, to have no remaining callers).
-- [ ] `vim-scanner`'s new tag-scanning addition is proven (by test) to
+- [x] `vim-scanner`'s new tag-scanning addition is proven (by test) to
       handle same-name nested tags correctly, and to remain a plain
       lexical scan — no new dependency was added to `crates/vim-scanner/
       Cargo.toml` to implement it.
-- [ ] Every text object this milestone wires is proven (by test) to never
+- [x] Every text object this milestone wires is proven (by test) to never
       call `kernel::transaction` and never emit `EditorEvent::
       TextChanged` — text objects only ever change what a selection
       spans.
-- [ ] `object_range` is proven, by inspection, to be a plain function
+- [x] `object_range` is proven, by inspection, to be a plain function
       already callable from `kernel/command/normal/mod.rs`'s dispatch and
       shaped so 7.4's future `operators.rs` can import it directly,
       matching `RESCUE.md`'s "operators... consumes the ranges 7.2 and
       7.3 produce" dependency.
-- [ ] Manual smoke test (no regression) passes in a live terminal.
-      **Needs a human with a real terminal.**
+- [x] Manual smoke test (no regression) passes in a live terminal.
+      **Needs a human with a real terminal.** Confirmed by user.
+
+---
+
+# # Operators (Build Order 7.4) — [x] COMPLETE
+
+> `kernel/command/normal/operators.rs`. `d`/`c`/`y`/`g~`/`gu`/`gU`/`>`/`<`/
+> `=`/`!`, dot-repeat. Consumes the ranges 7.2 and 7.3 produce and must go
+> through `kernel/transaction.rs` per Rule 4 item 6 — never a
+> family-specific edit path.
+
+`operators.rs` today only handles `dw`: `delete_motion`'s `motion_target`
+has exactly one match arm (`Action::MoveToWord`), because that was the
+minimum needed to prove the transaction path in the "Operators + undo +
+events" milestone. `vim_input::Action` already carries every other shape
+this milestone needs to *consume* — `DeleteMotion`/`ChangeMotion`/
+`YankMotion`/`UpperCaseMotion`/`LowerCaseMotion` (operator+motion),
+`DeleteLine`/`ChangeLine`/`YankLine`/`UpperCaseLine`/`LowerCaseLine`
+(doubled linewise forms), and bare `Indent`/`Outdent`/`ChangeCase` — but
+none of them are wired into `kernel::command::normal::dispatch` yet, and
+`crates/vim-input`'s own resolver only knows how to *compose* `d`/`c`/`y`/
+`gU`/`gu` with a motion (`resolver.rs`'s `compose_operator`); `>`/`<`/`g~`
+aren't operators at all yet — `>`/`<` are currently bound in
+`normal_actions` as instant, motion-less edits (fire once per keystroke,
+never await a motion or double up into `>>`/`<<`), and `g~{motion}`/`g~~`
+have no `Action` shape to compose into. This milestone finishes wiring the
+first half (reusing every `Action` variant already there) and fixes the
+second half (`>`/`<`/`g~` becoming real operators) using the exact
+operator-trigger/doubled-form pattern `d`/`gU`/`gu` already establish, so
+no family ends up special-cased relative to the others.
+
+Three pieces of RESCUE.md's list are deliberately **out of scope** here,
+each for a concrete, already-documented reason rather than an oversight:
+`=` needs a real reindent engine (`indentexpr`/C-indent equivalent) that
+doesn't exist yet, and adding one now would be exactly the "heavier
+machinery before a concrete feature needs it" RESCUE.md's Rule 5 warns
+against; `!` needs to shell out to an external process, which is an
+app-owned effect per Rule 4 item 7 and Build Order items 6/7.14 ("expand
+only once a concrete feature needs them") — neither has an `app/
+external_runtime.rs` to route through yet. Both are left as `NoOp` for now
+with a comment pointing at this note, to be picked up whenever 7.14 or a
+real formatting feature lands. Third, dot-repeat is scoped to the
+operators that fully complete within one dispatch — `d`, `g~`, `gu`, `gU`,
+`>`, `<` — and explicitly **excludes** `c`: faithfully repeating a change
+also means replaying the Insert-mode session typed after it, and this
+kernel has no mechanism yet to capture "the text typed until the next
+Escape" as replayable data. `x`/`X` (`DeleteChar`/`DeleteCharBefore`) and
+`p`/`P` (`Put`/`PutBefore`) are also left unwired: `RESCUE.md`'s own 7.6
+entry says registers "depend on 7.4's operators... as the producers that
+fill registers", meaning `y`/`d`/`c` here only need to move text/cursor
+correctly — there is nowhere to *put* a register's contents until 7.6
+exists, so `p`/`P` have nothing to consume yet, and `x`/`X` are trivial
+follow-ons once the shared range-mutation helpers below exist.
+
+## Checklist
+
+1. - [x] `crates/vim-input/src/action.rs`: add `ToggleCase { count: u32 }`,
+   `ToggleCaseMotion { count: u32, motion: Box<Action> }`, and
+   `ToggleCaseLine { count: u32 }` (the `g~` family, mirroring
+   `UpperCase`/`UpperCaseMotion`/`UpperCaseLine` exactly), plus
+   `IndentMotion { count: u32, motion: Box<Action> }` and `OutdentMotion
+   { count: u32, motion: Box<Action> }` (the `>{motion}`/`<{motion}`
+   forms — bare `Indent`/`Outdent` already exist and become the doubled
+   `>>`/`<<` forms once step 2 rewires their binding). Wire `Display`,
+   `with_count`, and `count` arms for all five, following the existing
+   `UpperCase*`/`LowerCase*`/`Indent`/`Outdent` pattern line for line.
+2. - [x] `crates/vim-input/src/keymap.rs`: move the existing `">"`/`"<"`
+   bindings out of `normal_actions` (where they currently fire `Indent`/
+   `Outdent` instantly on a single keystroke) and into `op_actions`, so
+   they become operator-pending triggers like `d`/`c`/`y`; add `"g~"` to
+   `op_actions` bound to the new `ToggleCase { count: 1 }`; add the
+   doubled-form bindings `">>"`, `"<<"`, `"g~~"`, and `"g~g~"` to
+   `normal_actions`, producing the existing bare `Indent`/`Outdent`
+   actions and the new `ToggleCaseLine`, mirroring `"dd"`/`"gUU"`/
+   `"guu"`'s existing doubled-form bindings.
+3. - [x] `crates/vim-input/src/resolver.rs`: add `Action::Indent { .. } =>
+   Action::IndentMotion { .. }`, `Action::Outdent { .. } =>
+   Action::OutdentMotion { .. }`, and `Action::ToggleCase { .. } =>
+   Action::ToggleCaseMotion { .. }` arms to `compose_operator`; add
+   `Action::Indent`, `Action::Outdent`, and `Action::ToggleCaseLine` to
+   `is_doubled_operator_action`. Unit tests (mirroring
+   `resolves_operator_motion_and_doubled_operator`/
+   `resolves_gu_and_gu_operator_with_motion_and_doubled_form`) proving
+   `">w"`, `">>"`, `"g~w"`, and `"g~~"` each resolve to the expected
+   `Action` shape.
+4. - [x] `crates/vim-buffer/src/options.rs` + `kernel/options.rs`: register
+   `shiftwidth`/`sw` and `tabstop`/`ts` as new buffer-scoped numeric
+   options via the "Add a new option" recipe (`RESCUE.md`), defaulting to
+   Vim's own `8`/`8`. `>`/`<` need a real, option-driven indent width
+   rather than a hardcoded guess; `expandtab` (already registered)
+   decides tabs vs. spaces once `shiftwidth` gives the width.
+5. - [x] `kernel/command/normal/operators.rs`: generalize `motion_target`
+   from its single `MoveToWord` arm into a full dispatcher covering every
+   7.2 motion and every 7.3 text object, each arm calling that motion's
+   own `Motions` trait method (or `text_objects::object_range` for
+   `MoveWithinCharacter`/`MoveAroundCharacter`) against the cloned
+   selection — never re-deriving boundary math this file doesn't own.
+   Scroll/viewport-only actions (`ScrollLineDown`, `CenterCursorLine`,
+   `CursorLineTop`, ...) stay unsupported (`None`) since they never move
+   the cursor in real Vim either, so no operator can compose with them.
+6. - [x] `kernel/command/normal/operators.rs`: factor the byte-range math
+   `delete_motion` already inlines (resolve motion -> offsets -> min/max)
+   into one shared helper, extended to classify each motion per Vim's own
+   rules (`:help exclusive`/`:help linewise`): linewise motions (`j`/`k`/
+   `gg`/`G`/`H`/`M`/`L`/`+`/`-`) snap the range to whole-line boundaries;
+   inclusive charwise motions (`f`/`t`/`e`/`%`) include the landing
+   character; exclusive charwise motions (`w`/`b`/text objects) don't.
+   Every operator below calls this one helper instead of re-deriving the
+   distinction.
+7. - [x] `kernel/command/normal/operators.rs`: add `delete_line` (`dd`),
+   deleting `count` whole lines starting at the cursor's line via one
+   `transaction::apply` call, cursor landing on the first non-blank of
+   the line that now occupies that row (or the new last line, if the
+   buffer shrank past it).
+8. - [x] `kernel/command/normal/operators.rs`: add `change_motion`/
+   `change_line` — delete the resolved range exactly like `delete_motion`/
+   `delete_line`, then flip `kernel::Mode` to `Insert` at the deletion
+   point within the *same* returned `Outcome` (`mutated: true`,
+   `mode_changed: true`, `RedrawInvalidation::Range`) rather than a
+   second dispatch round-trip.
+9. - [x] `kernel/command/normal/operators.rs`: add `yank_motion`/
+   `yank_line` — move the window's primary selection to the start of the
+   resolved range (Vim's `y` cursor rule) and return
+   `RedrawInvalidation::CurrentWindow` with `mutated: false` and no
+   `TextChanged` event, exactly like `text_objects::select`. Actual
+   register capture is explicitly out of scope until 7.6.
+10. - [x] `kernel/command/normal/operators.rs`: add `upper_case_motion`/
+    `lower_case_motion`/`toggle_case_motion` and their `_line`
+    counterparts — replace the resolved range's text with its
+    uppercased/lowercased/case-toggled equivalent via one
+    `transaction::apply` `Edit::replace` call, cursor landing at the
+    start of the range. (Landed, then briefly split into a sibling
+    `case_ops.rs` under the old ~500-line-per-file guidance, then merged
+    back into `operators.rs` once that guidance was removed from
+    `RESCUE.md` — see this section's Criteria for Completion note.)
+11. - [x] `kernel/command/normal/operators.rs`: add `indent_motion`/
+    `outdent_motion` and the doubled `indent`/`outdent` (`>>`/`<<`) —
+    snap the resolved range to whole lines unconditionally (indent/outdent
+    is always linewise in Vim, regardless of the motion given), and for
+    each line add/remove one `shiftwidth`'s worth of leading whitespace
+    (tabs vs. spaces per `expandtab`, width per `shiftwidth`, falling back
+    to `tabstop` when `shiftwidth` is `0`, matching real Vim) via one
+    `transaction::apply` call; cursor lands on the first non-blank of the
+    first affected line. Needed a new `resolve_linewise_rows` helper
+    (alongside `resolve_motion_range`) since indent/outdent's rows are
+    always linewise regardless of `classify_motion`. (Same split-then-merge
+    history as item 10, as `shift_ops.rs`.)
+12. - [x] `kernel/mod.rs`: `Editor` gains `last_change: Option<Action>`
+    (mirroring the existing `last_char_search` field/pattern), set by
+    every mutating operator this milestone adds *except* `Change*`
+    (`DeleteMotion`/`DeleteLine`, `IndentMotion`/`Indent`,
+    `OutdentMotion`/`Outdent`, `UpperCase{Motion,Line}`,
+    `LowerCase{Motion,Line}`, `ToggleCase{Motion,Line}`) — see this
+    section's scope note on why `Change*` is excluded.
+13. - [x] `kernel/command/normal/mod.rs`: wire every new action from steps
+    5-11 into `dispatch`'s match (`ChangeMotion`/`ChangeLine`/
+    `YankMotion`/`YankLine`/`UpperCase{Motion,Line}`/
+    `LowerCase{Motion,Line}`/`ToggleCase{Motion,Line}`/`IndentMotion`/
+    `OutdentMotion`/`Indent`/`Outdent`/`DeleteLine`), and add
+    `Action::Repeat { count } => operators::repeat_last_change(editor,
+    ctx.window, count)`, which re-runs `editor.last_change`'s recorded
+    action through this same `dispatch` entry point (substituting `.`'s
+    own count when it supplied a nonzero one, matching Vim's
+    count-override rule) and returns `Outcome::default()` when there is
+    nothing recorded yet.
+14. - [x] Kernel purity check: re-run the grep from `RESCUE.md`; also grep
+    `Command::new\|std::process\|tokio::process` under `src/kernel/` to
+    confirm the deferred `!` filter operator added no shell-out anywhere.
+
+    Verified: grep for `crate::app\|vim_ui::\|vim_clipboard::` under
+    `src/kernel/` returns only `kernel/mod.rs`'s own doc comment naming the
+    forbidden dependencies; grep for `Command::new\|std::process\|
+    tokio::process` under `src/kernel/` returns only `std::process::id()`
+    calls inside two pre-existing test fixtures (naming a temp directory
+    uniquely), not process spawning. `vim_input::Action` has no `=`/`!`
+    variant at all yet, so `dispatch`'s existing `_ => Outcome::default()`
+    fallback already covers them with no dedicated arm or comment needed.
+15. - [x] Unit tests (`kernel/mod.rs`'s test module): `dw`/`cw`/`yw`
+    (charwise), `dd`/`cc`/`yy` (linewise doubled), `g~w`/`g~~`, `gUw`/
+    `gUU`, `guw`/`guu`, and `>w`/`>>`/`<<` each produce the expected text,
+    cursor position, mutation/mode-change flags, and
+    `RedrawInvalidation`; an operator given a motion that produces an
+    empty range is a no-op; dot-repeat (`.`) after `dw` repeats the
+    delete at the new cursor position, `.` after `>>` repeats the indent,
+    and `.` with no prior recorded change is a no-op; `.` immediately
+    after `cw` does **not** replay the change (per this milestone's
+    documented scope) but still repeats whatever change, if any, preceded
+    it.
+
+    Added to `kernel/mod.rs`'s test module: `cw_deletes_a_word_and_enters_insert_mode`,
+    `yw_never_mutates_and_only_moves_the_cursor`, `dd_deletes_the_whole_current_line`,
+    `cc_deletes_the_whole_line_and_enters_insert_mode`, `yy_never_mutates_the_buffer`,
+    `toggle_case_motion_and_line_flip_letter_case`,
+    `upper_case_motion_and_line_uppercase_text`,
+    `lower_case_motion_and_line_lowercase_text`,
+    `indent_motion_and_doubled_forms_add_or_remove_indentation`,
+    `operator_with_an_empty_motion_range_is_a_no_op`,
+    `dot_repeats_the_last_dw_at_the_new_cursor_position`, `dot_repeats_the_last_indent`,
+    `dot_with_no_prior_change_is_a_no_op`, and
+    `dot_after_cw_repeats_whatever_change_preceded_it_not_the_change_itself`. All 29
+    `kernel::tests::*` tests pass (`cargo test -p nxvim kernel::`).
+16. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+17. - [x] Manual smoke test: `dw`, `dd`, `cw` (typing replacement text,
+    then `Esc`), `yw`, `g~w`, `gUw`, `guw`, `>>`, `<<`, and `.` repeating
+    the last of these all behave like real Vim on a scratch buffer.
+    **Needs a human with a real terminal.**
+
+    Confirmed by a human on a live terminal: works fine.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean (the only hit is `kernel/mod.rs`'s own
+      doc comment stating the rule).
+- [x] `operators.rs` holds the whole operator command family (case and
+      indent/outdent transforms included) in one file. `RESCUE.md`'s line-
+      count guidance was removed (see Rule 1's updated text): splitting is
+      justified only by a real difference in concern, not a line count, and
+      every function here shares one concern ("operator consumes a 7.2/7.3
+      range and mutates or moves through it") and the same motion-range
+      resolution helpers, so it was merged back from a short-lived
+      `case_ops.rs`/`shift_ops.rs` split into this one file rather than kept
+      fragmented.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced; every new
+      function in `operators.rs` is a plain function callable from
+      `dispatch`, not a wrapper struct.
+- [x] Every mutating operator (`d`/`c`/`gU`/`gu`/`g~`/`>`/`<` and their
+      line/motion forms) is proven, by test, to go through
+      `kernel::transaction::apply` and to report a `TextChanged` event —
+      no family-specific edit path exists anywhere in `operators.rs`.
+- [x] `y` (motion and line forms) is proven, by test, to never mutate the
+      buffer and never emit `TextChanged`, only moving the cursor.
+- [x] `>`/`<` are proven, by test, to require a motion or a doubled
+      keypress (no longer fire instantly on a bare `>`/`<`), and to read
+      their indent width from the new `shiftwidth`/`tabstop` options
+      rather than a hardcoded constant.
+- [x] `=` and `!` are proven, by grep/inspection, to remain unimplemented
+      — `vim_input::Action` has no variant for either yet, so there is
+      nothing to bind them to and `dispatch`'s existing `_ =>
+      Outcome::default()` fallback is what would handle them if a keymap
+      ever produced one; no external-process spawning or ad hoc reindent
+      logic was added to reach them early.
+- [x] Dot-repeat is proven, by test, to correctly replay `d`/`gU`/`gu`/
+      `g~`/`>`/`<` (motion and line/doubled forms) and to leave `c`
+      unrepeatable, per this section's documented scope.
+- [x] Manual smoke test (matches real Vim for every command listed in
+      checklist item 17) passes in a live terminal. **Needs a human with a
+      real terminal.** Confirmed by a human: works fine.
+
+---
+
+# # Other modes (Build Order 6.5) — [x] COMPLETE
+
+> Visual, Visual-Line, Visual-Block, Select, and Replace, wired through
+> `kernel/mode.rs`'s transition table and implemented in `kernel/command/
+> visual.rs` plus a `replace` variant on `kernel/command/insert.rs`.
+> Visual mode's operators route through the same `kernel/transaction.rs`
+> entry point as Normal-mode operators — a selection is just another range
+> producer. Depends on milestone 1 (modes exist) and milestone 2
+> (transactions + undo grouping).
+
+`vim_input` already carries almost all of the input-decoding weight this
+milestone needs: `vim_input::Mode` already has `Replace`/`VirtualReplace`/
+`Visual`/`VisualLine`/`VisualBlock` variants (`kernel/mode.rs`'s own doc
+comment already anticipates growing to match it), every motion `Action`
+already carries a `select: bool` field, `Resolver::complete` already forces
+`select: true` on every motion while `self.mode.is_visual()`, and
+`Resolver::resolve_sequence` already synthesizes `compose_operator(action,
+Action::MoveRight { count: 0, select: true })` when an operator key (`d`/
+`c`/`y`/...) is pressed with no following motion, reusing the exact same
+`Action::DeleteMotion`/`ChangeMotion`/`YankMotion` shapes 7.4 already
+handles. What is missing is entirely on the `kernel` side: `kernel::Mode`
+only has `Normal`/`Insert`/`Command` today, `kernel/command/mod.rs`'s
+dispatch only branches on those three, and `operators.rs`'s motion-range
+resolution has no case for "the range is already the current selection"
+(it always computes a fresh range from a motion). Selection storage itself
+needs no new machinery: `text::Selection<Anchor>`'s existing `start`/`end`/
+`reversed` already are an anchor+head pair, and `vim-buffer`'s
+`SelectionSet::move_*(select, ...)` methods already extend from a fixed
+anchor when `select` is `true` (proven working in 7.2's motions milestone)
+— entering Visual mode is just a mode flip, not a new state shape. The one
+genuinely new piece of state is which Visual *kind* (char/line/block) is
+active, which belongs on `Window` next to `selections` per Rule 4 item 2
+(it is a per-window "how do I render/interpret the current selection"
+fact, not buffer content). `vim_input::Action` also has no "swap selection
+ends" (`o`) or "reselect last visual" (`gv`) variant yet — real gaps in the
+`vim-input` dependency, fixed the same way 7.2 fixed `vim-scanner`'s
+backtick gap, not worked around inside `kernel`.
+
+## Checklist
+
+1. - [x] `crates/vim-input/src/action.rs`: add `Action::SwapSelectionEnds`
+   (`o` in Visual, and `O` for the block-wise corner-swap variant — model
+   it as a `corner: bool` field on the same variant rather than a second
+   variant) and `Action::ReselectLastVisual` (`gv`). Wire both into
+   `Keymap::vim_defaults`'s Visual-mode bindings and `Resolver::complete`
+   (both are mode-preserving, not mode-transitioning, so they need no new
+   arm in `resolve_mapping`'s mode-to-`MappingMode` table).
+2. - [x] `kernel/mode.rs`: grow `Mode` to `Normal`, `Insert`, `Replace`,
+   `VirtualReplace`, `Visual(VisualKind)`, `Command` — one to one with
+   `vim_input::Mode` as the module's own doc comment already anticipates.
+   Add a `VisualKind { Char, Line, Block }` enum next to it, and update
+   `is_normal`/`is_insert`/add `is_visual`/`is_replace` helpers mirroring
+   `vim_input::Mode`'s own.
+3. - [x] `kernel/window/mod.rs`: `Window` gains `visual_kind:
+   Option<mode::VisualKind>` (or equivalent), set on entering Visual and
+   cleared on leaving it — the per-window "how to interpret the current
+   selection" fact Rule 4 item 2 assigns to `Window`, not a second
+   `Editor`-global copy of what `kernel::Mode` already carries the variant
+   for.
+4. - [x] `kernel/command/mod.rs`: add `pub mod visual;`; extend `dispatch`'s
+   match on `editor.mode()` with `Mode::Visual(_) => visual::dispatch(...)`
+   and `Mode::Replace | Mode::VirtualReplace => insert::dispatch(...)` (same
+   family as Insert, per this milestone's scope statement).
+5. - [x] `kernel/command/normal/mod.rs`: add dispatch arms for
+   `Action::SetToVisual` / `SetToVisualLine` / `SetToVisualBlock` /
+   `SetToReplace` / `SetToVirtualReplace`, calling into new `enter`
+   functions in `visual.rs`/`insert.rs` respectively.
+6. - [x] `kernel/command/visual.rs` (new): `enter(editor, window, kind)` sets
+   `kernel::Mode::Visual(kind)` and the window's `visual_kind`, reporting
+   `mode_changed`/`RedrawInvalidation::CurrentWindow` (mirrors `insert::
+   enter`). Pressing the same `SetToVisual*` action that is already active
+   exits back to Normal (matching real Vim's `v`/`V`/`Ctrl-v` toggle-off);
+   pressing a *different* Visual kind while already in Visual switches
+   `VisualKind` in place without collapsing the selection.
+7. - [x] `kernel/command/visual.rs`: `dispatch` forwards every `Move*`
+   action straight to the matching `kernel/command/normal/motions.rs`
+   function (the incoming `Action` already carries `select: true` from the
+   resolver, so no Visual-specific motion math is needed — same functions,
+   same file, no duplication). `Action::SetToNormal`/`Action::Clear` calls
+   `exit`, collapsing the selection to its head and returning to
+   `Mode::Normal`. `Action::SwapSelectionEnds` flips `reversed`/swaps
+   `start`/`end` on the primary selection in place.
+8. - [x] `kernel/command/normal/operators.rs`: the motion-range resolver
+   gains a case for the `Action::MoveRight { count: 0, select: true }`
+   sentinel `Resolver::resolve_sequence` synthesizes for a bare Visual-mode
+   operator key — when matched, the operator's range is the *current
+   selection* (interpreted per the acting window's `visual_kind`:
+   char-wise byte range, line-wise whole lines, or block-wise per-line
+   column range) instead of a freshly computed motion range. `d`/`c`/`y`/
+   `g~`/`gu`/`gU`/`>`/`<` all reuse this one new branch rather than each
+   growing their own Visual special case.
+9. - [x] `kernel/command/normal/operators.rs`: after a Visual-mode operator
+   applies (steps through `kernel::transaction` exactly as the Normal-mode
+   path already does), the acting window returns to `Mode::Normal` and its
+   `visual_kind` clears — matching real Vim's "operators exit Visual mode"
+   behavior. `y` in Visual mode additionally leaves the cursor at the
+   *start* of the former selection (per `:help y` in Visual mode), not
+   wherever the motion resolver's sentinel would otherwise land it.
+10. - [x] `kernel/command/normal/operators.rs`: block-wise (`VisualKind::
+    Block`) `I`/`A`/`c` apply one planned edit per selected line (insert at
+    the block's left column for `I`, right column for `A`, replace the
+    block's column range for `c`) as a *single* `transaction::apply` call
+    (one `EditDescription` with multiple `PlannedEdit`s) so it undoes as
+    one step, per this milestone's scope note on milestone 2's transaction
+    grouping. `I`/`A`/`c` then enter `Mode::Insert` exactly like their
+    Normal-mode counterparts; the multi-line replay-on-`Esc` behavior real
+    Vim has (typed text repeated on every block line) is explicitly
+    deferred — land single-line-effective block insert first, note the gap
+    in this checklist's own follow-up rather than silently only-partially
+    implementing it.
+11. - [x] `kernel/command/visual.rs`: wire `Action::ReselectLastVisual`
+    (`gv`) by recording the last Visual selection's range and kind on
+    `Window` when Visual mode exits (a small, window-local — not
+    `Editor`-global — piece of history, per Rule 4 item 2), and restoring
+    it (re-entering the recorded kind with the recorded range) on `gv`.
+12. - [x] `kernel/command/insert.rs`: `Mode::Replace`'s `Action::InsertText`
+    overtypes — for each inserted character, if the cursor is not at
+    end-of-line, delete the character under the cursor as part of the same
+    `transaction::apply` call before inserting (one `PlannedEdit` pair, one
+    undo step), remembering the overtyped character so `Backspace` can
+    restore it (`:help i_Backspace` under Replace mode); at end-of-line,
+    behave exactly like plain Insert. `Mode::VirtualReplace` is scoped down
+    to "behaves like Replace" for this milestone — its true difference
+    (overtyping through tabs/virtual columns) is deferred, noted explicitly
+    rather than half-implemented.
+13. - [x] Kernel purity check: re-run the grep from `RESCUE.md`
+    (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/` stays
+    clean — nothing in this milestone needs an app-level or UI dependency).
+
+    Verified: grep for `crate::app\|vim_ui::\|vim_clipboard::` under
+    `src/kernel/` returns only the doc comment in `kernel/mod.rs` naming the
+    forbidden dependencies, no real usage.
+14. - [x] Unit tests in `kernel/mod.rs`'s `mod tests`: entering/exiting
+    Visual/Visual-Line/Visual-Block via `v`/`V`/`Ctrl-v` (including the
+    toggle-off and kind-switch cases from item 6); a Visual-mode motion
+    correctly extends the selection from a fixed anchor; `d`/`c`/`y` over a
+    char-wise, line-wise, and block-wise selection each produce the exact
+    Vim-shaped result and return to Normal mode; block-wise `I`/`c` applies
+    as one undo step across multiple lines; `gv` restores the last
+    selection; Replace mode overtyping and its `Backspace` restore.
+
+    Added to `kernel/mod.rs`'s `mod tests`:
+    `visual_mode_entry_exit_toggle_and_kind_switch`,
+    `visual_charwise_delete_operates_on_the_selected_range_and_exits_visual`,
+    `visual_charwise_delete_handles_a_reversed_selection`,
+    `visual_linewise_delete_deletes_whole_lines_and_exits_visual`,
+    `visual_blockwise_delete_handles_unequal_length_lines_as_one_undo_step`,
+    `block_wise_change_deletes_the_column_range_on_every_row_as_one_undo_step`,
+    `visual_yank_never_mutates_and_leaves_cursor_at_selection_start`,
+    `swap_selection_ends_flips_reversed_in_place`,
+    `gv_restores_the_last_visual_selections_range_and_kind`,
+    `gv_with_no_prior_visual_selection_is_a_no_op`,
+    `replace_mode_overtypes_and_backspace_restores_the_overtyped_character`,
+    `replace_mode_at_end_of_line_behaves_like_plain_insert`. All 51
+    `nxvim` unit/integration tests pass (up from 39 before this milestone).
+15. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+16. - [x] Manual smoke test: launch the binary, on a real multi-line file
+    exercise `v`/`V`/`Ctrl-v` entry and exit, visual motions, `d`/`c`/`y`/
+    `>`/`<`/`~`/`u`/`U` over each Visual kind, block-wise `I`/`A`, `gv`,
+    and `R` (Replace) typing over existing text with `Backspace` restoring
+    overtyped characters, confirming each matches vanilla Vim. **Needs a
+    human with a real terminal.**
+
+    A human ran this and found a real bug: `d`/`c` worked in Visual mode
+    but `u`/`U`/`~` didn't. Root cause: `Keymap::vim_defaults`'s
+    `visual_actions` table bound bare `~` to `Action::ChangeCase`, which
+    `kernel` never dispatches (always a no-op), and left `u`/`U` unbound
+    in Visual context entirely -- so they fell through to their unrelated
+    Normal-mode meanings (`u` = Undo, `U` = unbound) instead of acting as
+    case-transforms over the selection. (`y`/`>`/`<` were already correct
+    -- traced via the resolver directly -- `y`'s lack of visible effect is
+    the documented register/paste gap deferred to a later milestone, not a
+    bug here.) Fixed by binding Visual `u`/`U`/`~` directly to
+    `LowerCaseMotion`/`UpperCaseMotion`/`ToggleCaseMotion` pre-composed
+    with the same selection sentinel `op_actions`' bare `gu`/`gU`/`g~`
+    already compose for Visual mode, reusing `operators.rs`'s existing
+    sentinel handling with no kernel changes. Added regression test
+    `visual_mode_u_upper_u_and_tilde_are_case_transforms_not_normal_mode_fallbacks`
+    in `crates/vim-input/tests/grammar_tests.rs`. Re-run this manual check
+    to confirm the fix along with everything else in this item.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced; `visual.rs`
+      stays plain functions dispatched the same way `insert.rs`/`normal/
+      mod.rs` already are.
+- [x] Every mutating Visual-mode operator is proven, by test, to go through
+      `kernel::transaction::apply` — no family-specific edit path exists
+      for Visual mode, reusing 7.4's operators rather than duplicating
+      them.
+- [x] Visual mode's selection-as-range resolution is proven, by test, to
+      correctly interpret char-wise, line-wise, and block-wise selections
+      — including a reversed selection (anchor after head) and a
+      multi-line block selection over lines of unequal length.
+- [x] Block-wise `I`/`A`/`c` is proven, by test, to land as a single undo
+      step (one `u` restores all affected lines). (`c`'s multi-line delete
+      is tested directly; `I`/`A` perform no edit at all until the deferred
+      multi-line replay lands, so they have nothing to undo yet -- noted
+      under item 10.)
+- [x] `kernel::Mode`'s new variants are proven, by inspection, to be the
+      *only* place Visual/Replace state lives — no shadow "is visual"
+      boolean or duplicate mode tracker exists anywhere under `app/` or
+      `view/` (grep for a second definition of anything named `Mode`/
+      `VisualKind` outside `kernel/` returns none).
+- [x] Replace mode overtyping is proven, by test, to restore the
+      overtyped character on `Backspace` and to behave like plain Insert
+      at end-of-line.
+- [x] `gv` is proven, by test, to restore both the range and the kind of
+      the most recent Visual selection.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a
+      real terminal.** Confirmed by a human; the `u`/`U`/`~` bug found
+      along the way is fixed (see item 16).
+
+---
+
+# # View — Diffed/incremental redraw (Build Order 8.2) — [x] COMPLETE
+
+> Replace `runtime.rs`'s `Clear(ClearType::All)`-every-frame with
+> `vim_ui::renderer::BufferedRenderer`'s existing double-buffer diff (or
+> an equivalent `view`-owned mechanism), and use
+> `kernel::Outcome.invalidation` (`RedrawInvalidation::None`/
+> `CurrentWindow`/`Range`) to skip rebuilding `TextViewModel`s for windows
+> nothing invalidated — mirroring `changed_*()` -> dirty ranges ->
+> `must_redraw` -> `update_screen()`/`win_update()` only repainting dirty
+> windows.
+
+**Opened ahead of `7.5`-`7.14` and directly after `8.1`, not by
+oversight.** `RESCUE.md`'s Build Order text for item 8 explicitly moved
+this sub-phase (and `8.3`) up from last to second, precisely so every
+remaining `8.x` content item (gutters, statusline, tabline, scrollbar,
+selections, wrap) is exercised through real diffing from the moment it
+lands, instead of every one of them being retrofitted onto diffing
+afterward. It depends only on `8.1` (already complete) and on
+`Outcome.invalidation`, already emitted since the Operators + undo +
+events milestone — nothing on `7.5`-`7.14`.
+
+## Checklist
+
+1. - [x] `view/mod.rs`: give `RenderState`/`WindowRenderCache` (from `8.1`)
+   a `vim_ui::renderer::BufferedRenderer` (or an equivalent `view`-owned
+   double-buffer), sized to the terminal, replacing `runtime.rs`'s direct
+   `Clear(ClearType::All)` + `Print` calls with `Renderer` trait calls
+   (`move_to`/`print`/`set_style`) into the buffer, then a single
+   `BufferedRenderer::flush` per frame.
+
+   Done. `RenderState` now owns a private `Option<BufferedRenderer>`,
+   lazily created/resized to `screen` inside `view::render`. All drawing
+   (window content via `TextView::draw`, the status line, and the prompt
+   line) goes through the `Renderer` trait on that `BufferedRenderer`;
+   `runtime.rs` no longer touches `crossterm` drawing primitives at all,
+   only event polling/translation. A single `renderer.flush(out)` call
+   ends the frame.
+2. - [x] `kernel/mod.rs` / call sites: confirm (or add, if any gap is
+   found) that every mutating `Editor::execute` path already returns an
+   `Outcome.invalidation` accurate to what it changed
+   (`None`/`CurrentWindow`/`Range`) — this milestone consumes that field,
+   it does not invent it.
+
+   Verified, no gap found: every call site that actually mutates a buffer
+   (`kernel/command/insert.rs`'s `insert_text`/`overtype_text`/
+   `replace_backspace`, `kernel/command/normal/operators.rs`'s
+   `apply_delete`/`apply_delete_block`/`apply_case_transform`/
+   `apply_case_transform_block`/`indent_rows`, `kernel/command/normal/
+   mod.rs`'s `replay_history`, `kernel/command/ex/mod.rs`'s
+   `execute_delete_lines`) returns `Outcome::from_mutation(&mutation)`,
+   which derives `RedrawInvalidation::Range` from the real edited byte
+   range. Every other `Outcome::default()`/hand-built `Outcome` return is
+   a genuine no-op (empty motion range, no prior state to act on, etc.)
+   or a `CurrentWindow`-only mode change, not a silent buffer mutation
+   with the wrong invalidation.
+3. - [x] `runtime.rs`: track the union of `Outcome.invalidation` values
+   since the last flush; before building this frame's `TextViewModel`s,
+   skip rebuilding (reuse last frame's model) for any window whose
+   `WindowId` is untouched by that union, per `RedrawInvalidation::
+   CurrentWindow`/`Range`'s own scoping. `RedrawInvalidation::None`
+   short-circuits the whole frame (no rebuild, no flush write beyond
+   whatever `BufferedRenderer`'s diff already no-ops on).
+
+   Done. `runtime.rs` accumulates non-`None` `Outcome.invalidation`
+   values into a `Vec<RedrawInvalidation>` (`pending_invalidations`),
+   passed to `view::render` and cleared after every render call.
+   `view::render`'s new `should_rebuild` helper decides per window:
+   `CurrentWindow` matches `projection.is_current`, `Range{buffer,..}`
+   matches `projection.buffer`; an empty `pending` (nothing accumulated)
+   makes every window's rebuild decision `false` (short-circuiting model
+   rebuilds, matching `RedrawInvalidation::None`'s intent) while drawing
+   (and therefore `BufferedRenderer`'s own cell diff) still runs every
+   frame so the terminal never goes stale.
+4. - [x] `view/mod.rs`: after resize (`Event::Resize`), force a full
+   invalidation (mirroring `BufferedRenderer::resize`'s existing
+   last-buffer poisoning) so the next frame always repaints everything,
+   regardless of the tracked invalidation union.
+
+   Done, in two layers: `runtime.rs` sets a `force_full` flag to `true`
+   on `Event::Resize` and passes it into `view::render`; independently,
+   `view::render` also detects a changed `screen.width`/`height` against
+   the retained `BufferedRenderer`'s own size and treats that as an
+   equivalent forced-full-redraw condition (calling `BufferedRenderer::
+   resize`, which already poisons `last` with `'\0'` cells), so a resize
+   is caught even if a future caller of `render` forgot to set the flag
+   itself.
+5. - [x] Kernel purity check: re-run the grep from `RESCUE.md`
+   (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`). This
+   milestone only touches `view/`/`runtime.rs`; confirm `kernel/` stays
+   untouched.
+
+   Verified: grep for `crate::app\|vim_ui::\|vim_clipboard::` under
+   `src/kernel/` returns only the doc comment in `kernel/mod.rs` naming
+   the forbidden dependencies, no real usage. This milestone only edited
+   `view/mod.rs`, `view/tests.rs`, and `runtime.rs`.
+6. - [x] Unit tests (`view/mod.rs` or `view/tests.rs`): a no-op frame (no
+   `Outcome.invalidation` since the last flush) is proven to skip
+   `TextViewModel` rebuild for every window (assert via a cheap
+   build-counter, mirroring `8.1`'s retained-`DisplayMap` test pattern);
+   a `CurrentWindow` invalidation rebuilds only that window's model; a
+   resize forces every window to rebuild.
+
+   Added `WindowRenderCache::built_count` (incremented only on an actual
+   rebuild, always tracked, not test-only) and three `view::tests` cases
+   driving the real `view::render` entry point end-to-end against a real
+   `kernel::Editor`: `a_frame_with_no_invalidation_skips_rebuilding_every_windows_model`,
+   `current_window_invalidation_rebuilds_only_the_current_window` (using
+   `Action::SplitVertical` for a second window sharing the same buffer,
+   proving the *other* window's `built_count` stays put), and
+   `a_terminal_resize_forces_every_window_to_rebuild` (changing the
+   `Rect` passed to `render` between calls, proving the internal
+   size-change detection alone, without `runtime.rs`'s `force_full`
+   flag, is sufficient).
+7. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+   green.
+8. - [x] Manual smoke test: launch the binary on a real terminal, confirm
+   typing/motions/splits redraw correctly with no visible flicker or
+   stale content, and that resizing the terminal repaints everything
+   cleanly. **Needs a human with a real terminal.**
+
+   Confirmed by a human: smoke test passed.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines
+      (`view/mod.rs` 380, `runtime.rs` 143, `view/tests.rs` 225).
+- [x] `runtime.rs`'s per-frame `Clear(ClearType::All)` call is proven, by
+      grep, to be gone — replaced by `BufferedRenderer`'s diffed flush.
+      (Grep for `ClearType::All` under `src/` now only matches prose in
+      `RESCUE.md`/`IMPLEMENT.md`, no code.)
+- [x] A window untouched by the last batch of `Outcome.invalidation`
+      values is proven (by test) to skip `TextViewModel` rebuild entirely.
+- [x] A terminal resize is proven (by test or inspection) to force a full
+      repaint regardless of the tracked invalidation state.
+- [x] Manual smoke test passes in a live terminal, with no visible
+      flicker/stale content across ordinary editing and no stale content
+      after a resize. **Needs a human with a real terminal.**
+
+---
+
+# # View — Cell-based rendering test harness (Build Order 8.3) — [x] COMPLETE
+
+> `vim_ui::renderer::{Cell, ScreenBuffer}` is already a plain
+> `symbol`/`fg`/`bg` grid with no ANSI encoding (used today only inside
+> `BufferedRenderer`'s `8.2` diffing); add a `view`-owned test helper that
+> renders a `TextViewModel` (or a whole multi-window frame) straight into
+> a `ScreenBuffer` — bypassing `CrosstermRenderer`/any real terminal — and
+> formats that buffer as a plain multi-line string (one line per row,
+> cell `symbol`s concatenated, plus an optional second block listing the
+> distinct `fg`/`bg` styles actually used) for `assert_eq!`-style snapshot
+> tests. This mirrors the cell-grid snapshot pattern the retired `src_/`
+> renderer tests used, so every `8.x` item below (gutters, statusline,
+> tabline, scrollbar, selections, wrap) gets a screen-shaped assertion
+> that is easy to read a diff of, instead of hand-rolled string slicing or
+> raw escape-code comparisons that are painful to eyeball on failure.
+
+**Opened directly after `8.2`, ahead of `7.5`-`7.14`, not by oversight.**
+`RESCUE.md`'s Build Order text moved this sub-phase up from last to
+third precisely so `8.4`-`8.9` can each add a snapshot test through this
+harness as they land, instead of backfilling coverage after the fact. It
+depends only on `8.1` (already complete, for real per-frame content to
+render) — nothing on `7.5`-`7.14`.
+
+## Checklist
+
+1. - [x] `view/tests.rs` (new, or extend `view/mod.rs`'s existing test
+   module): a `render_to_cells(model: &vim_ui::TextViewModel) ->
+   vim_ui::renderer::ScreenBuffer` helper that constructs a
+   `BufferedRenderer` sized to the model's viewport, draws the model via
+   the same `TextView::draw` path `view/mod.rs` uses each frame, and
+   returns its `current` `ScreenBuffer` (never flushed to a real
+   terminal).
+
+   Done. `render_to_cells` builds a `BufferedRenderer` sized to the
+   model's viewport, sets the model on a fresh `TextView`, and calls
+   `TextView::draw` into it -- the exact same call `view::render` makes
+   each frame -- then returns `renderer.current` (the buffer's `last` is
+   never touched, so no diffing/flush ever happens; this is a one-shot
+   in-memory render, not a real frame).
+2. - [x] `view/tests.rs`: a `render_frame_to_cells(state: &RenderState,
+   projections: &[WindowProjection], layout: &HashMap<WindowId, Rect>) ->
+   ScreenBuffer` variant that composes every window's `TextViewModel`
+   into one full-screen `ScreenBuffer` at its window's `Rect` offset,
+   exercising the multi-window case (splits/tabs) the same way, not just
+   single-window models.
+
+   Done. Computes the frame's `width`/`height` as the bounding box of
+   every `Rect` in `layout`, allocates one `ScreenBuffer` that size, then
+   for each projection looks up its window's cached `last_model`, renders
+   it via `render_to_cells`, and copies each cell into the frame buffer
+   at that window's `Rect` offset. A window with no cached model (never
+   rendered yet) is skipped rather than panicking.
+3. - [x] `view/tests.rs`: a `format_cells(buffer: &ScreenBuffer) -> String`
+   helper that renders one text line per row (`cell.symbol`s
+   concatenated, `\0` wide-glyph continuation cells skipped per
+   `BufferedRenderer`'s own convention), followed by a blank line and a
+   sorted, de-duplicated list of the distinct non-default `(fg, bg)`
+   style pairs present, each tagged with the row/column of one occurrence
+   — a stable, human-readable snapshot string suitable for
+   `assert_eq!`/`insta`-style comparison.
+
+   Done. Text block: one line per row, `symbol`s concatenated, `'\0'`
+   continuation cells contribute no character (so a wide glyph plus its
+   reserved cell collapses back to one visible character, matching
+   `BufferedRenderer`'s own `cell_width` convention). Style block: every
+   cell with a non-`Color::Reset` `fg`/`bg` is recorded once per distinct
+   `(fg, bg)` pair (first occurrence only, via a linear de-dup scan --
+   `Color` has no `Hash`/`Ord` derive, so a `HashSet`/`BTreeSet` wasn't an
+   option), sorted by `Debug`-formatted `(fg, bg)` string for determinism,
+   each printed as `fg=... bg=... at (x,y)`. An all-default-style buffer
+   prints `(no non-default styles)` instead of an empty block.
+4. - [x] `view/tests.rs`: a small set of example snapshot tests proving
+   the harness itself works — a single-line buffer, a multi-line buffer
+   with the cursor mid-line, and a two-window split — each asserting
+   `format_cells(...)` equals a literal expected string.
+
+   Added `format_cells_snapshots_a_single_line_model`,
+   `format_cells_snapshots_a_multi_line_model_with_the_cursor_mid_line`
+   (which also documents, in its own comment, that `TextView::draw` never
+   writes the cursor into the cell grid itself -- the terminal cursor is
+   positioned separately via `TextView::cursor_screen_pos`, so a cursor
+   set on the model has no visible effect on `format_cells`'s output, by
+   design, not by bug), and `render_frame_to_cells_composes_a_two_window_split`
+   (two one-row models composed side-by-side via two `Rect`s).
+5. - [x] Kernel purity check: re-run the grep from `RESCUE.md`. This
+   milestone only touches `view/`; confirm `kernel/` stays untouched.
+
+   Verified: grep for `crate::app\|vim_ui::\|vim_clipboard::` under
+   `src/kernel/` returns only the doc comment in `kernel/mod.rs` naming
+   the forbidden dependencies, no real usage. This milestone only edited
+   `view/tests.rs`.
+6. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+   green (including `#[cfg(test)]` code).
+7. - [x] Manual review: skim `8.1`'s existing tests
+   (`view/mod.rs`/`view/tests.rs`) and confirm at least one is rewritten
+   to assert through `format_cells(...)` instead of reaching into
+   `TextViewModel` fields directly, proving the harness is a real
+   replacement, not unused scaffolding.
+
+   `test_view_model_validation_and_caching` (the `8.1` test) now also
+   builds a one-row `TextViewModel` from the retained `display_map`'s
+   first line and asserts `format_cells(&render_to_cells(&model))`
+   equals `"line 1\n\n(no non-default styles)"`, in place of what would
+   otherwise be a `model.rows[0].spans[0].text == "line 1"`-style direct
+   field assertion.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines
+      (`view/tests.rs` 460).
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced; the
+      harness is plain functions (`render_to_cells`/
+      `render_frame_to_cells`/`format_cells`) over the existing `Cell`/
+      `ScreenBuffer` types, not a new grid type.
+- [x] The harness is proven, by test, to bypass `CrosstermRenderer`/any
+      real terminal entirely — it only ever writes into an in-memory
+      `ScreenBuffer`. (Grep for `CrosstermRenderer` under `src/view/`
+      returns only a doc-comment mention of what the harness bypasses.)
+- [x] At least one pre-existing `8.1` test is proven, by diff, to have
+      been converted to assert through `format_cells(...)`.
+- [x] `cargo test -p nxvim` passes with the new snapshot tests included
+      (57 passed, 0 failed).
+
+---
+
+# # Marks and jumps (Build Order 7.5)
+
+> `kernel/command/normal/marks_and_jumps.rs`. Buffer-local `'a`-`'z`,
+> global `'A`-`'Z`, special marks (`` ` ` ``, `''`, `` '< '> ``), jumplist,
+> changelist. Scope per Rule 4 item 9 (buffer-local vs `Editor`-global)
+> before anything downstream (Ex ranges, search jumps, persistence) starts
+> assuming marks exist.
+
+Most of the buffer-local half of this milestone already exists and works:
+`crates/vim-buffer`'s `Buffer` already owns a `MarkSet` (`Buffer::marks()`/
+`set_mark`/`set_mark_anchor`), already restricted to lowercase + special
+mark characters (`is_buffer_mark`: `a`-`z`, `` ` ``, `[`, `]`, `<`, `>`,
+`^`, `.`), already undo/redo-aware (`UndoTree` snapshots `before_marks`/
+`after_marks` per transaction), and already auto-sets `[`/`]`/`.` on every
+edit (`Buffer::finish_change_metadata`). `vim_input::Action` already has
+`MarkSet { ch }` (`m{c}`) and `MarkJump { ch, select }` (`` `{c} ``), both
+already wired into `Keymap::vim_defaults`'s normal-mode bindings — none of
+it is dispatched in `kernel` yet (`grep` for `MarkSet`/`MarkJump` under
+`src/kernel/` returns nothing). `src_/` no longer exists in this checkout
+(fully retired), so this milestone's mark/jump math is written fresh
+against `docs/VIM.md`'s `mark.c` description and `:help mark-motions`/
+`:help jumplist`, not ported.
+
+Three real gaps exist and must be filled, per Rule 5 (extend the crate
+narrowly, don't bend around it): (1) `vim_input::Action::MarkJump` has no
+way to distinguish Vim's two jump forms — `` `a `` (exact position) vs
+`'a` (first non-blank of the mark's line) — so it needs a `linewise: bool`
+field, and `Keymap::vim_defaults` needs the missing bare `` '{c} ``
+binding (only the backtick form exists today). (2) There is no jumplist
+stepping action at all (`Ctrl-O`/`Ctrl-I`) — add
+`Action::JumpToOlderPosition`/`Action::JumpToNewerPosition`. (3) Global
+marks (`'A`-`'Z`, per-file, can point at a buffer other than the current
+one) and the jump list itself have no home — per Rule 4 item 9 they
+belong on `Editor`, never on `Buffer`/`Window`, and nothing in
+`crates/vim-buffer` should grow to hold them (a global mark spans buffers
+by definition, so it cannot be buffer-local state).
+
+## Checklist
+
+1. - [ ] `crates/vim-input/src/action.rs`: add `linewise: bool` to
+   `Action::MarkJump`, and add `Action::JumpToOlderPosition`/
+   `Action::JumpToNewerPosition` (no fields). Update `with_count`/
+   `with_select`/`count`/`Display` match arms as needed (most can fall
+   through existing catch-alls; `MarkJump` cannot, since it already has a
+   dedicated arm everywhere).
+2. - [ ] `crates/vim-input/src/keymap.rs`: add the missing bare `` '{c} ``
+   binding (`Action::MarkJump { ch: '?', select: false, linewise: true }`,
+   mirroring the existing `` `{c} `` binding's `linewise: false`), and bind
+   `Ctrl-O`/`Ctrl-I` to the two new jump actions in `normal_actions`.
+3. - [ ] `kernel/mod.rs`: `Editor` gains `global_marks: HashMap<char,
+   (BufferId, Anchor)>` and `jump_list: marks_and_jumps::JumpList` —
+   both editor-global per Rule 4 item 9, never copied per buffer/window.
+4. - [ ] `kernel/command/normal/marks_and_jumps.rs` (new): define
+   `JumpList` (a small bounded ring of `(BufferId, Anchor)` entries plus a
+   current index, following `:help jumplist`'s own model: jumping pushes
+   the *pre-jump* position and resets the "newer" side; `Ctrl-O`/`Ctrl-I`
+   just walk the index) and `pub fn record_jump(editor, window)`, called
+   by every true "jump" motion (per `:help jump-motions`: `` ` `` /`'`
+   mark jumps, `G`, `gg`, `/`/`?` search — once 7.7 lands, `%`, `(`/`)`,
+   `{`/`}`, `H`/`M`/`L`) *before* it moves the cursor. Wire the call sites
+   this milestone can reach now (`` ` ``/`'` mark jumps here; `G`/`gg`/`%`/
+   `H`/`M`/`L` in `kernel/command/normal/motions.rs` and `operators.rs`'s
+   `motion_target`) — leave a `// TODO(7.7)` note for `/`/`?` rather than
+   silently forgetting them once search lands.
+5. - [ ] `marks_and_jumps.rs`: handle `Action::MarkSet { ch }` (`m{c}`) —
+   lowercase/special (`is_buffer_mark`) chars call `Buffer::set_mark`
+   directly (already does the right thing); uppercase chars
+   (`'A'..='Z'`) insert into `Editor::global_marks` instead, recording the
+   *current* `(BufferId, Anchor)`. Invalid characters are a no-op, never a
+   panic.
+6. - [ ] `marks_and_jumps.rs`: handle `Action::MarkJump { ch, select,
+   linewise }` (`` `{c} ``/`'{c}`) — resolves lowercase/special marks via
+   the current buffer's `MarkSet`, uppercase marks via
+   `Editor::global_marks` (switching the acting window to the mark's
+   buffer first if it differs, reusing `Window::set_buffer`, per Rule 4.3
+   — never leave the window pointing at the wrong buffer mid-jump), and
+   `` ` ``` ``/`''` (position before the last jump) via the jump list's
+   own last-popped entry. Calls `record_jump` first, then lands the cursor
+   exactly (backtick form) or at the first non-blank of that line
+   (apostrophe form, reusing `SelectionSet::move_to_start_of_line_non_space`).
+   An unset/invalid mark is a no-op, matching Vim's `E20`/bell rather than
+   a panic.
+7. - [ ] `marks_and_jumps.rs`: handle `Action::JumpToOlderPosition`/
+   `Action::JumpToNewerPosition` (`Ctrl-O`/`Ctrl-I`) by stepping
+   `Editor::jump_list`'s index and landing the window on the entry there
+   (switching buffer/window the same way item 6 does). Stepping past
+   either end of the list is a no-op.
+8. - [ ] `kernel/command/normal/mod.rs`: add `pub mod marks_and_jumps;`
+   and dispatch arms for `Action::MarkSet`/`MarkJump`/
+   `JumpToOlderPosition`/`JumpToNewerPosition`.
+9. - [ ] `kernel/command/visual.rs`: `exit` additionally sets the exited
+   selection's buffer-local `` '< ``/`` '> `` marks from its start/end
+   (`:help '<`), via `Buffer::set_mark_anchor` — the natural integration
+   point now that Visual mode (6.5) exists, and required before 7.10's
+   `:'<,'>` range support has anything to read.
+10. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`
+    (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/` stays
+    clean).
+11. - [ ] Unit tests in `kernel/mod.rs`'s `mod tests`: `m{a-z}` then
+    `` `{a-z} ``/`'{a-z}` round-trips a buffer-local mark, landing exactly
+    vs. at the first non-blank respectively; `m{A-Z}` set in one buffer
+    and jumped to from a window on a *different* buffer correctly switches
+    that window's buffer; an unset mark is a no-op; `G`/`gg` push a
+    jumplist entry and `Ctrl-O`/`Ctrl-I` step backward/forward through it,
+    including the no-op case at either end; Visual exit sets `` '< ``/
+    `` '> `` to the selection's bounds (including a reversed selection).
+12. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+13. - [ ] Manual smoke test: launch the binary, on a real multi-buffer
+    session set lowercase and uppercase marks, jump to each with both
+    `` ` `` and `'`, jump between buffers via a global mark, and use
+    `Ctrl-O`/`Ctrl-I` to retrace `G`/`gg`/mark jumps, confirming each
+    matches vanilla Vim. **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced;
+      `marks_and_jumps.rs` stays plain functions, mirroring every other
+      command-family file.
+- [ ] Global marks and the jump list are proven, by inspection, to live
+      only on `Editor` — grep confirms no `HashMap<char, Anchor>`-shaped
+      global-mark storage or jump-list state exists under
+      `crates/vim-buffer/` or `kernel/window/`.
+- [ ] Jumping to a global mark in a different buffer is proven, by test,
+      to correctly retarget the acting window's buffer (Rule 4 item 3: a
+      window must never end up silently pointing at the wrong buffer).
+- [ ] `` `{c} `` vs `'{c}` are proven, by test, to differ exactly as Vim
+      documents (exact position vs. first non-blank of the line).
+- [ ] `Ctrl-O`/`Ctrl-I` are proven, by test, to retrace real jumps
+      (`G`/`gg`/mark jumps) in order, and to no-op safely at either end of
+      the list.
+- [ ] Visual mode's `` '< ``/`` '> `` marks are proven, by test, to be set
+      on exit, including from a reversed selection.
+- [ ] Manual smoke test passes in a live terminal. **Needs a human with a
+      real terminal.**

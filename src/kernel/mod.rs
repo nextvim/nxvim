@@ -39,6 +39,7 @@ pub struct Editor {
     current: CommandContext,
     global_options: GlobalOptions,
     last_char_search: Option<CharSearch>,
+    last_change: Option<Action>,
 }
 
 impl Editor {
@@ -97,6 +98,7 @@ impl Editor {
             },
             global_options: GlobalOptions::default(),
             last_char_search: None,
+            last_change: None,
         }
     }
 
@@ -158,6 +160,17 @@ impl Editor {
 
     pub(crate) fn set_last_char_search(&mut self, search: CharSearch) {
         self.last_char_search = Some(search);
+    }
+
+    /// The last `.`-repeatable change dispatched, if any -- see `kernel::
+    /// command::normal::operators::is_repeatable_change` for exactly which
+    /// actions qualify (excludes `c*`/`y*`).
+    pub(crate) fn last_change(&self) -> Option<Action> {
+        self.last_change.clone()
+    }
+
+    pub(crate) fn set_last_change(&mut self, action: Action) {
+        self.last_change = Some(action);
     }
 
     // -- Accessors for `kernel::command::*` family modules only. Kept
@@ -227,6 +240,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::mode::VisualKind;
     use crate::kernel::outcome::Effect;
     use text::Point;
 
@@ -490,6 +504,264 @@ mod tests {
         ));
     }
 
+    fn cw() -> Action {
+        Action::ChangeMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
+        }
+    }
+
+    fn yw() -> Action {
+        Action::YankMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
+        }
+    }
+
+    /// `cw` deletes exactly like `dw`, then enters Insert mode at the
+    /// deletion point within the same dispatch.
+    #[test]
+    fn cw_deletes_a_word_and_enters_insert_mode() {
+        let mut editor = Editor::new("foo bar baz");
+        let outcome = editor.execute(cw());
+
+        assert_eq!(text_of(&editor), "bar baz");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert!(outcome.mutated);
+        assert!(outcome.mode_changed);
+        assert_eq!(editor.mode(), Mode::Insert);
+    }
+
+    /// `yw` never mutates the buffer or emits `TextChanged`; it only moves
+    /// the cursor to the start of the resolved range (Vim's `y` cursor
+    /// rule, which for a forward `yw` from the cursor is a no-op).
+    #[test]
+    fn yw_never_mutates_and_only_moves_the_cursor() {
+        let mut editor = Editor::new("foo bar baz");
+        let outcome = editor.execute(yw());
+
+        assert_eq!(text_of(&editor), "foo bar baz");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert!(!outcome.mutated);
+        assert!(outcome.events.is_empty());
+    }
+
+    /// `dd`/`cc`/`yy` (doubled linewise forms) act on whole lines.
+    #[test]
+    fn dd_deletes_the_whole_current_line() {
+        let mut editor = Editor::new("foo\nbar\nbaz\n");
+        let outcome = editor.execute(Action::DeleteLine { count: 1 });
+
+        assert_eq!(text_of(&editor), "bar\nbaz\n");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert!(outcome.mutated);
+    }
+
+    #[test]
+    fn cc_deletes_the_whole_line_and_enters_insert_mode() {
+        let mut editor = Editor::new("foo\nbar\n");
+        let outcome = editor.execute(Action::ChangeLine { count: 1 });
+
+        assert_eq!(text_of(&editor), "bar\n");
+        assert!(outcome.mutated);
+        assert!(outcome.mode_changed);
+        assert_eq!(editor.mode(), Mode::Insert);
+    }
+
+    #[test]
+    fn yy_never_mutates_the_buffer() {
+        let mut editor = Editor::new("foo\nbar\n");
+        let outcome = editor.execute(Action::YankLine { count: 1 });
+
+        assert_eq!(text_of(&editor), "foo\nbar\n");
+        assert!(!outcome.mutated);
+    }
+
+    /// `g~w`/`g~~` toggle case over a motion/whole line.
+    #[test]
+    fn toggle_case_motion_and_line_flip_letter_case() {
+        let mut editor = Editor::new("Foo Bar\n");
+        editor.execute(Action::ToggleCaseMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
+        });
+        assert_eq!(text_of(&editor), "fOO Bar\n");
+
+        let mut editor = Editor::new("Foo Bar\n");
+        editor.execute(Action::ToggleCaseLine { count: 1 });
+        assert_eq!(text_of(&editor), "fOO bAR\n");
+    }
+
+    /// `gUw`/`gUU` uppercase a motion/whole line.
+    #[test]
+    fn upper_case_motion_and_line_uppercase_text() {
+        let mut editor = Editor::new("foo bar\n");
+        editor.execute(Action::UpperCaseMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
+        });
+        assert_eq!(text_of(&editor), "FOO bar\n");
+
+        let mut editor = Editor::new("foo bar\n");
+        editor.execute(Action::UpperCaseLine { count: 1 });
+        assert_eq!(text_of(&editor), "FOO BAR\n");
+    }
+
+    /// `guw`/`guu` lowercase a motion/whole line.
+    #[test]
+    fn lower_case_motion_and_line_lowercase_text() {
+        let mut editor = Editor::new("FOO BAR\n");
+        editor.execute(Action::LowerCaseMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
+        });
+        assert_eq!(text_of(&editor), "foo BAR\n");
+
+        let mut editor = Editor::new("FOO BAR\n");
+        editor.execute(Action::LowerCaseLine { count: 1 });
+        assert_eq!(text_of(&editor), "foo bar\n");
+    }
+
+    /// `>w`/`>>`/`<<` indent/outdent by one `shiftwidth`, using spaces by
+    /// default (`expandtab` off uses tabs -- default `shiftwidth`/`tabstop`
+    /// are both `8` per Vim, so a bare `>>` inserts one tab).
+    #[test]
+    fn indent_motion_and_doubled_forms_add_or_remove_indentation() {
+        let mut editor = Editor::new("foo\nbar\n");
+        editor.execute(Action::IndentMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
+        });
+        assert_eq!(text_of(&editor), "\tfoo\nbar\n");
+
+        let mut editor = Editor::new("foo\n");
+        editor.execute(Action::Indent { count: 1 });
+        assert_eq!(text_of(&editor), "\tfoo\n");
+
+        let mut editor = Editor::new("\tfoo\n");
+        editor.execute(Action::Outdent { count: 1 });
+        assert_eq!(text_of(&editor), "foo\n");
+    }
+
+    /// An operator given a motion that produces an empty range (no
+    /// movement) is a no-op, not a panic or a zero-length edit.
+    #[test]
+    fn operator_with_an_empty_motion_range_is_a_no_op() {
+        let mut editor = Editor::new("foo\n");
+        // `MoveToStartOfLine` from column 0 doesn't move -- empty range.
+        let outcome = editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToStartOfLine {
+                count: 1,
+                select: false,
+            }),
+        });
+        assert_eq!(text_of(&editor), "foo\n");
+        assert!(!outcome.mutated);
+    }
+
+    /// `.` repeats the last recorded change (`dw`) at the new cursor
+    /// position.
+    #[test]
+    fn dot_repeats_the_last_dw_at_the_new_cursor_position() {
+        let mut editor = Editor::new("one two three\n");
+        editor.execute(dw());
+        assert_eq!(text_of(&editor), "two three\n");
+        editor.execute(Action::Repeat { count: 1 });
+        assert_eq!(text_of(&editor), "three\n");
+    }
+
+    /// `.` after `>>` repeats the indent.
+    #[test]
+    fn dot_repeats_the_last_indent() {
+        let mut editor = Editor::new("foo\nbar\n");
+        editor.execute(Action::Indent { count: 1 });
+        assert_eq!(text_of(&editor), "\tfoo\nbar\n");
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: false,
+        });
+        editor.execute(Action::Repeat { count: 1 });
+        assert_eq!(text_of(&editor), "\tfoo\n\tbar\n");
+    }
+
+    /// `.` with no prior recorded change is a no-op.
+    #[test]
+    fn dot_with_no_prior_change_is_a_no_op() {
+        let mut editor = Editor::new("foo\n");
+        let outcome = editor.execute(Action::Repeat { count: 1 });
+        assert_eq!(text_of(&editor), "foo\n");
+        assert!(!outcome.mutated);
+    }
+
+    /// `.` immediately after `cw` does not replay the change itself (out of
+    /// scope: replaying the typed Insert-mode session), but it still
+    /// repeats whatever change, if any, preceded `cw` -- `is_repeatable_change`
+    /// simply never records `ChangeMotion`, so `.` falls through to the
+    /// previous recorded change.
+    #[test]
+    fn dot_after_cw_repeats_whatever_change_preceded_it_not_the_change_itself() {
+        let mut editor = Editor::new("one two three four\n");
+        editor.execute(dw()); // records `dw` as the last change
+        assert_eq!(text_of(&editor), "two three four\n");
+        editor.execute(cw()); // `cw` is never recorded as `last_change`
+        assert_eq!(text_of(&editor), "three four\n");
+        editor.set_mode(Mode::Normal);
+        editor.execute(Action::Repeat { count: 1 });
+        // Replays the still-recorded `dw`, not `cw`.
+        assert_eq!(text_of(&editor), "four\n");
+    }
+
+    /// `iw`/`i(`/etc. resolve as `Action::MoveWithinCharacter`/
+    /// `Action::MoveAroundCharacter`, which must update the window's
+    /// primary selection to the resolved text object's range, report
+    /// `RedrawInvalidation::CurrentWindow`, and never mutate the buffer or
+    /// emit an event -- text objects only ever change what a selection
+    /// spans.
+    #[test]
+    fn move_within_and_around_character_update_the_primary_selection() {
+        use crate::kernel::outcome::RedrawInvalidation;
+        use vim_buffer::Motions;
+
+        let mut editor = Editor::new("a (hello) b");
+        // Column 5 (1-based) lands on the 'e' of "hello", inside the parens.
+        editor.execute(Action::MoveToColumn { count: 5 });
+
+        let outcome = editor.execute(Action::MoveWithinCharacter { count: 1, ch: '(' });
+        let primary = editor.current_window().selections().primary().clone();
+        let text_buffer = editor.current_buffer().as_text_buffer();
+        assert_eq!(primary.text(text_buffer), "hello");
+        assert!(!outcome.mutated);
+        assert!(outcome.events.is_empty());
+        assert_eq!(outcome.invalidation, RedrawInvalidation::CurrentWindow);
+
+        let outcome = editor.execute(Action::MoveAroundCharacter { count: 1, ch: '(' });
+        let primary = editor.current_window().selections().primary().clone();
+        let text_buffer = editor.current_buffer().as_text_buffer();
+        assert_eq!(primary.text(text_buffer), "(hello)");
+        assert!(!outcome.mutated);
+        assert!(outcome.events.is_empty());
+        assert_eq!(outcome.invalidation, RedrawInvalidation::CurrentWindow);
+    }
+
     /// Undo/redo round-trip buffer text through `kernel::transaction`, not
     /// a direct `vim_buffer::Buffer` edit.
     #[test]
@@ -750,5 +1022,271 @@ mod tests {
 
         // Cleanup
         let _ = fs::remove_file(&ro_file_path);
+    }
+
+    fn visual_sentinel_motion() -> Action {
+        Action::MoveRight {
+            count: 0,
+            select: true,
+        }
+    }
+
+    #[test]
+    fn visual_mode_entry_exit_toggle_and_kind_switch() {
+        let mut editor = Editor::new("hello world\n");
+        assert_eq!(editor.mode(), Mode::Normal);
+
+        editor.execute(Action::SetToVisual);
+        assert_eq!(editor.mode(), Mode::Visual(VisualKind::Char));
+
+        // Pressing the same Visual kind again toggles back to Normal.
+        editor.execute(Action::SetToVisual);
+        assert_eq!(editor.mode(), Mode::Normal);
+
+        editor.execute(Action::SetToVisualLine);
+        assert_eq!(editor.mode(), Mode::Visual(VisualKind::Line));
+
+        // Switching kind while already in Visual does not collapse the
+        // selection back to Normal.
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: true,
+        });
+        editor.execute(Action::SetToVisualBlock);
+        assert_eq!(editor.mode(), Mode::Visual(VisualKind::Block));
+
+        editor.execute(Action::SetToVisualBlock);
+        assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    /// A Visual-mode motion extends the selection from a fixed anchor;
+    /// proven functionally by deleting the exact resulting char-wise range
+    /// (Vim's Visual selection is inclusive of the character under the
+    /// cursor).
+    #[test]
+    fn visual_charwise_delete_operates_on_the_selected_range_and_exits_visual() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveRight {
+            count: 4,
+            select: true,
+        });
+        let outcome = editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(outcome.mutated);
+        assert_eq!(text_of(&editor), " world\n");
+        assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    /// A reversed selection (anchor after head) resolves to the same range
+    /// regardless of which end the cursor is on.
+    #[test]
+    fn visual_charwise_delete_handles_a_reversed_selection() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute(Action::MoveRight {
+            count: 5,
+            select: false,
+        });
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveLeft {
+            count: 5,
+            select: true,
+        });
+        let outcome = editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(outcome.mutated);
+        assert_eq!(text_of(&editor), "world\n");
+    }
+
+    #[test]
+    fn visual_linewise_delete_deletes_whole_lines_and_exits_visual() {
+        let mut editor = Editor::new("one\ntwo\nthree\n");
+        editor.execute(Action::SetToVisualLine);
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: true,
+        });
+        let outcome = editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(outcome.mutated);
+        assert_eq!(text_of(&editor), "three\n");
+        assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    /// Block-wise delete over lines of unequal length: each row's column
+    /// sub-range is clipped to that row's own length, and the whole delete
+    /// applies (and undoes) as a single step.
+    #[test]
+    fn visual_blockwise_delete_handles_unequal_length_lines_as_one_undo_step() {
+        let mut editor = Editor::new("abcdef\nxy\nabcdef\n");
+        editor.execute(Action::MoveRight {
+            count: 1,
+            select: false,
+        });
+        editor.execute(Action::SetToVisualBlock);
+        editor.execute(Action::MoveDown {
+            count: 2,
+            select: true,
+        });
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: true,
+        });
+        let outcome = editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(outcome.mutated);
+        assert_eq!(editor.mode(), Mode::Normal);
+        assert_eq!(text_of(&editor), "aef\nx\naef\n");
+
+        editor.execute(Action::Undo { count: 1 });
+        assert_eq!(text_of(&editor), "abcdef\nxy\nabcdef\n");
+    }
+
+    /// Block-wise `c` deletes the block's column range on every selected
+    /// row as one undo step, then enters Insert mode.
+    #[test]
+    fn block_wise_change_deletes_the_column_range_on_every_row_as_one_undo_step() {
+        let mut editor = Editor::new("abcdef\nabcdef\n");
+        editor.execute(Action::SetToVisualBlock);
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: true,
+        });
+        editor.execute(Action::MoveRight {
+            count: 1,
+            select: true,
+        });
+        let outcome = editor.execute(Action::ChangeMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(outcome.mutated);
+        assert!(outcome.mode_changed);
+        assert_eq!(editor.mode(), Mode::Insert);
+        assert_eq!(text_of(&editor), "cdef\ncdef\n");
+
+        editor.set_mode(Mode::Normal);
+        editor.execute(Action::Undo { count: 1 });
+        assert_eq!(text_of(&editor), "abcdef\nabcdef\n");
+    }
+
+    /// `y` in Visual mode never mutates and leaves the cursor at the start
+    /// of the former selection, per `:help y` in Visual mode.
+    #[test]
+    fn visual_yank_never_mutates_and_leaves_cursor_at_selection_start() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: false,
+        });
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveRight {
+            count: 3,
+            select: true,
+        });
+        let outcome = editor.execute(Action::YankMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(!outcome.mutated);
+        assert_eq!(text_of(&editor), "hello world\n");
+        assert_eq!(cursor(&editor), Point::new(0, 2));
+        assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    /// `o` flips which end of the selection is the head in place.
+    #[test]
+    fn swap_selection_ends_flips_reversed_in_place() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: false,
+        });
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveRight {
+            count: 3,
+            select: true,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 5));
+
+        editor.execute(Action::SwapSelectionEnds { corner: false });
+        assert_eq!(cursor(&editor), Point::new(0, 2));
+    }
+
+    /// `gv` restores both the range and the kind of the most recently
+    /// exited Visual selection.
+    #[test]
+    fn gv_restores_the_last_visual_selections_range_and_kind() {
+        let mut editor = Editor::new("one\ntwo\nthree\n");
+        editor.execute(Action::SetToVisualLine);
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: true,
+        });
+        editor.execute(Action::SetToNormal);
+        assert_eq!(editor.mode(), Mode::Normal);
+
+        editor.execute(Action::ReselectLastVisual);
+        assert_eq!(editor.mode(), Mode::Visual(VisualKind::Line));
+
+        let outcome = editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(visual_sentinel_motion()),
+        });
+        assert!(outcome.mutated);
+        assert_eq!(text_of(&editor), "three\n");
+    }
+
+    /// `gv` with no prior Visual selection in this window is a no-op.
+    #[test]
+    fn gv_with_no_prior_visual_selection_is_a_no_op() {
+        let mut editor = Editor::new("hello\n");
+        let outcome = editor.execute(Action::ReselectLastVisual);
+        assert!(!outcome.mutated);
+        assert!(!outcome.mode_changed);
+        assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    /// Replace mode overtypes character-by-character, and `Backspace`
+    /// restores the overtyped character.
+    #[test]
+    fn replace_mode_overtypes_and_backspace_restores_the_overtyped_character() {
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::SetToReplace);
+        assert_eq!(editor.mode(), Mode::Replace);
+
+        editor.execute(Action::InsertText("X".to_string()));
+        assert_eq!(text_of(&editor), "Xello\n");
+        assert_eq!(cursor(&editor), Point::new(0, 1));
+
+        editor.execute(Action::DeleteCharBefore { count: 1 });
+        assert_eq!(text_of(&editor), "hello\n");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+    }
+
+    /// At end-of-line, Replace mode behaves exactly like plain Insert:
+    /// typed text is appended, and `Backspace` simply removes what was
+    /// appended rather than restoring anything.
+    #[test]
+    fn replace_mode_at_end_of_line_behaves_like_plain_insert() {
+        let mut editor = Editor::new("ab\n");
+        editor.execute(Action::MoveToEndOfLine {
+            count: 1,
+            select: false,
+        });
+        editor.execute(Action::SetToReplace);
+        editor.execute(Action::InsertText("XY".to_string()));
+        assert_eq!(text_of(&editor), "abXY\n");
+
+        editor.execute(Action::DeleteCharBefore { count: 1 });
+        assert_eq!(text_of(&editor), "abX\n");
     }
 }

@@ -118,6 +118,145 @@ impl MatchedDelimiter {
     }
 }
 
+/// A balanced pair of same-name HTML/XML-style tags, found by
+/// [`scan_tag_pair`]/[`scan_tag_pair_in_rows`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagPair {
+    /// Byte range of the opening tag itself, e.g. `<div>` including both
+    /// angle brackets.
+    pub open: std::ops::Range<Position>,
+    /// Byte range of the closing tag itself, e.g. `</div>` including both
+    /// angle brackets.
+    pub close: std::ops::Range<Position>,
+}
+
+impl TagPair {
+    /// The byte range spanning both tags and everything between them (i.e.
+    /// what an `at` text object would select).
+    pub fn outer_range(&self) -> std::ops::Range<Position> {
+        self.open.start..self.close.end
+    }
+
+    /// The byte range strictly between the tags (i.e. what an `it` text
+    /// object would select).
+    pub fn inner_range(&self) -> std::ops::Range<Position> {
+        self.open.end..self.close.start
+    }
+}
+
+/// Extracts a tag name (`div`, `my-component`, `ns:tag`, ...) from the text
+/// immediately following a tag's opening `<` (or `</`), stopping at the
+/// first character that couldn't be part of a tag name.
+fn tag_name(text: &str) -> Option<String> {
+    let name: String = text
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'))
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// A plain, lexical scan for the nearest balanced same-name tag pair
+/// enclosing `byte` in `text` — no HTML/XML grammar, attribute syntax, or
+/// self-closing-tag understanding beyond what's needed to skip over a tag
+/// without being confused by it. Comments (`<!--...-->`), doctypes, and
+/// processing instructions (`<!...>`/`<?...>`) are skipped, not tracked as
+/// tags. A `<tag/>` self-closing tag is likewise skipped: it can never
+/// balance with anything, so it never contributes a pair.
+///
+/// Same-name nesting is tracked with a stack, exactly like
+/// [`StructuralScanner`]'s delimiter stack: a closing tag only completes a
+/// pair when its name matches the most recently opened, still-unclosed tag
+/// of that name; otherwise it's treated as a stray closer and ignored. When
+/// several completed pairs contain `byte`, the smallest (innermost) one is
+/// returned.
+pub fn scan_tag_pair(text: &str, byte: Position) -> Option<TagPair> {
+    let mut stack: Vec<(String, std::ops::Range<Position>)> = Vec::new();
+    let mut matches: Vec<TagPair> = Vec::new();
+
+    let mut i = 0usize;
+    while i < text.len() {
+        if text.as_bytes()[i] != b'<' {
+            let ch_len = text[i..].chars().next().map_or(1, |c| c.len_utf8());
+            i += ch_len;
+            continue;
+        }
+
+        let Some(gt_offset) = text[i..].find('>') else {
+            // No closing '>': treat the rest of the text as plain content.
+            break;
+        };
+        let tag_end = i + gt_offset;
+        let tag_inner = &text[i + 1..tag_end];
+        let full_range = i..(tag_end + 1);
+
+        if let Some(name_text) = tag_inner.strip_prefix('/') {
+            if let Some(name) = tag_name(name_text) {
+                if stack.last().is_some_and(|(top, _)| *top == name) {
+                    let (_, open_range) = stack.pop().expect("just checked stack.last()");
+                    matches.push(TagPair {
+                        open: open_range,
+                        close: full_range,
+                    });
+                }
+                // A closing tag whose name doesn't match the innermost
+                // open tag is a stray closer: ignored, matching
+                // `StructuralScanner`'s handling of mismatched closers.
+            }
+        } else if !tag_inner.starts_with('!') && !tag_inner.starts_with('?') {
+            // An ordinary opening tag (not a comment/doctype/processing
+            // instruction). Self-closing tags (`<tag/>`) are skipped: they
+            // can never balance with a later closing tag.
+            let self_closing = tag_inner.ends_with('/');
+            let name_source = if self_closing {
+                &tag_inner[..tag_inner.len() - 1]
+            } else {
+                tag_inner
+            };
+            if let Some(name) = tag_name(name_source) {
+                if !self_closing {
+                    stack.push((name, full_range));
+                }
+            }
+        }
+
+        i = tag_end + 1;
+    }
+
+    matches
+        .into_iter()
+        .filter(|m| m.open.start <= byte && byte < m.close.end)
+        .min_by_key(|m| m.close.end - m.open.start)
+}
+
+/// Like [`scan_tag_pair`], but scans a range of rows in `buffer` (mirroring
+/// [`StructuralScanner::scan_rows_for_enclosing`]'s row-range shape), so a
+/// tag pair that spans multiple lines can still be found.
+pub fn scan_tag_pair_in_rows(
+    buffer: &text::Buffer,
+    start_row: u32,
+    end_row: u32,
+    byte: Position,
+) -> Option<TagPair> {
+    let start_point = text::Point::new(start_row, 0);
+    let start_offset = start_point.to_offset(buffer);
+
+    let row_count = buffer.row_count();
+    let end_row = end_row.min(row_count);
+    let end_point = if end_row < row_count {
+        text::Point::new(end_row, 0)
+    } else {
+        buffer.max_point()
+    };
+
+    let text: String = buffer.text_for_range(start_point..end_point).collect();
+    let local_byte = byte.checked_sub(start_offset)?;
+    let pair = scan_tag_pair(&text, local_byte)?;
+    Some(TagPair {
+        open: (pair.open.start + start_offset)..(pair.open.end + start_offset),
+        close: (pair.close.start + start_offset)..(pair.close.end + start_offset),
+    })
+}
+
 /// The result of scanning a buffer's text for structural delimiters: every
 /// matched pair found, plus any delimiters that were opened but never
 /// closed.
@@ -614,6 +753,36 @@ mod tests {
     }
 
     #[test]
+    fn scan_tag_pair_resolves_to_the_innermost_same_name_pair() {
+        let text = "<a><b>text</b></a>";
+        // 0:'<'1:'a'2:'>'3:'<'4:'b'5:'>'6:'t'7:'e'8:'x'9:'t'10:'<'11:'/'12:'b'13:'>'14:'<'15:'/'16:'a'17:'>'
+        let pair = scan_tag_pair(text, 7).unwrap();
+        assert_eq!(pair.open, 3..6);
+        assert_eq!(pair.close, 10..14);
+        assert_eq!(&text[pair.inner_range()], "text");
+        assert_eq!(&text[pair.outer_range()], "<b>text</b>");
+    }
+
+    #[test]
+    fn scan_tag_pair_prefers_the_innermost_of_same_name_nested_tags() {
+        let text = "<a><a>x</a></a>";
+        let pair = scan_tag_pair(text, 6).unwrap();
+        assert_eq!(pair.open, 3..6);
+        assert_eq!(pair.close, 7..11);
+    }
+
+    #[test]
+    fn scan_tag_pair_returns_none_outside_any_tag_or_when_unclosed() {
+        // Cursor outside any tag entirely.
+        assert_eq!(scan_tag_pair("hello", 2), None);
+
+        // The outer `<a>` is never closed, so a cursor inside it but outside
+        // the completed `<b>...</b>` pair finds nothing.
+        let text = "<a><b>text</b>";
+        assert_eq!(scan_tag_pair(text, 0), None);
+    }
+
+    #[test]
     fn test_scan_rows_for_enclosing() {
         let buffer = text::Buffer::new(
             clock::ReplicaId::new(0),
@@ -638,5 +807,25 @@ mod tests {
         let m_brace = StructuralScanner::scan_rows_for_enclosing(&buffer, 0, 3, 2, true).unwrap();
         assert_eq!(m_brace.kind, DelimiterKind::Brace);
         assert_eq!((m_brace.start, m_brace.end), (0, 9));
+    }
+
+    #[test]
+    fn scan_tag_pair_in_rows_finds_a_pair_spanning_multiple_rows() {
+        let buffer = text::Buffer::new(
+            clock::ReplicaId::new(0),
+            text::BufferId::new(1).unwrap(),
+            "<div>\n  text\n</div>",
+        );
+        // Row 1 ("  text") starts at byte 6; the cursor sits inside "text".
+        let byte = 6 + 2;
+        let pair = StructuralScanner::scan_rows_for_enclosing(&buffer, 0, 3, byte, true);
+        assert!(pair.is_none(), "a tag pair is not a delimiter pair");
+
+        let tag_pair = scan_tag_pair_in_rows(&buffer, 0, 3, byte).unwrap();
+        assert_eq!(&buffer.text()[tag_pair.inner_range()], "\n  text\n");
+        assert_eq!(
+            &buffer.text()[tag_pair.outer_range()],
+            "<div>\n  text\n</div>"
+        );
     }
 }

@@ -385,6 +385,18 @@ pub enum Action {
         count: u32,
         motion: Box<Action>,
     },
+    ToggleCaseMotion {
+        count: u32,
+        motion: Box<Action>,
+    },
+    IndentMotion {
+        count: u32,
+        motion: Box<Action>,
+    },
+    OutdentMotion {
+        count: u32,
+        motion: Box<Action>,
+    },
 
     // NORMAL
     DeleteLine {
@@ -403,6 +415,12 @@ pub enum Action {
         count: u32,
     },
     LowerCaseLine {
+        count: u32,
+    },
+    ToggleCase {
+        count: u32,
+    },
+    ToggleCaseLine {
         count: u32,
     },
     DeleteChar {
@@ -436,6 +454,16 @@ pub enum Action {
         count: u32,
     },
     SelectSimilar,
+
+    // VISUAL MODE
+    /// `o` (swap the selection's anchor and head) in Visual mode; `O`
+    /// (`corner: true`) is the block-wise corner-swap variant that keeps
+    /// the current row fixed and swaps only the column.
+    SwapSelectionEnds {
+        corner: bool,
+    },
+    /// `gv`: reselect the most recently exited Visual selection.
+    ReselectLastVisual,
 
     // MODE SELECT
     SetToNormal,
@@ -514,6 +542,7 @@ impl std::fmt::Display for Action {
             Action::Yank { count } => write!(f, "Yank({})", count),
             Action::UpperCase { count } => write!(f, "UpperCase({})", count),
             Action::LowerCase { count } => write!(f, "LowerCase({})", count),
+            Action::ToggleCase { count } => write!(f, "ToggleCase({})", count),
             Action::Fold { count } => write!(f, "Fold({})", count),
             Action::Unfold { count } => write!(f, "Unfold({})", count),
             Action::FocusLeftWindow => write!(f, "FocusLeftWindow"),
@@ -661,12 +690,22 @@ impl std::fmt::Display for Action {
             Action::LowerCaseMotion { count, motion } => {
                 write!(f, "LowerCaseMotion({}, {})", count, motion)
             }
+            Action::ToggleCaseMotion { count, motion } => {
+                write!(f, "ToggleCaseMotion({}, {})", count, motion)
+            }
+            Action::IndentMotion { count, motion } => {
+                write!(f, "IndentMotion({}, {})", count, motion)
+            }
+            Action::OutdentMotion { count, motion } => {
+                write!(f, "OutdentMotion({}, {})", count, motion)
+            }
             Action::DeleteLine { count } => write!(f, "DeleteLine({})", count),
             Action::ChangeLine { count } => write!(f, "ChangeLine({})", count),
             Action::YankLine { count } => write!(f, "YankLine({})", count),
             Action::JoinLines { count } => write!(f, "JoinLines({})", count),
             Action::UpperCaseLine { count } => write!(f, "UpperCaseLine({})", count),
             Action::LowerCaseLine { count } => write!(f, "LowerCaseLine({})", count),
+            Action::ToggleCaseLine { count } => write!(f, "ToggleCaseLine({})", count),
             Action::DeleteChar { count } => write!(f, "DeleteChar({})", count),
             Action::DeleteCharBefore { count } => write!(f, "DeleteCharBefore({})", count),
             Action::Put { count } => write!(f, "Put({})", count),
@@ -678,6 +717,8 @@ impl std::fmt::Display for Action {
             Action::Outdent { count } => write!(f, "Outdent({})", count),
             Action::ChangeCase { count } => write!(f, "ChangeCase({})", count),
             Action::SelectSimilar => write!(f, "SelectSimilar"),
+            Action::SwapSelectionEnds { corner } => write!(f, "SwapSelectionEnds({})", corner),
+            Action::ReselectLastVisual => write!(f, "ReselectLastVisual"),
             Action::SetToNormal => write!(f, "SetNormal"),
             Action::SetToInsert => write!(f, "SetInsert"),
             Action::SetToReplace => write!(f, "SetReplace"),
@@ -886,6 +927,7 @@ impl Action {
             Action::Yank { .. } => Action::Yank { count },
             Action::UpperCase { .. } => Action::UpperCase { count },
             Action::LowerCase { .. } => Action::LowerCase { count },
+            Action::ToggleCase { .. } => Action::ToggleCase { count },
             Action::Fold { .. } => Action::Fold { count: 1 },
             Action::Unfold { .. } => Action::Unfold { count: 1 },
             Action::MoveToWord { .. } => Action::MoveToWord {
@@ -1091,6 +1133,7 @@ impl Action {
             Action::JoinLines { .. } => Action::JoinLines { count },
             Action::UpperCaseLine { .. } => Action::UpperCaseLine { count },
             Action::LowerCaseLine { .. } => Action::LowerCaseLine { count },
+            Action::ToggleCaseLine { .. } => Action::ToggleCaseLine { count },
             Action::DeleteChar { .. } => Action::DeleteChar { count },
             Action::DeleteCharBefore { .. } => Action::DeleteCharBefore { count },
             Action::Put { .. } => Action::Put { count },
@@ -1102,11 +1145,16 @@ impl Action {
             Action::Outdent { .. } => Action::Outdent { count },
             Action::ChangeCase { .. } => Action::ChangeCase { count },
             Action::SelectSimilar => Action::SelectSimilar,
+            Action::SwapSelectionEnds { corner } => Action::SwapSelectionEnds { corner },
+            Action::ReselectLastVisual => Action::ReselectLastVisual,
             Action::DeleteMotion { motion, .. } => Action::DeleteMotion { count, motion },
             Action::ChangeMotion { motion, .. } => Action::ChangeMotion { count, motion },
             Action::YankMotion { motion, .. } => Action::YankMotion { count, motion },
             Action::UpperCaseMotion { motion, .. } => Action::UpperCaseMotion { count, motion },
             Action::LowerCaseMotion { motion, .. } => Action::LowerCaseMotion { count, motion },
+            Action::ToggleCaseMotion { motion, .. } => Action::ToggleCaseMotion { count, motion },
+            Action::IndentMotion { motion, .. } => Action::IndentMotion { count, motion },
+            Action::OutdentMotion { motion, .. } => Action::OutdentMotion { count, motion },
             Action::SetToNormal => Action::SetToNormal,
             Action::SetToInsert => Action::SetToInsert,
             Action::SetToReplace => Action::SetToReplace,
@@ -1198,6 +1246,7 @@ impl Action {
             Action::Yank { count } => *count,
             Action::UpperCase { count } => *count,
             Action::LowerCase { count } => *count,
+            Action::ToggleCase { count } => *count,
             Action::Fold { count } => *count,
             Action::Unfold { count } => *count,
             Action::MoveToWord { count, .. } => *count,
@@ -1261,6 +1310,14 @@ impl Action {
             Action::DeleteMotion { count, .. } => *count,
             Action::ChangeMotion { count, .. } => *count,
             Action::YankMotion { count, .. } => *count,
+            Action::UpperCaseMotion { count, .. } => *count,
+            Action::LowerCaseMotion { count, .. } => *count,
+            Action::ToggleCaseMotion { count, .. } => *count,
+            Action::IndentMotion { count, .. } => *count,
+            Action::OutdentMotion { count, .. } => *count,
+            Action::UpperCaseLine { count } => *count,
+            Action::LowerCaseLine { count } => *count,
+            Action::ToggleCaseLine { count } => *count,
             Action::InsertNewLine { count } => *count,
             Action::InsertNewLineMotion { count, .. } => *count,
             Action::MoveToNextCharacter { count, .. } => *count,

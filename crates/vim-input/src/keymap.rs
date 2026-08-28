@@ -53,6 +53,15 @@ impl Keymap {
         op_actions
             .bind("gu", Action::LowerCase { count: 1 })
             .expect("Valid binding");
+        op_actions
+            .bind("g~", Action::ToggleCase { count: 1 })
+            .expect("Valid binding");
+        op_actions
+            .bind(">", Action::Indent { count: 1 })
+            .expect("Valid binding");
+        op_actions
+            .bind("<", Action::Outdent { count: 1 })
+            .expect("Valid binding");
 
         // Motions
         motion_actions
@@ -771,10 +780,16 @@ impl Keymap {
             .bind(".", Action::Repeat { count: 1 })
             .expect("Valid binding");
         normal_actions
-            .bind(">", Action::Indent { count: 1 })
+            .bind(">>", Action::Indent { count: 1 })
             .expect("Valid binding");
         normal_actions
-            .bind("<", Action::Outdent { count: 1 })
+            .bind("<lt><lt>", Action::Outdent { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("g~~", Action::ToggleCaseLine { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("g~g~", Action::ToggleCaseLine { count: 1 })
             .expect("Valid binding");
         normal_actions
             .bind("~", Action::ChangeCase { count: 1 })
@@ -1004,10 +1019,65 @@ impl Keymap {
             .bind("I", Action::SetToInsert)
             .expect("Valid binding");
         visual_actions
-            .bind("R", Action::SetToReplace)
+            .bind("A", Action::SetToAppend)
             .expect("Valid binding");
         visual_actions
-            .bind("~", Action::ChangeCase { count: 1 })
+            .bind("R", Action::SetToReplace)
+            .expect("Valid binding");
+        // `u`/`U`/`~` in Visual mode are direct case-transforms over the
+        // current selection, not operators awaiting a motion (real Vim has
+        // no `u{motion}` in Normal mode -- `u` there is Undo). Pre-compose
+        // them into the same `*CaseMotion { motion: <sentinel> }` shape
+        // `op_actions`' bare `g~`/`gu`/`gU` compose into for Visual, so
+        // `kernel::command::normal::operators`'s existing sentinel handling
+        // (no new kernel code) applies them to the selection.
+        visual_actions
+            .bind(
+                "u",
+                Action::LowerCaseMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveRight {
+                        count: 0,
+                        select: true,
+                    }),
+                },
+            )
+            .expect("Valid binding");
+        visual_actions
+            .bind(
+                "U",
+                Action::UpperCaseMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveRight {
+                        count: 0,
+                        select: true,
+                    }),
+                },
+            )
+            .expect("Valid binding");
+        visual_actions
+            .bind(
+                "~",
+                Action::ToggleCaseMotion {
+                    count: 1,
+                    motion: Box::new(Action::MoveRight {
+                        count: 0,
+                        select: true,
+                    }),
+                },
+            )
+            .expect("Valid binding");
+        visual_actions
+            .bind("o", Action::SwapSelectionEnds { corner: false })
+            .expect("Valid binding");
+        visual_actions
+            .bind("O", Action::SwapSelectionEnds { corner: true })
+            .expect("Valid binding");
+
+        // `gv` is a Normal-mode command (reselect the last Visual
+        // selection), not a Visual-mode one.
+        normal_actions
+            .bind("gv", Action::ReselectLastVisual)
             .expect("Valid binding");
 
         Self {

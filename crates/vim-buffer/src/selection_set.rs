@@ -561,22 +561,10 @@ impl SelectionSet {
         }
     }
 
-    pub fn move_within_character(&mut self, anchor: bool, count: u32, ch: char, buffer: &Buffer) {
+    pub fn text_object(&mut self, anchor: bool, ch: char, around: bool, buffer: &Buffer) {
         let cursors = self.selections.clone();
         for cursor in cursors.iter() {
-            let next = cursor
-                .clone()
-                .move_within_character(anchor, count, ch, buffer);
-            self.update(buffer, &next);
-        }
-    }
-
-    pub fn move_around_character(&mut self, anchor: bool, count: u32, ch: char, buffer: &Buffer) {
-        let cursors = self.selections.clone();
-        for cursor in cursors.iter() {
-            let next = cursor
-                .clone()
-                .move_around_character(anchor, count, ch, buffer);
+            let next = cursor.clone().text_object(anchor, ch, around, buffer);
             self.update(buffer, &next);
         }
     }

@@ -223,6 +223,52 @@ fn test_visual_mode() {
     assert_eq!(resolver.mode(), Mode::Normal);
 }
 
+/// Regression test: `u`/`U`/`~` in Visual mode must resolve to immediate
+/// case-transform actions over the current selection, not fall through to
+/// their unrelated Normal-mode meanings (`u` = Undo, `~` = toggle-one-char,
+/// `U` = restore line) or an unhandled bare `Action::ChangeCase`.
+#[test]
+fn visual_mode_u_upper_u_and_tilde_are_case_transforms_not_normal_mode_fallbacks() {
+    let keymap = Keymap::vim_defaults();
+    let sentinel = Action::MoveRight {
+        count: 0,
+        select: true,
+    };
+
+    let mut resolver = Resolver::new(Mode::Normal);
+    run_keys(&mut resolver, &keymap, "v");
+    let outcomes = run_keys(&mut resolver, &keymap, "u");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::LowerCaseMotion {
+            count: 1,
+            motion: Box::new(sentinel.clone()),
+        }
+    );
+
+    let mut resolver = Resolver::new(Mode::Normal);
+    run_keys(&mut resolver, &keymap, "v");
+    let outcomes = run_keys(&mut resolver, &keymap, "U");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::UpperCaseMotion {
+            count: 1,
+            motion: Box::new(sentinel.clone()),
+        }
+    );
+
+    let mut resolver = Resolver::new(Mode::Normal);
+    run_keys(&mut resolver, &keymap, "v");
+    let outcomes = run_keys(&mut resolver, &keymap, "~");
+    assert_eq!(
+        assert_resolved(&outcomes).action,
+        Action::ToggleCaseMotion {
+            count: 1,
+            motion: Box::new(sentinel),
+        }
+    );
+}
+
 #[test]
 fn test_insert_mode() {
     let keymap = Keymap::vim_defaults();

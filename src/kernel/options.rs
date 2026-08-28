@@ -50,9 +50,7 @@ pub struct WindowOptions {
 
 impl Default for WindowOptions {
     fn default() -> Self {
-        Self {
-            wrap: true,
-        }
+        Self { wrap: true }
     }
 }
 
@@ -83,6 +81,16 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
             scope: OptionScope::Buffer,
             kind: OptionValueKind::Number,
         }),
+        "shiftwidth" | "sw" => Some(OptionSpec {
+            canonical_name: "shiftwidth",
+            scope: OptionScope::Buffer,
+            kind: OptionValueKind::Number,
+        }),
+        "tabstop" | "ts" => Some(OptionSpec {
+            canonical_name: "tabstop",
+            scope: OptionScope::Buffer,
+            kind: OptionValueKind::Number,
+        }),
         "wrap" => Some(OptionSpec {
             canonical_name: "wrap",
             scope: OptionScope::Window,
@@ -95,8 +103,8 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::{Editor, events, outcome};
     use crate::kernel::outcome::Effect;
+    use crate::kernel::{Editor, events, outcome};
     use vim_input::Action;
 
     #[test]
@@ -111,30 +119,57 @@ mod tests {
         let outcome = editor.submit_command_line("set ignorecase");
         assert!(editor.global_options().ignorecase);
         assert!(!outcome.mutated);
-        assert_eq!(outcome.invalidation, outcome::RedrawInvalidation::CurrentWindow);
-        assert!(outcome.events.contains(&events::EditorEvent::OptionSet { name: "ignorecase" }));
+        assert_eq!(
+            outcome.invalidation,
+            outcome::RedrawInvalidation::CurrentWindow
+        );
+        assert!(
+            outcome
+                .events
+                .contains(&events::EditorEvent::OptionSet { name: "ignorecase" })
+        );
 
         let outcome = editor.submit_command_line("set noignorecase");
         assert!(!editor.global_options().ignorecase);
-        assert!(outcome.events.contains(&events::EditorEvent::OptionSet { name: "ignorecase" }));
+        assert!(
+            outcome
+                .events
+                .contains(&events::EditorEvent::OptionSet { name: "ignorecase" })
+        );
 
         let outcome = editor.submit_command_line("set ic!");
         assert!(editor.global_options().ignorecase);
-        assert!(outcome.events.contains(&events::EditorEvent::OptionSet { name: "ignorecase" }));
+        assert!(
+            outcome
+                .events
+                .contains(&events::EditorEvent::OptionSet { name: "ignorecase" })
+        );
 
         // 2. :set expandtab and :set textwidth=72 write into buffer's BufferOptions
         let outcome = editor.submit_command_line("set expandtab tw=72");
         let buf_opts = editor.buffer(ctx.buffer).unwrap().options();
         assert!(buf_opts.expandtab);
         assert_eq!(buf_opts.textwidth, 72);
-        assert!(outcome.events.contains(&events::EditorEvent::OptionSet { name: "expandtab" }));
-        assert!(outcome.events.contains(&events::EditorEvent::OptionSet { name: "textwidth" }));
+        assert!(
+            outcome
+                .events
+                .contains(&events::EditorEvent::OptionSet { name: "expandtab" })
+        );
+        assert!(
+            outcome
+                .events
+                .contains(&events::EditorEvent::OptionSet { name: "textwidth" })
+        );
 
         // 3. :set wrap writes into window's WindowOptions (default wrap is true, let's nowrap it)
         assert!(editor.window(ctx.window).unwrap().options().wrap);
         let outcome = editor.submit_command_line("set nowrap");
         assert!(!editor.window(ctx.window).unwrap().options().wrap);
-        assert!(outcome.events.contains(&events::EditorEvent::OptionSet { name: "wrap" }));
+        assert!(
+            outcome
+                .events
+                .contains(&events::EditorEvent::OptionSet { name: "wrap" })
+        );
 
         // 4. :set bogus produces Effect::OptionMessage and no panic and no event
         let outcome = editor.submit_command_line("set bogus");
@@ -142,7 +177,11 @@ mod tests {
         assert_eq!(outcome.events.len(), 0);
         assert_eq!(outcome.effects.len(), 1);
         if let Effect::OptionMessage { message } = &outcome.effects[0] {
-            assert!(message.contains("Unknown option"), "Expected unknown option error, got: {}", message);
+            assert!(
+                message.contains("Unknown option"),
+                "Expected unknown option error, got: {}",
+                message
+            );
         } else {
             panic!("Expected Effect::OptionMessage");
         }

@@ -64,8 +64,11 @@ comment explaining the platform/dependency boundary that requires it:
 - God structs: a struct is not allowed to be the junk drawer for "everything
   the app needs." If a struct has more than ~8 fields, that's a signal it's
   actually several owners glued together — split it.
-- Files over ~500 lines that mix more than one command family or concern.
-  Split by *feature*, not by adding another abstraction layer on top.
+- Files that mix more than one command family or concern. Split by
+  *feature*, not by adding another abstraction layer on top. There is no
+  fixed line-count limit — a file holding one coherent command family whole
+  is preferred over splintering it across siblings just to hit a line
+  target.
 
 ### Rule 2 — Adding a feature/command must be cheap and boring
 
@@ -405,23 +408,45 @@ rather than in-place transformation. Each milestone must leave `cargo check
 `RESET.md` Working Rule 1. Do not start the next milestone until the current
 one compiles and the kernel-purity grep above is clean.
 
-1. **Skeleton** — `kernel::Editor` with one buffer, one window, one tab page;
+1. [x] **Skeleton** — `kernel::Editor` with one buffer, one window, one tab page;
    `Editor::execute()` wired to `h/j/k/l` motions and `i` / `Esc` insert/exit,
    using real `vim-buffer` transactions. No script, no multi-window, no Ex.
    This is `RESET.md`'s "Recommended First Slice" — build it as new code
    directly, do not stage it as a migration adapter.
-2. **Operators + undo + events** — an operator+motion (`dw`) producing a
+2. [x] **Operators + undo + events** — an operator+motion (`dw`) producing a
    transaction, a `TextChanged` event, and a typed redraw invalidation. This
    validates the full mutation contract end to end before breadth is added.
-3. **Windows/tabs for real** — splits, tab pages, `view/` projection wired to
+3. [x] **Windows/tabs for real** — splits, tab pages, `view/` projection wired to
    kernel-owned window state (no `app/windows.rs`-style shadow authority).
-4. **Command-line + Ex admission** — one request envelope, kernel-side
+4. [x] **Command-line + Ex admission** — one request envelope, kernel-side
    context validation, no `ExCommand`.
-5. **Script host** — mappings, user commands, autocommands, all emitting
+5. [x] **Script host** — mappings, user commands, autocommands, all emitting
    `app::request` values only.
-6. **Services** — fs, clipboard-as-effect, background workers, external
+6. [x] **Services** — fs, clipboard-as-effect, background workers, external
    runtime (timers/jobs/channels) — added only once a concrete feature needs
    them, per `RESET.md` Phase 7 sequencing.
+
+6.5. [x] **Other modes** — Visual, Visual-Line, Visual-Block, Select, and
+     Replace, wired through `kernel/mode.rs`'s transition table (already
+     scaffolded in milestone 1 for Normal/Insert) and implemented in
+     `kernel/command/visual.rs` (Visual family: char/line/block sub-modes
+     share one file, distinguished by a `VisualKind` field, not three
+     command families) plus a `replace` variant on `kernel/command/
+     insert.rs` (Replace is Insert with overtype semantics, not a separate
+     family). Visual mode's operators (`d`/`c`/`y`/`>`/`<`/`~`/`u`/`U` over
+     a selection) route through the same `kernel/transaction.rs` entry
+     point as Normal-mode operators from milestone 2 — a selection is just
+     another range producer, per Rule 4 item 6 — so this milestone mostly
+     wires selection-to-range conversion and mode transitions, not new
+     mutation paths. Block-wise Visual additionally needs `I`/`A`/`c`
+     multi-line insert (apply one edit across all selected lines), which
+     depends on milestone 2's transaction grouping to land as a single
+     undo step. Depends on milestone 1 (modes exist) and milestone 2
+     (transactions + undo grouping); sequenced before item 7 because much
+     of 7's breadth (text objects, operators, registers) is exercised from
+     Visual mode too and should not be built Normal-only and then
+     retrofitted.
+
 7. **Compatibility breadth** — expand coverage using `src_/` as the
    behavioral reference and `docs/VIM.md` as the behavioral authority,
    always routed through the recipes above. This sub-phase is itself wide
@@ -430,7 +455,7 @@ one compiles and the kernel-purity grep above is clean.
    re-run the kernel-purity grep + file-size check after each one, not just
    at the end.
 
-   7.1. **Options** — land in the option registry (kernel-owned if
+   7.1. [x] **Options** — land in the option registry (kernel-owned if
         semantic, app-owned if presentational) per "Add a new option"
         above. Motion/search/insert breadth below reads options
         (`ignorecase`, `expandtab`, `textwidth`, `wrap`, `hlsearch`, ...) to
@@ -438,22 +463,22 @@ one compiles and the kernel-purity grep above is clean.
         sub-phases are meaningful. Do not let any later command read config
         ad hoc instead of through this registry.
 
-   7.2. **Motions** — `kernel/command/normal/motions.rs`. Word/WORD,
+   7.2. [x] **Motions** — `kernel/command/normal/motions.rs`. Word/WORD,
         paragraph/sentence, `f`/`t`/`F`/`T` + `;`/`,`, `%`, line/screen
         motions, `gg`/`G`, scrolling. Every text object and operator below
         is built on the range this sub-phase produces, so it lands first
         among command families.
 
-   7.3. **Text objects** — `kernel/command/normal/text_objects.rs`. `iw`/
+   7.3. [x] **Text objects** — `kernel/command/normal/text_objects.rs`. `iw`/
         `aw`, quotes, brackets, tags, sentence/paragraph objects. Depends on
         7.2's boundary-finding motion math.
 
-   7.4. **Operators** — `kernel/command/normal/operators.rs`. `d`/`c`/`y`/
+   7.4. [x] **Operators** — `kernel/command/normal/operators.rs`. `d`/`c`/`y`/
         `g~`/`gu`/`gU`/`>`/`<`/`=`/`!`, dot-repeat. Consumes the ranges 7.2
         and 7.3 produce and must go through `kernel/transaction.rs` per
         Rule 4 item 6 — never a family-specific edit path.
 
-   7.5. **Marks and jumps** — `kernel/command/normal/marks_and_jumps.rs`.
+   7.5. **Marks and jumps** (in progress) — `kernel/command/normal/marks_and_jumps.rs`.
         Buffer-local `'a`-`'z`, global `'A`-`'Z`, special marks (`` ` ` ``,
         `''`, `` '< '> ``), jumplist, changelist. Scope per Rule 4 item 9
         (buffer-local vs `Editor`-global) before anything downstream (Ex
@@ -570,7 +595,7 @@ one compiles and the kernel-purity grep above is clean.
    `vim_ui::layout::SlotLayout`/`WindowSlot` (docking top/side/bottom bars)
    has no Vim equivalent at all and is out of scope here regardless.
 
-   8.1. **Display-map + `TextView` wiring** — `view/mod.rs` (rewritten) and
+   8.1. [x] **Display-map + `TextView` wiring** — `view/mod.rs` (rewritten) and
         a new `app/view_sync.rs` (already named in the directory layout
         above). Per window, `view/` keeps a `display_map::DisplayMap` plus
         retained per-buffer scroll state (mirroring `vim_ui::WindowState`'s
@@ -585,7 +610,44 @@ one compiles and the kernel-purity grep above is clean.
         `full_text.split('\n')` loop entirely and is the foundation every
         other 8.x item builds on.
 
-   8.2. **Gutters** — number/relative-number column, sign column, fold
+   8.2. **Diffed/incremental redraw** — replace `runtime.rs`'s
+        `Clear(ClearType::All)`-every-frame with `vim_ui::renderer::
+        BufferedRenderer`'s existing double-buffer diff (or an equivalent
+        `view`-owned mechanism), and use `kernel::Outcome.invalidation`
+        (`RedrawInvalidation::None`/`CurrentWindow`/`Range`) to skip
+        rebuilding `TextViewModel`s for windows nothing invalidated —
+        mirroring `changed_*()` -> dirty ranges -> `must_redraw` ->
+        `update_screen()`/`win_update()` only repainting dirty windows.
+        Moved directly after 8.1 (rather than last) so every content item
+        below (8.4-8.9) is exercised through real diffing from the start
+        instead of being retrofitted onto it afterward. Depends only on
+        8.1 already producing real per-frame content to diff, and on
+        `Outcome.invalidation` already emitted since milestone 2; gutters/
+        statusline/tabline/scrollbar/selections/wrap below add more
+        content to diff but need no changes to this mechanism itself.
+
+   8.3. **Cell-based rendering test harness** — `vim_ui::renderer::{Cell,
+        ScreenBuffer}` is already a plain `symbol`/`fg`/`bg` grid with no
+        ANSI encoding (used today only inside `BufferedRenderer`'s 8.2
+        diffing); add a `view`-owned test helper that renders a
+        `TextViewModel` (or a whole multi-window frame) straight into a
+        `ScreenBuffer` — bypassing `CrosstermRenderer`/any real terminal
+        — and formats that buffer as a plain multi-line string (one line
+        per row, cell `symbol`s concatenated, plus an optional second
+        block listing the distinct `fg`/`bg` styles actually used) for
+        `assert_eq!`-style snapshot tests. This mirrors the cell-grid
+        snapshot pattern the retired `src_/` renderer tests used, so
+        every 8.x item below (gutters, statusline, tabline, scrollbar,
+        selections, wrap) gets a screen-shaped assertion that is easy to
+        read a diff of, instead of hand-rolled string slicing or raw
+        escape-code comparisons that are painful to eyeball on failure.
+        Moved directly after 8.2 (rather than last) precisely so 8.4-8.9
+        can each add a snapshot test through this harness as they land,
+        instead of backfilling coverage after the fact. Depends on 8.1
+        (real per-frame content to render) and reuses `Cell`/
+        `ScreenBuffer` as-is rather than inventing a second grid type.
+
+   8.4. **Gutters** — number/relative-number column, sign column, fold
         column, composed left-to-right into each `DisplayRow`'s
         `GutterCell` in the same order `drawline.c` uses (fold column,
         sign column, number column, then text). `number`/`relativenumber`/
@@ -595,7 +657,7 @@ one compiles and the kernel-purity grep above is clean.
         plumbing to exist, and on 7.9's fold state for the fold column to
         mean anything.
 
-   8.3. **Statusline** — a real per-window (or single shared, per
+   8.5. **Statusline** — a real per-window (or single shared, per
         `'laststatus'`) status line built from kernel facts `app/
         view_sync.rs` projects (buffer name, modified flag, mode, cursor
         line/column — Vim's `'ruler'`), replacing `runtime.rs`'s hardcoded
@@ -604,29 +666,68 @@ one compiles and the kernel-purity grep above is clean.
         7.1's recipe. Depends on 8.1 for cursor/position data already
         flowing through the display map.
 
-   8.4. **Tabline** — one line across the top listing tab pages, gated by
-        `'showtabline'`, reusing 8.3's projection-then-format pattern.
+   8.6. **Tabline** — one line across the top listing tab pages, gated by
+        `'showtabline'`, reusing 8.5's projection-then-format pattern.
         Depends on the windows/tabs milestone (3) already landed and on
-        8.3's statusline pattern.
+        8.5's statusline pattern.
 
-   8.5. **Scrollbar (nxvim enhancement, not Vim compatibility)** — wire
+   8.7. **Scrollbar (nxvim enhancement, not Vim compatibility)** — wire
         `vim_ui::model::ScrollbarModel` and `TextView`'s existing
         `draw_scrollbar` from the display map's total/visible row counts.
         Off by default; a new `scrollbar` window-local option (7.1's
         recipe) turns it on, keeping vanilla-Vim fidelity the default
-        behavior. Depends on 8.1.
+        behavior. The scrollbar is pure decoration painted *over* the
+        window's already-computed rect (the last column(s) of the text
+        area, like a floating overlay), never a reason to shrink it:
+        `view/layout.rs`'s `layout(tab, screen) -> HashMap<WindowId,
+        Rect>` and the text viewport width/height it feeds into
+        `DisplayMap`/`TextViewModel` stay exactly as they'd be with
+        `scrollbar` off, whether the option is on or not — matching real
+        Vim, where turning `'ruler'`/`'number'` on changes column layout
+        but a GUI scrollbar (a window-manager decoration, not a Vim grid
+        column) never does. `TextView::draw_scrollbar` draws into the
+        rect's own trailing column(s) after the text/gutter content, not
+        into space carved out ahead of time. Depends on 8.1.
 
-   8.6. **Diffed/incremental redraw** — replace `runtime.rs`'s
-        `Clear(ClearType::All)`-every-frame with `vim_ui::renderer::
-        BufferedRenderer`'s existing double-buffer diff (or an equivalent
-        `view`-owned mechanism), and use `kernel::Outcome.invalidation`
-        (`RedrawInvalidation::None`/`CurrentWindow`/`Range`) to skip
-        rebuilding `TextViewModel`s for windows nothing invalidated —
-        mirroring `changed_*()` -> dirty ranges -> `must_redraw` ->
-        `update_screen()`/`win_update()` only repainting dirty windows.
-        Depends on 8.1-8.5 already producing real per-frame content to
-        diff, and on `Outcome.invalidation` already emitted since
-        milestone 2.
+   8.8. **Selections rendering** — Visual/Select mode's selection
+        highlight, actually painted into `TextViewModel.selections: Vec<
+        DisplaySelection>` (the field already exists per 8.1's
+        `DisplaySnapshot` plumbing, but nothing populates it beyond the
+        single cursor position today). `app/view_sync.rs` projects
+        `Window::selections()` together with the current mode's
+        `VisualKind` (char/line/block, from milestone 6.5) into one or
+        more `DisplaySelection` ranges per display row — char-wise emits
+        one span per selection, line-wise expands to full-row width,
+        block-wise emits one span per covered row clipped to the block's
+        column range (mirroring Vim's blockwise-visual highlight).
+        Normal/Insert mode continues to render only the single-point
+        cursor, no selection spans. Depends on 8.1 for the
+        `DisplaySelection`/`TextViewModel` plumbing already existing, and
+        on 6.5 for `VisualKind` to distinguish the three shapes.
+
+   8.9. **Wrap / `scroll_x` / scrollbar** — wires `display_map::WrapMap`'s
+        already-implemented wrap-width/tab-size machinery
+        (`crates/display_map/src/wrap_map.rs`, currently entirely unused)
+        into `DisplayMap`, gated by a new `wrap` window-local option
+        (7.1's recipe) toggling `WrapMap::set_wrap_width` between `None`
+        (`nowrap`, today's behavior) and the window's viewport width.
+        When `nowrap`, Vim instead scrolls horizontally: `Window` gains
+        `leftcol: u32` (the buffer column shown at the viewport's left
+        edge — Vim's `'sidescroll'`/`zh`/`zl`/`zH`/`zL` model) alongside
+        the existing `scroll_top`, and `motions.rs`/`view/mod.rs` clip/
+        advance it the same way `scroll_top` already tracks the cursor's
+        line. A horizontal counterpart to 8.7's vertical `ScrollbarModel`
+        wiring — reusing the same struct with column counts in place of
+        row counts, since `vim_ui::model::ScrollbarModel`'s fields
+        (`total_rows`/`visible_rows`/`first_visible_row`) are already
+        named generically enough to represent either axis — surfaces only
+        when `nowrap` and content overflows the viewport width, under the
+        same `scrollbar` option from 8.7, and — like 8.7's vertical bar —
+        stays pure decoration drawn into the window rect's own trailing
+        row(s), never a reason to shrink the text viewport's height.
+        Depends on 8.1 (`DisplayMap` wiring) and 7.1 (new `wrap` option);
+        reuses 8.7's scrollbar wiring pattern for its horizontal
+        counterpart.
 
    Syntax/semantic highlighting (`textmate`, `vim-treesitter`) and popup/
    completion menus are explicitly deferred past this milestone — they
@@ -634,14 +735,16 @@ one compiles and the kernel-purity grep above is clean.
    only once a feature needs it" discipline item 6's Services already
    established.
 
-At every milestone boundary, re-run the kernel-purity grep and re-check file
-sizes (`wc -l src/kernel/**/*.rs` — flag anything approaching 500 lines for a
-split before it becomes the next `normal.rs`).
+At every milestone boundary, re-run the kernel-purity grep and sanity-check
+that no file has become a dumping ground for more than one command family
+(there is no fixed line-count target — the concern is mixing features, not
+size).
 
 ## Definition of done for "rescued"
 
 - No file in `src/` imports across the forbidden dependency directions.
-- No command family exceeds ~500 lines without being split by sub-feature.
+- No command family is split across sibling files purely to dodge a line
+  count; splitting is justified only by a real difference in concern.
 - Adding the next 10 Normal-mode commands touches only files named in the
   recipe for that command category — if it doesn't, fix the recipe first.
 - Every mutating command path goes through exactly one transaction function.

@@ -9,18 +9,18 @@
 use crate::kernel::{
     Editor,
     command::CommandContext,
-    mode::Mode,
-    outcome::{Outcome, Effect, RedrawInvalidation},
     events::EditorEvent,
+    mode::Mode,
     options::{self, OptionScope, OptionValue, OptionValueKind},
+    outcome::{Effect, Outcome, RedrawInvalidation},
     transaction,
 };
 use text::{Selection, SelectionGoal, ToOffset};
 use vim_buffer::{ByteOffset, Edit, EditOrigin, PlannedEdit, TextRange};
 use vim_input::Action;
 use vim_script::SourceId;
-use vim_script::ex_parser::ExLineParser;
 use vim_script::ast::{Address, CommandRange, ExCommand};
+use vim_script::ex_parser::ExLineParser;
 
 pub fn dispatch(editor: &mut Editor, _ctx: CommandContext, action: Action) -> Outcome {
     match action {
@@ -48,7 +48,10 @@ pub fn exit(editor: &mut Editor) -> Outcome {
 }
 
 pub fn parse(line: &str) -> Option<ExCommand> {
-    ExLineParser::new(SourceId(0), line, 0).parse().ok().map(|p| p.command)
+    ExLineParser::new(SourceId(0), line, 0)
+        .parse()
+        .ok()
+        .map(|p| p.command)
 }
 
 /// Admissions check and executor for Ex commands submitted from the app/prompt.
@@ -82,10 +85,11 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
             };
             let max_row = row_count.saturating_sub(1);
 
-            let (start_line, end_line) = match resolve_range(editor, ctx, &command.range, current_row, max_row) {
-                Some(r) => r,
-                None => return Outcome::default(),
-            };
+            let (start_line, end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
 
             execute_delete_lines(editor, ctx, start_line, end_line)
         }
@@ -156,17 +160,21 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                                 continue;
                             }
                             let current_val = get_option_bool(editor, ctx, spec);
-                            set_option_val(editor, ctx, spec, OptionValue::Bool(!current_val), &mut outcome);
+                            set_option_val(
+                                editor,
+                                ctx,
+                                spec,
+                                OptionValue::Bool(!current_val),
+                                &mut outcome,
+                            );
                         }
                         SetAction::SetValue(val_str) => {
                             let val = match spec.kind {
-                                OptionValueKind::Bool => {
-                                    match val_str.as_str() {
-                                        "true" | "on" | "1" => Ok(OptionValue::Bool(true)),
-                                        "false" | "off" | "0" => Ok(OptionValue::Bool(false)),
-                                        _ => Err(()),
-                                    }
-                                }
+                                OptionValueKind::Bool => match val_str.as_str() {
+                                    "true" | "on" | "1" => Ok(OptionValue::Bool(true)),
+                                    "false" | "off" | "0" => Ok(OptionValue::Bool(false)),
+                                    _ => Err(()),
+                                },
                                 OptionValueKind::Number => {
                                     if let Ok(num) = val_str.parse::<i64>() {
                                         Ok(OptionValue::Number(num))
@@ -174,9 +182,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                                         Err(())
                                     }
                                 }
-                                OptionValueKind::Str => {
-                                    Ok(OptionValue::Str(val_str))
-                                }
+                                OptionValueKind::Str => Ok(OptionValue::Str(val_str)),
                             };
                             match val {
                                 Ok(v) => {
@@ -264,9 +270,7 @@ fn execute_delete_lines(
     let window_id = ctx.window;
 
     let (start_offset, end_offset) = {
-        let buffer = editor
-            .buffer(buffer_id)
-            .expect("active buffer");
+        let buffer = editor.buffer(buffer_id).expect("active buffer");
         let text_buffer = buffer.as_text_buffer();
 
         let max = text_buffer.row_count().saturating_sub(1);
@@ -353,14 +357,12 @@ fn parse_set_arg(arg: &str) -> (String, SetAction) {
 
 fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::OptionSpec) -> String {
     match spec.scope {
-        OptionScope::Global => {
-            match spec.canonical_name {
-                "ignorecase" => editor.global_options().ignorecase.to_string(),
-                "hlsearch" => editor.global_options().hlsearch.to_string(),
-                "incsearch" => editor.global_options().incsearch.to_string(),
-                _ => String::new(),
-            }
-        }
+        OptionScope::Global => match spec.canonical_name {
+            "ignorecase" => editor.global_options().ignorecase.to_string(),
+            "hlsearch" => editor.global_options().hlsearch.to_string(),
+            "incsearch" => editor.global_options().incsearch.to_string(),
+            _ => String::new(),
+        },
         OptionScope::Window => {
             if let Some(win) = editor.window(ctx.window) {
                 match spec.canonical_name {
@@ -376,6 +378,8 @@ fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::Option
                 match spec.canonical_name {
                     "expandtab" => buf.options().expandtab.to_string(),
                     "textwidth" => buf.options().textwidth.to_string(),
+                    "shiftwidth" => buf.options().shiftwidth.to_string(),
+                    "tabstop" => buf.options().tabstop.to_string(),
                     _ => String::new(),
                 }
             } else {
@@ -387,14 +391,12 @@ fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::Option
 
 fn get_option_bool(editor: &Editor, ctx: CommandContext, spec: options::OptionSpec) -> bool {
     match spec.scope {
-        OptionScope::Global => {
-            match spec.canonical_name {
-                "ignorecase" => editor.global_options().ignorecase,
-                "hlsearch" => editor.global_options().hlsearch,
-                "incsearch" => editor.global_options().incsearch,
-                _ => false,
-            }
-        }
+        OptionScope::Global => match spec.canonical_name {
+            "ignorecase" => editor.global_options().ignorecase,
+            "hlsearch" => editor.global_options().hlsearch,
+            "incsearch" => editor.global_options().incsearch,
+            _ => false,
+        },
         OptionScope::Window => {
             if let Some(win) = editor.window(ctx.window) {
                 match spec.canonical_name {
@@ -473,6 +475,16 @@ fn set_option_val(
                     "textwidth" => {
                         if let OptionValue::Number(num) = val {
                             opts.textwidth = num.max(0) as u32;
+                        }
+                    }
+                    "shiftwidth" => {
+                        if let OptionValue::Number(num) = val {
+                            opts.shiftwidth = num.max(0) as u32;
+                        }
+                    }
+                    "tabstop" => {
+                        if let OptionValue::Number(num) = val {
+                            opts.tabstop = num.max(0) as u32;
                         }
                     }
                     _ => {}

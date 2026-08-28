@@ -116,6 +116,7 @@ impl Key {
             "pagedown" | "pgdn" => KeyCode::PageDown,
             "home" => KeyCode::Home,
             "end" => KeyCode::End,
+            "lt" => KeyCode::Char('<'),
             _ if lower.starts_with('f') && lower[1..].parse::<u8>().is_ok() => {
                 KeyCode::Function(lower[1..].parse().unwrap())
             }

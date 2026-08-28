@@ -10,10 +10,11 @@
 pub mod tabpage;
 
 use std::collections::HashMap;
-use text::{Selection, SelectionGoal};
+use text::{Anchor, Selection, SelectionGoal};
 use vim_buffer::{Buffer, BufferId, SelectionId, SelectionSet};
 
 use crate::kernel::ids::WindowId;
+use crate::kernel::mode::VisualKind;
 use crate::kernel::options::WindowOptions;
 
 #[derive(Clone)]
@@ -23,6 +24,19 @@ pub struct Window {
     options: WindowOptions,
     viewport_height: u32,
     scroll_top: u32,
+    /// Which kind of Visual selection is active, if any -- the per-window
+    /// "how do I interpret the current selection" fact (`RESCUE.md` Rule 4
+    /// item 2). Set on entering Visual, cleared on leaving it.
+    visual_kind: Option<VisualKind>,
+    /// The range and kind of the most recently exited Visual selection, for
+    /// `gv` to restore -- small, window-local history, not `Editor`-global.
+    last_visual: Option<(VisualKind, Selection<Anchor>)>,
+    /// Replace-mode overtype history for the current Replace session: one
+    /// entry per character typed so far, `Some(original)` if it overtyped a
+    /// real character or `None` if it was appended past end-of-line.
+    /// `Backspace` pops this to restore/undo the overtype (`:help
+    /// i_Backspace` under Replace mode). Reset on entering Replace.
+    replace_overtype: Vec<Option<char>>,
 }
 
 impl Window {
@@ -45,6 +59,9 @@ impl Window {
             options: WindowOptions::default(),
             viewport_height: 1,
             scroll_top: 0,
+            visual_kind: None,
+            last_visual: None,
+            replace_overtype: Vec::new(),
         }
     }
 
@@ -94,6 +111,35 @@ impl Window {
         let max_scroll = line;
         self.scroll_top = self.scroll_top.clamp(min_scroll, max_scroll);
     }
+
+    pub fn visual_kind(&self) -> Option<VisualKind> {
+        self.visual_kind
+    }
+
+    pub fn set_visual_kind(&mut self, kind: Option<VisualKind>) {
+        self.visual_kind = kind;
+    }
+
+    pub fn last_visual(&self) -> Option<(VisualKind, Selection<Anchor>)> {
+        self.last_visual.clone()
+    }
+
+    pub fn set_last_visual(&mut self, kind: VisualKind, selection: Selection<Anchor>) {
+        self.last_visual = Some((kind, selection));
+    }
+
+    /// Resets the Replace-mode overtype stack -- called on entering Replace.
+    pub fn clear_replace_overtype(&mut self) {
+        self.replace_overtype.clear();
+    }
+
+    pub fn push_replace_overtype(&mut self, original: Option<char>) {
+        self.replace_overtype.push(original);
+    }
+
+    pub fn pop_replace_overtype(&mut self) -> Option<Option<char>> {
+        self.replace_overtype.pop()
+    }
 }
 
 pub struct WindowStore {
@@ -136,4 +182,3 @@ impl WindowStore {
         self.windows.iter_mut()
     }
 }
-

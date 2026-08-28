@@ -40,7 +40,7 @@ pub use io::{
 };
 pub use manager::BufferManager;
 pub use marks::MarkSet;
-pub use movement::Motions;
+pub use movement::{BufferText, Motions};
 pub use mutator::{Action, ActionOutcome, Mutator};
 pub use options::{BufferOptions, FileFormat, UnsupportedFileFormat};
 pub use outcome::{ManagerOutcome, MutationOutcome, OptionsOutcome, SaveOutcome};

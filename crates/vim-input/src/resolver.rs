@@ -503,6 +503,18 @@ fn compose_operator(operator: Action, motion: Action) -> Action {
             count,
             motion: Box::new(motion),
         },
+        Action::ToggleCase { .. } => Action::ToggleCaseMotion {
+            count,
+            motion: Box::new(motion),
+        },
+        Action::Indent { .. } => Action::IndentMotion {
+            count,
+            motion: Box::new(motion),
+        },
+        Action::Outdent { .. } => Action::OutdentMotion {
+            count,
+            motion: Box::new(motion),
+        },
         _ => Action::NoOp,
     }
 }
@@ -515,6 +527,9 @@ fn is_doubled_operator_action(action: &Action) -> bool {
             | Action::YankLine { .. }
             | Action::UpperCaseLine { .. }
             | Action::LowerCaseLine { .. }
+            | Action::Indent { .. }
+            | Action::Outdent { .. }
+            | Action::ToggleCaseLine { .. }
     )
 }
 
@@ -627,6 +642,61 @@ mod tests {
         assert_eq!(
             resolved(resolver.feed(Key::char('U'), &map)).action,
             Action::UpperCaseLine { count: 1 }
+        );
+    }
+
+    #[test]
+    fn resolves_indent_outdent_and_toggle_case_operators_with_motion_and_doubled_form() {
+        let map = Keymap::vim_defaults();
+        let mut resolver = Resolver::default();
+
+        // `>w` indents the word's lines.
+        assert_eq!(resolver.feed(Key::char('>'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('w'), &map)).action,
+            Action::IndentMotion {
+                count: 1,
+                motion: Box::new(Action::MoveToWord {
+                    count: 1,
+                    select: false
+                })
+            }
+        );
+
+        // `>>` (doubled operator) indents the current line.
+        assert_eq!(resolver.feed(Key::char('>'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('>'), &map)).action,
+            Action::Indent { count: 1 }
+        );
+
+        // `<<` (doubled operator) outdents the current line.
+        assert_eq!(resolver.feed(Key::char('<'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('<'), &map)).action,
+            Action::Outdent { count: 1 }
+        );
+
+        // `g~w` toggles case over the word.
+        assert_eq!(resolver.feed(Key::char('g'), &map), ResolveOutcome::Pending);
+        assert_eq!(resolver.feed(Key::char('~'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('w'), &map)).action,
+            Action::ToggleCaseMotion {
+                count: 1,
+                motion: Box::new(Action::MoveToWord {
+                    count: 1,
+                    select: false
+                })
+            }
+        );
+
+        // `g~~` (doubled operator) toggles case over the current line.
+        assert_eq!(resolver.feed(Key::char('g'), &map), ResolveOutcome::Pending);
+        assert_eq!(resolver.feed(Key::char('~'), &map), ResolveOutcome::Pending);
+        assert_eq!(
+            resolved(resolver.feed(Key::char('~'), &map)).action,
+            Action::ToggleCaseLine { count: 1 }
         );
     }
 

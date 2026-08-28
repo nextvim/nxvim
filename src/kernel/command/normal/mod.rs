@@ -4,16 +4,20 @@
 
 pub mod motions;
 pub mod operators;
+pub mod text_objects;
 pub mod windows;
 
 use vim_buffer::MutationOutcome;
 use vim_input::Action;
 
 use crate::kernel::{
-    Editor, command::CommandContext, ids::WindowId, outcome::Outcome, transaction,
+    Editor, command::CommandContext, ids::WindowId, mode::VisualKind, outcome::Outcome, transaction,
 };
 
 pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Outcome {
+    if operators::is_repeatable_change(&action) {
+        editor.set_last_change(action.clone());
+    }
     match action {
         Action::MoveLeft { count, select } => motions::move_left(editor, ctx.window, count, select),
         Action::MoveRight { count, select } => {
@@ -22,10 +26,46 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::MoveUp { count, select } => motions::move_up(editor, ctx.window, count, select),
         Action::MoveDown { count, select } => motions::move_down(editor, ctx.window, count, select),
         Action::SetToInsert => super::insert::enter(editor),
+        Action::SetToReplace => super::insert::enter_replace(editor, ctx.window, false),
+        Action::SetToVirtualReplace => super::insert::enter_replace(editor, ctx.window, true),
+        Action::SetToVisual => super::visual::enter(editor, ctx.window, VisualKind::Char),
+        Action::SetToVisualLine => super::visual::enter(editor, ctx.window, VisualKind::Line),
+        Action::SetToVisualBlock => super::visual::enter(editor, ctx.window, VisualKind::Block),
+        Action::ReselectLastVisual => super::visual::reselect_last_visual(editor, ctx.window),
         Action::SetToCommand => super::ex::enter(editor),
         Action::DeleteMotion { count, motion } => {
             operators::delete_motion(editor, ctx.window, count, &motion)
         }
+        Action::DeleteLine { count } => operators::delete_line(editor, ctx.window, count),
+        Action::ChangeMotion { count, motion } => {
+            operators::change_motion(editor, ctx.window, count, &motion)
+        }
+        Action::ChangeLine { count } => operators::change_line(editor, ctx.window, count),
+        Action::YankMotion { count, motion } => {
+            operators::yank_motion(editor, ctx.window, count, &motion)
+        }
+        Action::YankLine { count } => operators::yank_line(editor, ctx.window, count),
+        Action::UpperCaseMotion { count, motion } => {
+            operators::upper_case_motion(editor, ctx.window, count, &motion)
+        }
+        Action::LowerCaseMotion { count, motion } => {
+            operators::lower_case_motion(editor, ctx.window, count, &motion)
+        }
+        Action::ToggleCaseMotion { count, motion } => {
+            operators::toggle_case_motion(editor, ctx.window, count, &motion)
+        }
+        Action::UpperCaseLine { count } => operators::upper_case_line(editor, ctx.window, count),
+        Action::LowerCaseLine { count } => operators::lower_case_line(editor, ctx.window, count),
+        Action::ToggleCaseLine { count } => operators::toggle_case_line(editor, ctx.window, count),
+        Action::IndentMotion { count, motion } => {
+            operators::indent_motion(editor, ctx.window, count, &motion)
+        }
+        Action::OutdentMotion { count, motion } => {
+            operators::outdent_motion(editor, ctx.window, count, &motion)
+        }
+        Action::Indent { count } => operators::indent(editor, ctx.window, count),
+        Action::Outdent { count } => operators::outdent(editor, ctx.window, count),
+        Action::Repeat { count } => operators::repeat_last_change(editor, ctx.window, count),
         Action::Undo { count } => undo(editor, ctx.window, count),
         Action::Redo { count } => redo(editor, ctx.window, count),
         Action::SplitHorizontal { .. } => windows::split_horizontal(editor, ctx),
@@ -166,6 +206,12 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         }
         Action::RepeatCharacterSearchBackward { count, select } => {
             motions::repeat_character_search(editor, ctx.window, count, true, select)
+        }
+        Action::MoveWithinCharacter { ch, .. } => {
+            text_objects::select(editor, ctx.window, ch, false)
+        }
+        Action::MoveAroundCharacter { ch, .. } => {
+            text_objects::select(editor, ctx.window, ch, true)
         }
         _ => Outcome::default(),
     }

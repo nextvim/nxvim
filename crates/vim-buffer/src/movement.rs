@@ -150,19 +150,20 @@ pub trait Motions {
         buffer: &Buffer,
     ) -> Selection<Anchor>;
 
-    fn move_within_character(
+    /// Resolves a text object (`iw`/`aw`, `i(`/`a(`, `i"`/`a"`, `it`/`at`,
+    /// `is`/`as`, `ip`/`ap`, ...) at the current cursor into the selection it
+    /// spans. `around` selects the `a`-variant (including delimiters/
+    /// surrounding whitespace); otherwise the `i`-variant. Falls back to
+    /// `self.clone()` for an unrecognized `ch` or when no enclosing object is
+    /// found -- never a panic. `anchor` is accepted for signature symmetry with
+    /// the rest of `Motions` but unused: like `move_within_character`/
+    /// `move_around_character` before it, a text object always resolves to a
+    /// brand new start/end pair rather than extending the existing selection.
+    fn text_object(
         &self,
         anchor: bool,
-        count: u32,
         ch: char,
-        buffer: &Buffer,
-    ) -> Selection<Anchor>;
-
-    fn move_around_character(
-        &self,
-        anchor: bool,
-        count: u32,
-        ch: char,
+        around: bool,
         buffer: &Buffer,
     ) -> Selection<Anchor>;
 }
@@ -1080,131 +1081,322 @@ impl Motions for Selection<Anchor> {
         }
     }
 
-    fn move_within_character(
+    fn text_object(
         &self,
         _anchor: bool,
-        _count: u32,
         ch: char,
+        around: bool,
         buffer: &Buffer,
     ) -> Selection<Anchor> {
-        let (start_ch, end_ch) = match ch {
-            '{' | '}' => ('{', '}'),
-            '[' | ']' => ('[', ']'),
-            '(' | ')' => ('(', ')'),
-            '\'' => ('\'', '\''),
-            '"' => ('"', '"'),
-            _ => ('`', '`'),
-        };
-
-        let start_sel = self.find_character(false, 1, start_ch, false, false, buffer);
-        let start_pos = start_sel.head().to_point(buffer);
-
-        let end_sel = start_sel.find_character(true, 1, end_ch, true, false, buffer);
-        let end_pos = end_sel.head().to_point(buffer);
-
-        if start_pos == self.head().to_point(buffer)
-            || end_pos == start_pos
-            || start_pos.row != end_pos.row
-        {
-            return self.clone();
-        }
-
-        let start_col = start_pos.column + 1;
-        let end_col = end_pos.column.saturating_sub(1);
-
-        let start_offset = buffer
-            .clip_point(
-                Point {
-                    row: start_pos.row,
-                    column: start_col,
-                },
-                Bias::Right,
-            )
-            .to_offset(buffer);
-        let end_offset = buffer
-            .clip_point(
-                Point {
-                    row: end_pos.row,
-                    column: end_col,
-                },
-                Bias::Left,
-            )
-            .to_offset(buffer);
-
-        let start_anchor = buffer.anchor_at(start_offset, Bias::Left);
-        let end_anchor = buffer.anchor_at(end_offset, Bias::Right);
-
-        Selection {
-            id: self.id,
-            start: start_anchor,
-            end: end_anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
+        match ch {
+            'w' | 'W' => word_text_object(self, ch == 'W', around, buffer),
+            '(' | ')' | '{' | '}' | '[' | ']' | 'b' | 'B' => {
+                bracket_text_object(self, around, buffer)
+            }
+            '"' | '\'' | '`' => quote_text_object(self, ch, around, buffer),
+            't' => tag_text_object(self, around, buffer),
+            's' => sentence_text_object(self, around, buffer),
+            'p' => paragraph_text_object(self, around, buffer),
+            _ => self.clone(),
         }
     }
+}
 
-    fn move_around_character(
-        &self,
-        _anchor: bool,
-        _count: u32,
-        ch: char,
-        buffer: &Buffer,
-    ) -> Selection<Anchor> {
-        let (start_ch, end_ch) = match ch {
-            '{' | '}' => ('{', '}'),
-            '[' | ']' => ('[', ']'),
-            '(' | ')' => ('(', ')'),
-            '\'' => ('\'', '\''),
-            '"' => ('"', '"'),
-            _ => ('`', '`'),
-        };
+/// Builds a full (non-anchored) selection spanning the half-open byte range
+/// `[start_offset, end_offset)`, the shape every text-object helper below
+/// computes its target in. `Motions::text`/`Selection::text` treat a
+/// selection's endpoints as inclusive (matching Vim's own selection model),
+/// so the anchor is placed at `end_offset - 1`, the last byte actually
+/// included. Callers must ensure `end_offset > start_offset`.
+fn selection_from_offsets(
+    id: usize,
+    start_offset: usize,
+    end_offset: usize,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    debug_assert!(end_offset > start_offset);
+    Selection {
+        id,
+        start: buffer.anchor_at(start_offset, Bias::Left),
+        end: buffer.anchor_at(end_offset - 1, Bias::Right),
+        reversed: false,
+        goal: SelectionGoal::None,
+    }
+}
 
-        let start_sel = self.find_character(false, 1, start_ch, false, false, buffer);
-        let start_pos = start_sel.head().to_point(buffer);
+/// A zero-width selection at `offset`, used as a probe cursor to re-run an
+/// existing boundary motion (`move_to_previous_sentence`, etc.) from a
+/// position other than the real cursor.
+fn point_selection(id: usize, offset: usize, buffer: &Buffer) -> Selection<Anchor> {
+    let anchor = buffer.anchor_at(offset, Bias::Left);
+    Selection {
+        id,
+        start: anchor,
+        end: anchor,
+        reversed: false,
+        goal: SelectionGoal::None,
+    }
+}
 
-        let end_sel = start_sel.find_character(true, 1, end_ch, true, false, buffer);
-        let end_pos = end_sel.head().to_point(buffer);
+/// `iw`/`aw`/`iW`/`aW`: built entirely from `TextSearch::find_words`/
+/// `find_big_words` (the same word-boundary math `Motions::move_to_word`
+/// and friends use), never crossing a line -- Vim's word objects never do.
+fn word_text_object(
+    selection: &Selection<Anchor>,
+    big: bool,
+    around: bool,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    let point = selection.head().to_point(buffer);
+    let text = buffer.row_text(point.row);
+    let range = word_object_range(&text, point.column as usize, big, around);
+    if range.end <= range.start {
+        return selection.clone();
+    }
+    let row_start = Point::new(point.row, 0).to_offset(buffer);
+    selection_from_offsets(
+        selection.id,
+        row_start + range.start,
+        row_start + range.end,
+        buffer,
+    )
+}
 
-        if start_pos == self.head().to_point(buffer)
-            || end_pos == start_pos
-            || start_pos.row != end_pos.row
-        {
-            return self.clone();
+/// Row-relative byte range for a word text object, `text` being a single
+/// row's text and `byte` the row-relative byte column of the cursor.
+fn word_object_range(text: &str, byte: usize, big: bool, around: bool) -> std::ops::Range<usize> {
+    let byte = byte.min(text.len());
+    let words: Vec<(usize, usize, &str)> = if big {
+        text.find_big_words()
+    } else {
+        text.find_words()
+    };
+
+    if let Some(&(start, end, _)) = words.iter().find(|(s, e, _)| *s <= byte && byte < *e) {
+        if !around {
+            return start..end;
         }
+        if let Some(&(next_start, _, _)) = words.iter().find(|(s, _, _)| *s >= end) {
+            return start..next_start;
+        }
+        let prev_end = words
+            .iter()
+            .rev()
+            .find(|(_, e, _)| *e <= start)
+            .map(|(_, e, _)| *e)
+            .unwrap_or(0);
+        return prev_end..end;
+    }
 
-        let start_col = start_pos.column;
-        let end_col = end_pos.column;
+    // The cursor sits on whitespace: `iw` selects the whitespace run
+    // itself; `aw` extends it to include the following word.
+    let prev_end = words
+        .iter()
+        .rev()
+        .find(|(_, e, _)| *e <= byte)
+        .map(|(_, e, _)| *e)
+        .unwrap_or(0);
+    let next = words.iter().find(|(s, _, _)| *s >= byte).copied();
+    let next_start = next.map(|(s, _, _)| s).unwrap_or(text.len());
+    if !around {
+        return prev_end..next_start;
+    }
+    match next {
+        Some((_, next_end, _)) => prev_end..next_end,
+        None => prev_end..next_start,
+    }
+}
 
-        let start_offset = buffer
-            .clip_point(
-                Point {
-                    row: start_pos.row,
-                    column: start_col,
-                },
-                Bias::Right,
-            )
-            .to_offset(buffer);
-        let end_offset = buffer
-            .clip_point(
-                Point {
-                    row: end_pos.row,
-                    column: end_col,
-                },
-                Bias::Left,
-            )
-            .to_offset(buffer);
+/// `i(`/`a(`, `i{`/`a{`, `i[`/`a[`, `ib`/`ab`, `iB`/`aB`: the innermost
+/// enclosing brace/paren/bracket block, nesting-aware and multi-line, found
+/// via `vim_scanner::StructuralScanner::scan_rows_for_enclosing`. Every
+/// bracket kind (and Vim's `b`/`B` aliases) resolves to whichever
+/// block actually encloses the cursor, matching how a cheap lexical scan
+/// (rather than full delimiter-kind-aware matching) can support this
+/// family without extra machinery.
+fn bracket_text_object(
+    selection: &Selection<Anchor>,
+    around: bool,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    let byte = selection.head().to_offset(buffer);
+    let Some(matched) = vim_scanner::StructuralScanner::scan_rows_for_enclosing(
+        buffer,
+        0,
+        buffer.row_count(),
+        byte,
+        true,
+    ) else {
+        return selection.clone();
+    };
+    let range = if around {
+        matched.outer_range()
+    } else {
+        matched.inner_range()
+    };
+    if range.end <= range.start {
+        return selection.clone();
+    }
+    selection_from_offsets(selection.id, range.start, range.end, buffer)
+}
 
-        let start_anchor = buffer.anchor_at(start_offset, Bias::Left);
-        let end_anchor = buffer.anchor_at(end_offset, Bias::Right);
+/// `i"`/`a"`, `i'`/`a'`, `` i` ``/`` a` ``: quote objects never cross
+/// lines, so only the cursor's own row is scanned via
+/// `vim_scanner::StructuralScanner::scan`, filtered to the requested quote
+/// kind, picking the smallest span containing the cursor's column.
+fn quote_text_object(
+    selection: &Selection<Anchor>,
+    ch: char,
+    around: bool,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    let kind = match ch {
+        '"' => vim_scanner::DelimiterKind::DoubleQuote,
+        '\'' => vim_scanner::DelimiterKind::SingleQuote,
+        _ => vim_scanner::DelimiterKind::BackTick,
+    };
+    let point = selection.head().to_point(buffer);
+    let text = buffer.row_text(point.row);
+    let scan = vim_scanner::StructuralScanner::scan(&text);
+    let column = point.column as usize;
+    let Some(matched) = scan
+        .matches()
+        .iter()
+        .filter(|m| m.kind == kind && m.start <= column && column <= m.end)
+        .min_by_key(|m| m.end - m.start)
+    else {
+        return selection.clone();
+    };
+    let range = if around {
+        matched.outer_range()
+    } else {
+        matched.inner_range()
+    };
+    if range.end <= range.start {
+        return selection.clone();
+    }
+    let row_start = Point::new(point.row, 0).to_offset(buffer);
+    selection_from_offsets(
+        selection.id,
+        row_start + range.start,
+        row_start + range.end,
+        buffer,
+    )
+}
 
-        Selection {
-            id: self.id,
-            start: start_anchor,
-            end: end_anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
+/// `it`/`at`: the innermost balanced same-name tag pair enclosing the
+/// cursor, via `vim_scanner::scan_tag_pair_in_rows` -- a plain lexical scan,
+/// not a grammar/parser.
+fn tag_text_object(
+    selection: &Selection<Anchor>,
+    around: bool,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    let byte = selection.head().to_offset(buffer);
+    let Some(pair) = vim_scanner::scan_tag_pair_in_rows(buffer, 0, buffer.row_count(), byte) else {
+        return selection.clone();
+    };
+    let range = if around {
+        pair.outer_range()
+    } else {
+        pair.inner_range()
+    };
+    if range.end <= range.start {
+        return selection.clone();
+    }
+    selection_from_offsets(selection.id, range.start, range.end, buffer)
+}
+
+/// `is`/`as`: built from the existing `move_to_previous_sentence`/
+/// `move_to_next_sentence` boundary motions. The current sentence's end
+/// boundary is found directly by `move_to_next_sentence`; its start is
+/// found by probing one byte before that boundary and asking
+/// `move_to_previous_sentence` for the boundary strictly before *that* --
+/// which lands on the start of the sentence containing the original
+/// cursor, even when the cursor itself sits exactly on a sentence start.
+/// `is` additionally trims the trailing whitespace `as` keeps.
+fn sentence_text_object(
+    selection: &Selection<Anchor>,
+    around: bool,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    let next_offset = selection
+        .move_to_next_sentence(false, buffer)
+        .head()
+        .to_point(buffer)
+        .to_offset(buffer);
+    let probe_offset = next_offset.saturating_sub(1);
+    let probe = point_selection(selection.id, probe_offset, buffer);
+    let start_offset = probe
+        .move_to_previous_sentence(false, buffer)
+        .head()
+        .to_point(buffer)
+        .to_offset(buffer);
+
+    let end_offset = if around {
+        next_offset
+    } else {
+        let text: String = buffer
+            .as_rope()
+            .chunks_in_range(start_offset..next_offset)
+            .collect();
+        start_offset + text.trim_end().len()
+    };
+    if end_offset <= start_offset {
+        return selection.clone();
+    }
+    selection_from_offsets(selection.id, start_offset, end_offset, buffer)
+}
+
+/// `ip`/`ap`: built from the existing `move_to_previous_paragraph`/
+/// `move_to_next_paragraph` boundary motions, using the same
+/// probe-before-the-boundary trick as `sentence_text_object` so a cursor
+/// sitting exactly on a paragraph boundary still resolves to the paragraph
+/// it's in rather than the one before it. `ip` additionally trims blank
+/// lines directly preceding the boundary that `ap` keeps.
+fn paragraph_text_object(
+    selection: &Selection<Anchor>,
+    around: bool,
+    buffer: &Buffer,
+) -> Selection<Anchor> {
+    let next_offset = selection
+        .move_to_next_paragraph(false, buffer)
+        .head()
+        .to_point(buffer)
+        .to_offset(buffer);
+    let probe_offset = next_offset.saturating_sub(1);
+    let probe = point_selection(selection.id, probe_offset, buffer);
+    let start_offset = probe
+        .move_to_previous_paragraph(false, buffer)
+        .head()
+        .to_point(buffer)
+        .to_offset(buffer);
+
+    let end_offset = if around {
+        next_offset
+    } else {
+        trim_trailing_blank_lines(buffer, start_offset, next_offset)
+    };
+    if end_offset <= start_offset {
+        return selection.clone();
+    }
+    selection_from_offsets(selection.id, start_offset, end_offset, buffer)
+}
+
+/// Trims blank rows immediately preceding `end_offset`'s row back down to
+/// (but never past) `start_offset`.
+fn trim_trailing_blank_lines(buffer: &Buffer, start_offset: usize, end_offset: usize) -> usize {
+    let mut row = end_offset.to_point(buffer).row;
+    while row > 0 {
+        let prev_row = row - 1;
+        let prev_offset = Point::new(prev_row, 0).to_offset(buffer);
+        if buffer.line_len(prev_row) == 0 && prev_offset >= start_offset {
+            row = prev_row;
+        } else {
+            break;
         }
     }
+    Point::new(row, 0).to_offset(buffer).max(start_offset)
 }
 
 #[cfg(test)]
@@ -1291,33 +1483,123 @@ mod tests {
     }
 
     #[test]
-    fn test_move_within_character() {
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a {hello} b");
-        let cursor = selection(&buffer, 0, 4, 4, false);
-        let result = cursor.move_within_character(false, 1, '{', &buffer);
-        assert_eq!(result.text(&buffer), "hello");
+    fn test_word_text_object() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "foo bar baz");
+        let cursor = selection(&buffer, 0, 5, 5, false);
+        assert_eq!(
+            cursor.text_object(false, 'w', false, &buffer).text(&buffer),
+            "bar"
+        );
+        assert_eq!(
+            cursor.text_object(false, 'w', true, &buffer).text(&buffer),
+            "bar "
+        );
     }
 
     #[test]
-    fn test_move_around_character() {
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a {hello} b");
-        let cursor = selection(&buffer, 0, 4, 4, false);
-        let result = cursor.move_around_character(false, 1, '{', &buffer);
-        assert_eq!(result.text(&buffer), "{hello}");
+    fn test_bracket_text_object_is_nesting_aware_and_multi_line() {
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a (b (c) d) e");
+        let cursor = selection(&buffer, 0, 6, 6, false);
+        assert_eq!(
+            cursor.text_object(false, '(', false, &buffer).text(&buffer),
+            "c"
+        );
+        assert_eq!(
+            cursor.text_object(false, '(', true, &buffer).text(&buffer),
+            "(c)"
+        );
+
+        let multi_line = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "(\n  (x)\n)");
+        let cursor = selection(&multi_line, 0, 5, 5, false);
+        assert_eq!(
+            cursor
+                .text_object(false, '(', false, &multi_line)
+                .text(&multi_line),
+            "x"
+        );
+        assert_eq!(
+            cursor
+                .text_object(false, '(', true, &multi_line)
+                .text(&multi_line),
+            "(x)"
+        );
     }
 
     #[test]
-    fn test_move_within_character_visual() {
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "a {hello} b");
-        let cursor = Selection {
-            id: 0,
-            start: buffer.anchor_at(4, Bias::Left),
-            end: buffer.anchor_at(0, Bias::Left),
-            reversed: true,
-            goal: SelectionGoal::None,
-        };
-        let result = cursor.move_within_character(true, 1, '{', &buffer);
-        assert_eq!(result.text(&buffer), "hello");
+    fn test_quote_text_object_never_crosses_lines() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "say \"hello\" now\nunterminated \"here",
+        );
+        let cursor = selection(&buffer, 0, 6, 6, false);
+        assert_eq!(
+            cursor.text_object(false, '"', false, &buffer).text(&buffer),
+            "hello"
+        );
+        assert_eq!(
+            cursor.text_object(false, '"', true, &buffer).text(&buffer),
+            "\"hello\""
+        );
+
+        // A quote opened on one row and never closed on that row doesn't
+        // pick up a closing quote from a later row.
+        let cursor = selection(&buffer, 0, 30, 30, false);
+        assert_eq!(cursor.text_object(false, '"', false, &buffer), cursor);
+    }
+
+    #[test]
+    fn test_tag_text_object() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "<div><span>hi</span></div>",
+        );
+        let cursor = selection(&buffer, 0, 12, 12, false);
+        assert_eq!(
+            cursor.text_object(false, 't', false, &buffer).text(&buffer),
+            "hi"
+        );
+        assert_eq!(
+            cursor.text_object(false, 't', true, &buffer).text(&buffer),
+            "<span>hi</span>"
+        );
+    }
+
+    #[test]
+    fn test_sentence_text_object() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "One sentence. Another one. Third.",
+        );
+        let cursor = selection(&buffer, 0, 20, 20, false);
+        assert_eq!(
+            cursor.text_object(false, 's', false, &buffer).text(&buffer),
+            "Another one."
+        );
+        assert_eq!(
+            cursor.text_object(false, 's', true, &buffer).text(&buffer),
+            "Another one. "
+        );
+    }
+
+    #[test]
+    fn test_paragraph_text_object() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "line1\nline2\n\n\nnext1",
+        );
+        let cursor = selection(&buffer, 0, 2, 2, false);
+        assert_eq!(
+            cursor.text_object(false, 'p', false, &buffer).text(&buffer),
+            "line1\nline2\n"
+        );
+        assert_eq!(
+            cursor.text_object(false, 'p', true, &buffer).text(&buffer),
+            "line1\nline2\n\n"
+        );
     }
 
     #[test]

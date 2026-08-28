@@ -10,6 +10,7 @@ use std::time::Duration;
 use crossterm::event::{self, Event};
 
 use crate::app::{App, input::InputTranslator};
+use crate::kernel::outcome::RedrawInvalidation;
 use crate::view;
 
 pub fn run(
@@ -22,6 +23,12 @@ pub fn run(
     let mut render_state = view::RenderState::new();
     // Temporary debug status (mode + last resolved action), see `view::render`.
     let mut status = format!("-- {:?} -- last: (none)", app.editor().mode());
+    // Invalidations accumulated since the last frame was flushed, and
+    // whether the next frame must repaint unconditionally (forced by a
+    // resize). The very first frame always renders fully.
+    let mut pending_invalidations: Vec<RedrawInvalidation> = Vec::new();
+    let mut force_full = true;
+
     let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
         Some(app.prompt().text().to_string())
     } else {
@@ -34,7 +41,11 @@ pub fn run(
         &status,
         prompt_opt.as_deref(),
         screen,
+        &pending_invalidations,
+        force_full,
     )?;
+    pending_invalidations.clear();
+    force_full = false;
 
     loop {
         if !event::poll(Duration::from_millis(50))? {
@@ -44,6 +55,7 @@ pub fn run(
 
         if let Event::Resize(columns, rows) = ev {
             screen = vim_ui::Rect::new(0, 0, columns, rows);
+            force_full = true;
             let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
                 Some(app.prompt().text().to_string())
             } else {
@@ -56,7 +68,11 @@ pub fn run(
                 &status,
                 prompt_opt.as_deref(),
                 screen,
+                &pending_invalidations,
+                force_full,
             )?;
+            pending_invalidations.clear();
+            force_full = false;
             continue;
         }
 
@@ -71,22 +87,30 @@ pub fn run(
                     outcome.invalidation,
                     outcome.events.len()
                 );
+                if outcome.invalidation != RedrawInvalidation::None {
+                    pending_invalidations.push(outcome.invalidation);
+                }
             }
         } else {
             let buf_id = app.editor().current_context().buffer.get();
             if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id)) {
                 let action_desc = format!("{:?}", resolved.action);
                 let outcome = app.handle_action(resolved.action);
-                status = format!(
-                    "-- {:?} -- last: {action_desc} -- mutated: {} invalidation: {:?} events: {}",
-                    app.editor().mode(),
-                    outcome.mutated,
-                    outcome.invalidation,
-                    outcome.events.len()
-                );
-            } else {
-                status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
+                if outcome.invalidation != RedrawInvalidation::None {
+                    pending_invalidations.push(outcome.invalidation);
+                }
+                // status = format!(
+                //     "-- {:?} -- last: {action_desc} -- mutated: {} invalidation: {:?} events: {}",
+                //     app.editor().mode(),
+                //     outcome.mutated,
+                //     outcome.invalidation,
+                //     outcome.events.len()
+                // );
             }
+            // else {
+            status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
+            // }
+            status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
         }
 
         if let Some(request) = app.take_request() {
@@ -110,6 +134,10 @@ pub fn run(
             &status,
             prompt_opt.as_deref(),
             screen,
+            &pending_invalidations,
+            force_full,
         )?;
+        pending_invalidations.clear();
+        force_full = false;
     }
 }
