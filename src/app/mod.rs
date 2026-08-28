@@ -128,11 +128,24 @@ impl App {
     }
 
     fn handle_submitted_line(&mut self, line: &str) -> Outcome {
-        let command = match crate::kernel::command::ex::parse(line) {
-            Some(cmd) => cmd,
-            None => return Outcome::default(),
-        };
-        self.execute_ex_command(command)
+        let mode = self.editor.mode();
+        match mode {
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward) => {
+                let (pattern, offset) = crate::kernel::command::search::parse_search_query(line, '/');
+                crate::kernel::command::search::search(&mut self.editor, &pattern, true, 1, offset)
+            }
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchBackward) => {
+                let (pattern, offset) = crate::kernel::command::search::parse_search_query(line, '?');
+                crate::kernel::command::search::search(&mut self.editor, &pattern, false, 1, offset)
+            }
+            _ => {
+                let command = match crate::kernel::command::ex::parse(line) {
+                    Some(cmd) => cmd,
+                    None => return Outcome::default(),
+                };
+                self.execute_ex_command(command)
+            }
+        }
     }
 
     fn execute_ex_command(&mut self, command: vim_script::ast::ExCommand) -> Outcome {

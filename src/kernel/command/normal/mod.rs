@@ -228,6 +228,16 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::PutLines { line, before } => {
             registers_ops::put_lines(editor, ctx.window, line, before)
         }
+        Action::SetToCommandSearchForward => super::ex::enter_search(editor, true),
+        Action::SetToCommandSearchBackward => super::ex::enter_search(editor, false),
+        Action::SearchForward { count } => super::search::search(editor, "", true, count, None),
+        Action::SearchBackward { count } => super::search::search(editor, "", false, count, None),
+        Action::SearchWordUnderForward { count } => {
+            super::search::search_word_under(editor, true, count)
+        }
+        Action::SearchWordUnderBackward { count } => {
+            super::search::search_word_under(editor, false, count)
+        }
         _ => Outcome::default(),
     }
 }

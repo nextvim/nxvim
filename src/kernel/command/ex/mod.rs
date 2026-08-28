@@ -30,7 +30,21 @@ pub fn dispatch(editor: &mut Editor, _ctx: CommandContext, action: Action) -> Ou
 }
 
 pub fn enter(editor: &mut Editor) -> Outcome {
-    editor.set_mode(Mode::Command);
+    editor.set_mode(Mode::Command(crate::kernel::mode::CommandKind::Ex));
+    Outcome {
+        mode_changed: true,
+        invalidation: RedrawInvalidation::CurrentWindow,
+        ..Outcome::default()
+    }
+}
+
+pub fn enter_search(editor: &mut Editor, forward: bool) -> Outcome {
+    let kind = if forward {
+        crate::kernel::mode::CommandKind::SearchForward
+    } else {
+        crate::kernel::mode::CommandKind::SearchBackward
+    };
+    editor.set_mode(Mode::Command(kind));
     Outcome {
         mode_changed: true,
         invalidation: RedrawInvalidation::CurrentWindow,

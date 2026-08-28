@@ -491,7 +491,7 @@ one compiles and the kernel-purity grep above is clean.
          Salvage Ledger's clipboard note. Depends on 7.4's operators (`y`,
          `d`, `c`) as the producers that fill registers.
 
-   7.7. **Search** — `kernel/command/search.rs`. Pattern search, `n`/`N`,
+   7.7. [x] **Search** — `kernel/command/search.rs`. Pattern search, `n`/`N`,
         search offsets, `*`/`#`. Reads `'ignorecase'`/`'hlsearch'`/
         `'incsearch'` from 7.1, uses marks (7.5) to jump on match, and feeds
         the `/` register (7.6).

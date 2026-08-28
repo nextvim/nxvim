@@ -19,6 +19,7 @@ pub enum RegisterName {
     BlackHole,     // _
     Numbered(u8),  // 0-9
     Named(char),   // a-z or A-Z
+    Search,        // /
 }
 
 impl RegisterName {
@@ -27,6 +28,7 @@ impl RegisterName {
             '"' => Some(Self::Unnamed),
             '-' => Some(Self::SmallDelete),
             '_' => Some(Self::BlackHole),
+            '/' => Some(Self::Search),
             '0'..='9' => Some(Self::Numbered((c as u8) - b'0')),
             'a'..='z' | 'A'..='Z' => Some(Self::Named(c)),
             _ => None,
@@ -40,6 +42,7 @@ impl RegisterName {
             Self::BlackHole => '_',
             Self::Numbered(n) => (b'0' + n) as char,
             Self::Named(c) => c,
+            Self::Search => '/',
         }
     }
 }
@@ -50,6 +53,7 @@ pub struct Registers {
     named: std::collections::HashMap<char, Register>,
     unnamed: Register,
     small_delete: Register,
+    search: Register,
 }
 
 impl Default for Registers {
@@ -59,6 +63,7 @@ impl Default for Registers {
             named: std::collections::HashMap::new(),
             unnamed: Register::default(),
             small_delete: Register::default(),
+            search: Register::default(),
         }
     }
 }
@@ -75,6 +80,7 @@ impl Registers {
             RegisterName::BlackHole => None,
             RegisterName::Numbered(n) => self.numbered.get(n as usize),
             RegisterName::Named(c) => self.named.get(&c.to_ascii_lowercase()),
+            RegisterName::Search => Some(&self.search),
         }
     }
 
@@ -106,6 +112,9 @@ impl Registers {
                     self.named.insert(c.to_ascii_lowercase(), reg);
                 }
             }
+            RegisterName::Search => {
+                self.search = reg;
+            }
         }
     }
 
@@ -125,6 +134,9 @@ impl Registers {
             }
             RegisterName::Named(c) => {
                 self.named.remove(&c.to_ascii_lowercase());
+            }
+            RegisterName::Search => {
+                self.search = Register::default();
             }
         }
     }

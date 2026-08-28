@@ -18,13 +18,20 @@ pub enum VisualKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandKind {
+    Ex,
+    SearchForward,
+    SearchBackward,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Insert,
     Replace,
     VirtualReplace,
     Visual(VisualKind),
-    Command,
+    Command(CommandKind),
 }
 
 impl Mode {
@@ -45,6 +52,6 @@ impl Mode {
     }
 
     pub const fn is_command(self) -> bool {
-        matches!(self, Mode::Command)
+        matches!(self, Mode::Command(_))
     }
 }

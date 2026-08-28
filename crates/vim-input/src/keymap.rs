@@ -515,6 +515,12 @@ impl Keymap {
         motion_actions
             .bind("N", Action::SearchBackward { count: 1 })
             .expect("Valid binding");
+        motion_actions
+            .bind("*", Action::SearchWordUnderForward { count: 1 })
+            .expect("Valid binding");
+        motion_actions
+            .bind("#", Action::SearchWordUnderBackward { count: 1 })
+            .expect("Valid binding");
 
         motion_actions
             .bind(

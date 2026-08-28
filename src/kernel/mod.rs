@@ -947,7 +947,7 @@ mod tests {
         assert_eq!(editor.mode(), Mode::Normal);
 
         let outcome = editor.execute(Action::SetToCommand);
-        assert_eq!(editor.mode(), Mode::Command);
+        assert_eq!(editor.mode(), Mode::Command(crate::kernel::mode::CommandKind::Ex));
         assert!(outcome.mode_changed);
 
         let outcome = editor.execute(Action::Clear);
@@ -1528,6 +1528,59 @@ mod tests {
         editor.execute(Action::SetToInsert);
         editor.execute(Action::InsertRegister);
         assert_eq!(text_of(&editor), "worldworld\n");
+    }
+
+    #[test]
+    fn test_search_features() {
+        use text::ToPoint;
+        let (pattern, offset) = command::search::parse_search_query("pattern/e+2", '/');
+        assert_eq!(pattern, "pattern");
+        assert_eq!(offset, Some(command::search::SearchOffset {
+            line_offset: None,
+            char_offset: Some((true, 2)),
+        }));
+
+        let (pattern, offset) = command::search::parse_search_query("pattern/+3", '/');
+        assert_eq!(pattern, "pattern");
+        assert_eq!(offset, Some(command::search::SearchOffset {
+            line_offset: Some(3),
+            char_offset: None,
+        }));
+
+        let (pattern, offset) = command::search::parse_search_query("pat\\/tern", '/');
+        assert_eq!(pattern, "pat/tern");
+        assert_eq!(offset, None);
+
+        let mut editor = Editor::new("first line\nsecond line\nthird line");
+        let _outcome = command::search::search(&mut editor, "line", true, 1, None);
+        assert_eq!(editor.registers().get(buffer::registers::RegisterName::Search).unwrap().text, "line");
+        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
+        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        assert_eq!(point.row, 0);
+        assert_eq!(point.column, 6);
+
+        let _outcome = command::search::search(&mut editor, "", true, 1, None);
+        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
+        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        assert_eq!(point.row, 1);
+        assert_eq!(point.column, 7);
+
+        let mut editor = Editor::new("line 1\nline 2\nline 3");
+        let _outcome = command::search::search(&mut editor, "line", true, 1, Some(command::search::SearchOffset {
+            line_offset: Some(1),
+            char_offset: None,
+        }));
+        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
+        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        assert_eq!(point.row, 2);
+        assert_eq!(point.column, 0);
+
+        let mut editor = Editor::new("hello hello hello");
+        let _outcome = command::search::search_word_under(&mut editor, true, 1);
+        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
+        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        assert_eq!(point.row, 0);
+        assert_eq!(point.column, 6);
     }
 }
 

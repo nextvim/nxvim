@@ -8,6 +8,7 @@
 pub mod ex;
 pub mod insert;
 pub mod normal;
+pub mod search;
 pub mod visual;
 
 use vim_input::Action;
@@ -36,6 +37,6 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
             insert::dispatch(editor, ctx, action)
         }
         Mode::Visual(_) => visual::dispatch(editor, ctx, action),
-        Mode::Command => ex::dispatch(editor, ctx, action),
+        Mode::Command(_) => ex::dispatch(editor, ctx, action),
     }
 }

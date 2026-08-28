@@ -234,6 +234,56 @@ fn motion_target(
         Action::MoveToMatchingDelimiter { .. } => {
             Some(from.move_to_matching_delimiter(false, text_buffer))
         }
+        Action::SearchForward { count } => {
+            let (sel, _) = super::super::search::find_search_target(
+                editor,
+                "",
+                true,
+                *count,
+                None,
+                from,
+            )?;
+            Some(sel)
+        }
+        Action::SearchBackward { count } => {
+            let (sel, _) = super::super::search::find_search_target(
+                editor,
+                "",
+                false,
+                *count,
+                None,
+                from,
+            )?;
+            Some(sel)
+        }
+        Action::SearchWordUnderForward { count } => {
+            let word = super::super::search::word_under_cursor(editor, from)?;
+            let escaped = super::super::search::regex_escape(&word);
+            let pattern = format!("\\<{}\\>", escaped);
+            let (sel, _) = super::super::search::find_search_target(
+                editor,
+                &pattern,
+                true,
+                *count,
+                None,
+                from,
+            )?;
+            Some(sel)
+        }
+        Action::SearchWordUnderBackward { count } => {
+            let word = super::super::search::word_under_cursor(editor, from)?;
+            let escaped = super::super::search::regex_escape(&word);
+            let pattern = format!("\\<{}\\>", escaped);
+            let (sel, _) = super::super::search::find_search_target(
+                editor,
+                &pattern,
+                false,
+                *count,
+                None,
+                from,
+            )?;
+            Some(sel)
+        }
         Action::MoveToColumn { count } => Some(from.move_to_column(false, *count, text_buffer)),
         Action::MoveToNextCharacter {
             count, ch, till, ..

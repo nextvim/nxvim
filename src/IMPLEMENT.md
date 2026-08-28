@@ -1966,8 +1966,53 @@ in under this one just because they share the `"{c}` syntax.
 
 ## Checklist
 
-- [ ] Add the template for Search checklist once approved to proceed.
+1. - [x] `kernel/command/search.rs` (new): Implement query and offset parsing. Search offsets can be line offsets (e.g. `+3`, `-2`) or character offsets relative to match start/end (e.g. `b+2`, `e-1`).
+2. - [x] `search.rs`: Implement the search execution logic `pub fn search(editor: &mut Editor, query: &str, forward: bool, count: u32, offset: Option<SearchOffset>) -> Outcome`. Read `'ignorecase'` from `Editor::global_options` to compile the pattern. Store the compiled search string in the `/` register (Rule 4 item 9, utilizing 7.6 registers).
+3. - [x] `search.rs`: Ensure a successful search calls `marks_and_jumps::record_jump` to store the pre-search cursor position in the jump list (using 7.5 jumps) before moving the cursor to the matching line/column.
+4. - [x] `crates/vim-input/src/action.rs` & `keymap.rs`: Define or uncomment `SearchWordUnderForward` and `SearchWordUnderBackward`. Bind `*` to `Action::SearchWordUnderForward` and `#` to `Action::SearchWordUnderBackward` in normal-mode defaults.
+5. - [x] `kernel/command/normal/mod.rs`: Dispatch `Action::SearchForward`, `Action::SearchBackward`, `Action::SearchWordUnderForward`, and `Action::SearchWordUnderBackward`. For `n`/`N` (bound to SearchForward/SearchBackward with count), if the action represents repeating the last search, retrieve the pattern from the `/` register and execute it in the correct direction (same direction for `n`, opposite for `N`).
+6. - [x] `kernel/command/normal/mod.rs`: Implement `*`/`#` dispatch. Extract the word under the cursor using `vim-buffer`'s word boundary queries, escape any regex special characters, execute the search forward/backward, and store the pattern in the `/` register.
+7. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI or app dependencies leaked into search.
+8. - [x] Unit tests: Verify pattern search with case-sensitivity, `n`/`N` repeating the query stored in the `/` register, `*` and `#` searching the word under the cursor, search offset navigation (line and character offsets), and jump list recording.
+9. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to ensure all crates compile successfully.
 
 ## Criteria for Completion
 
-- [ ] Add the template for Search criteria once approved to proceed.
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] Search correctly reads `'ignorecase'` and `'hlsearch'` / `'incsearch'` options from 7.1's option registry.
+- [x] Searching correctly feeds the `/` register, and `n`/`N` repeats the query stored in the `/` register.
+- [x] Successful search jumps are recorded in the `JumpList` (re-using 7.5's marks/jumps).
+- [x] Search offsets (line offsets like `/pattern/3` and character offsets like `/pattern/e-1`) are parsed and correctly position the cursor.
+- [x] `*` and `#` correctly extract the word under the cursor, escape regex characters, perform the search, and update the `/` register.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Substitute (Build Order 7.8)
+
+> matching the Salvage Ledger's kernel/app split (matching and replacement planning in kernel, confirm-prompt lifecycle in app). :s, flags, confirm prompt. Depends on 7.7's pattern matching and 7.4's transaction path.
+
+## Checklist
+
+1. - [ ] `kernel/command/substitute.rs` (new): Implement parser for `:s` command arguments including the search pattern, replacement string, and flags (e.g., `g` for global, `c` for confirmation, `i`/`I` for case control).
+2. - [ ] `substitute.rs`: Implement matching and replacement planning logic. Use `crates/vim-buffer` pattern matching (aligned with 7.7) to locate targets, and generate a list of matches and draft replacements.
+3. - [ ] `kernel/outcome.rs` & `kernel/events.rs`: Define `Effect::ConfirmSubstitute` (or similar) to notify the app when a substitution requires confirmation, passing the target range and replacement details.
+4. - [ ] `app/prompt.rs` / `app/mod.rs`: Implement the confirm-prompt lifecycle. Intercept the kernel's confirmation effect and render a prompt asking the user to confirm (`y`/`n`/`a`/`q`/`l`), routing the user's decision back into the kernel.
+5. - [ ] `kernel/command/ex/mod.rs`: Wire the `:s` / `:substitute` command into the Ex command table, handling range resolution (e.g. `:%s/foo/bar/g`) and executing the substitution via the transaction path (`kernel/transaction.rs`).
+6. - [ ] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked into `kernel/command/substitute.rs`.
+7. - [ ] Unit tests: Verify range-based substitution, global replacement flags, case-insensitive options, and the step-by-step confirmation prompt state transitions.
+8. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+9. - [ ] Manual smoke test: Launch the binary, run `:s/foo/bar/g` on a line, and run `:%s/foo/bar/gc` to verify the confirm-prompt works in a terminal. **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [ ] `:s` range parsing correctly resolves target lines and bounds (e.g. `1,5s/foo/bar/`).
+- [ ] Substitution global (`g`) and case options (`i`/`I`) correctly modify target matches.
+- [ ] The confirm-prompt lifecycle correctly pauses execution, prompts the user via `app/prompt.rs`, and applies mutations to the buffer only on confirmation.
+- [ ] All mutations are grouped under a single undo transaction (`kernel/transaction.rs`).
+- [ ] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**

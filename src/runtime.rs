@@ -29,7 +29,7 @@ pub fn run(
     let mut pending_invalidations: Vec<RedrawInvalidation> = Vec::new();
     let mut force_full = true;
 
-    let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
+    let prompt_opt = if app.editor().mode().is_command() {
         Some(app.prompt().text().to_string())
     } else {
         None
@@ -56,7 +56,7 @@ pub fn run(
         if let Event::Resize(columns, rows) = ev {
             screen = vim_ui::Rect::new(0, 0, columns, rows);
             force_full = true;
-            let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
+            let prompt_opt = if app.editor().mode().is_command() {
                 Some(app.prompt().text().to_string())
             } else {
                 None
@@ -76,7 +76,7 @@ pub fn run(
             continue;
         }
 
-        let is_command_mode = app.editor().mode() == crate::kernel::mode::Mode::Command;
+        let is_command_mode = app.editor().mode().is_command();
         if is_command_mode {
             if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
                 let outcome = app.handle_raw_key(raw_key);
@@ -122,7 +122,7 @@ pub fn run(
             }
         }
 
-        let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
+        let prompt_opt = if app.editor().mode().is_command() {
             Some(app.prompt().text().to_string())
         } else {
             None

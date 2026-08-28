@@ -336,7 +336,12 @@ pub fn render(
     renderer.set_style(Style::default())?;
 
     if let Some(prompt_text) = prompt {
-        let display = format!(":{}", prompt_text);
+        let prefix = match editor.mode() {
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward) => "/",
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchBackward) => "?",
+            _ => ":",
+        };
+        let display = format!("{}{}", prefix, prompt_text);
         let visible = pad_or_truncate(&display, screen.width as usize);
         renderer.print(&visible)?;
         renderer.show_cursor(
