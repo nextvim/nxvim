@@ -610,7 +610,7 @@ one compiles and the kernel-purity grep above is clean.
         `full_text.split('\n')` loop entirely and is the foundation every
         other 8.x item builds on.
 
-   8.2. **Diffed/incremental redraw** — replace `runtime.rs`'s
+   8.2. [x] **Diffed/incremental redraw** — replace `runtime.rs`'s
         `Clear(ClearType::All)`-every-frame with `vim_ui::renderer::
         BufferedRenderer`'s existing double-buffer diff (or an equivalent
         `view`-owned mechanism), and use `kernel::Outcome.invalidation`
@@ -626,7 +626,7 @@ one compiles and the kernel-purity grep above is clean.
         statusline/tabline/scrollbar/selections/wrap below add more
         content to diff but need no changes to this mechanism itself.
 
-   8.3. **Cell-based rendering test harness** — `vim_ui::renderer::{Cell,
+   8.3. [x] **Cell-based rendering test harness** — `vim_ui::renderer::{Cell,
         ScreenBuffer}` is already a plain `symbol`/`fg`/`bg` grid with no
         ANSI encoding (used today only inside `BufferedRenderer`'s 8.2
         diffing); add a `view`-owned test helper that renders a

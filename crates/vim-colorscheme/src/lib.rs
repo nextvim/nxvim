@@ -122,6 +122,29 @@ impl Style {
         self.strikethrough = true;
         self
     }
+
+    /// Overlays another style onto this one, merging non-default fields.
+    pub fn apply(mut self, overlay: Self) -> Self {
+        if let Some(bg) = overlay.bg {
+            self.bg = Some(bg);
+        }
+        if let Some(fg) = overlay.fg {
+            self.fg = Some(fg);
+        }
+        if overlay.bold {
+            self.bold = true;
+        }
+        if overlay.italic {
+            self.italic = true;
+        }
+        if overlay.underline {
+            self.underline = true;
+        }
+        if overlay.strikethrough {
+            self.strikethrough = true;
+        }
+        self
+    }
 }
 
 /// A Vim-compatible color scheme struct populated externally.

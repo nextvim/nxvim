@@ -458,3 +458,61 @@ fn a_terminal_resize_forces_every_window_to_rebuild() {
         "a screen size change must force a full rebuild"
     );
 }
+
+#[test]
+fn test_render_selection_styles() {
+    use vim_ui::model::DisplaySelection;
+    use vim_ui::Style;
+
+    let mut selection_style = Style::default();
+    selection_style.bg = Some(vim_ui::Color::Yellow);
+
+    let model = TextViewModel {
+        viewport_width: 10,
+        viewport_height: 2,
+        rows: vec![
+            DisplayRow {
+                buffer_row: Some(0),
+                kind: DisplayRowKind::Buffer,
+                gutter: None,
+                spans: vec![TextSpan::new("abcdefgh", Style::default())],
+                fill_style: Style::default(),
+            },
+            DisplayRow {
+                buffer_row: Some(1),
+                kind: DisplayRowKind::Buffer,
+                gutter: None,
+                spans: vec![TextSpan::new("ijkl", Style::default())],
+                fill_style: Style::default(),
+            },
+        ],
+        selections: vec![DisplaySelection {
+            start: DisplayPosition { row: 0, column: 2 },
+            end: DisplayPosition { row: 1, column: 2 },
+            style: selection_style,
+        }],
+        cursor: None,
+        scrollbar: None,
+        default_style: Style::default(),
+    };
+
+    let cells = render_to_cells(&model);
+
+    // Row 0 columns 2..8 are selected: "cdefgh" should be styled.
+    for col in 2..8 {
+        assert_eq!(cells.get_cell(col, 0).unwrap().bg, vim_ui::Color::Yellow);
+    }
+    // Row 0 columns 0..2 are NOT selected.
+    for col in 0..2 {
+        assert_eq!(cells.get_cell(col, 0).unwrap().bg, vim_ui::Color::Reset);
+    }
+
+    // Row 1 columns 0..2 are selected: "ij" should be styled.
+    for col in 0..2 {
+        assert_eq!(cells.get_cell(col, 1).unwrap().bg, vim_ui::Color::Yellow);
+    }
+    // Row 1 columns 2..4 are NOT selected.
+    for col in 2..4 {
+        assert_eq!(cells.get_cell(col, 1).unwrap().bg, vim_ui::Color::Reset);
+    }
+}
