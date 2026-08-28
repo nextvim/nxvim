@@ -145,6 +145,8 @@ fn test_view_model_validation_and_caching() {
         selections: selections.clone(),
         is_current: true,
         scroll_top: 0,
+        name: "test".to_string(),
+        is_modified: false,
     };
 
     // Lazy cache creation
@@ -202,6 +204,8 @@ fn test_view_model_validation_and_caching() {
         selections: selections.clone(),
         is_current: true,
         scroll_top: 0,
+        name: "test".to_string(),
+        is_modified: false,
     };
 
     // Perform swapping logic
@@ -263,6 +267,8 @@ fn empty_projection(window: WindowId, buffer: BufferId, is_current: bool) -> Win
         selections,
         is_current,
         scroll_top: 0,
+        name: "test".to_string(),
+        is_modified: false,
     }
 }
 
@@ -515,4 +521,110 @@ fn test_render_selection_styles() {
     for col in 2..4 {
         assert_eq!(cells.get_cell(col, 1).unwrap().bg, vim_ui::Color::Reset);
     }
+}
+
+#[test]
+fn test_gutter_rendering() {
+    let mut editor = Editor::new("line1\nline2\nline3\n");
+    let mut render_state = RenderState::new();
+    let screen = Rect::new(0, 0, 40, 10);
+    let win_id = editor.current_context().window;
+
+    // 1. Initially number and relativenumber are off, signcolumn is auto, foldcolumn is 0
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    for row in &model.rows {
+        assert!(row.gutter.is_none());
+    }
+
+    // 2. Set number on
+    editor.submit_command_line("set number");
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    assert_eq!(model.rows[0].gutter.as_ref().unwrap().text, "   1 ");
+    assert_eq!(model.rows[1].gutter.as_ref().unwrap().text, "   2 ");
+    assert_eq!(model.rows[2].gutter.as_ref().unwrap().text, "   3 ");
+
+    // 3. Set relativenumber on, move cursor to second line (row 1)
+    editor.submit_command_line("set relativenumber");
+    editor.execute(Action::MoveDown { count: 1, select: false });
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    // With relativenumber and number on:
+    // Row 0 (line 1, relative 1) -> "   1 "
+    // Row 1 (line 2, current) -> "   2 "
+    // Row 2 (line 3, relative 1) -> "   1 "
+    assert_eq!(model.rows[0].gutter.as_ref().unwrap().text, "   1 ");
+    assert_eq!(model.rows[1].gutter.as_ref().unwrap().text, "   2 ");
+    assert_eq!(model.rows[2].gutter.as_ref().unwrap().text, "   1 ");
+
+    // 4. Set number off (relative number only)
+    editor.submit_command_line("set nonumber");
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    // With relativenumber only:
+    // Row 0 (relative 1) -> "   1 "
+    // Row 1 (current, shows 0) -> "   0 "
+    // Row 2 (relative 1) -> "   1 "
+    assert_eq!(model.rows[0].gutter.as_ref().unwrap().text, "   1 ");
+    assert_eq!(model.rows[1].gutter.as_ref().unwrap().text, "   0 ");
+    assert_eq!(model.rows[2].gutter.as_ref().unwrap().text, "   1 ");
+
+    // 5. Test signcolumn yes + foldcolumn 2 + relativenumber
+    editor.submit_command_line("set signcolumn=yes foldcolumn=2");
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    // Fold column = 2 spaces
+    // Sign column = 2 spaces
+    // Number column = "   1 "
+    // Gutter text should be "  " (2 spaces foldcolumn) + "  " (2 spaces signcolumn) + "   1 " (number) = "       1 "
+    assert_eq!(model.rows[0].gutter.as_ref().unwrap().text, "       1 ");
+    assert_eq!(model.rows[1].gutter.as_ref().unwrap().text, "       0 ");
+}
+
+#[test]
+fn test_statusline_rendering() {
+    let mut editor = Editor::new("line1\nline2\n");
+    let mut render_state = RenderState::new();
+    let screen = Rect::new(0, 0, 40, 10);
+
+    // Default statusline (laststatus=1, ruler=false): 1 window -> no statusline
+    let mut out = Vec::new();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    // Enable laststatus=2: window must show statusline (height - 1 statusline, screen.height - 1 bottom)
+    editor.submit_command_line("set laststatus=2");
+    out.clear();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    // Enable ruler: statusline must format and include cursor coordinates
+    editor.submit_command_line("set ruler");
+    out.clear();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    // Enable laststatus=3: global statusline at bottom row
+    editor.submit_command_line("set laststatus=3");
+    out.clear();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+}
+
+#[test]
+fn test_tabline_rendering() {
+    let mut editor = Editor::new("tabline test\n");
+    let mut render_state = RenderState::new();
+    let screen = Rect::new(0, 0, 40, 10);
+
+    // Default showtabline=1 (no tabline with only 1 tab page)
+    let mut out = Vec::new();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    // Set showtabline=2 (always show tabline)
+    editor.submit_command_line("set showtabline=2");
+    out.clear();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
 }

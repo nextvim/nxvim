@@ -32,6 +32,12 @@ pub enum Effect {
     FileSaveFailed { message: String },
     OptionMessage { message: String },
     ClipboardWrite { text: String, primary: bool },
+    ConfirmSubstitute {
+        buffer: BufferId,
+        match_range: TextRange,
+        match_text: String,
+        replacement: String,
+    },
 }
 
 /// The result of one `Editor::execute()` call.

@@ -731,31 +731,49 @@ fn apply_delete(
     };
     let effect = super::registers_ops::write_register(editor, true, deleted_text, kind);
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits: vec![PlannedEdit {
-                selection: None,
-                edit: Edit::delete(TextRange {
-                    start: ByteOffset(range.start),
-                    end: ByteOffset(range.end),
-                }),
-            }],
-            selections: None,
-        },
-    )
-    .expect("deleting a motion-derived range is always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::delete(TextRange {
+                        start: ByteOffset(range.start),
+                        end: ByteOffset(range.end),
+                    }),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("deleting a motion-derived range is always well-formed")
+    };
 
-    let landing = landing_selection(buffer, primary_id, range.start, range.linewise);
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by a delete");
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        landing_selection(buffer, primary_id, range.start, range.linewise)
+    };
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a delete");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     let mut outcome = Outcome::from_mutation(&mutation);
     if let Some(eff) = effect {
@@ -825,21 +843,25 @@ fn apply_delete_block(
     };
     let effect = super::registers_ops::write_register(editor, true, joined, RegisterKind::Block);
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits,
-            selections: None,
-        },
-    )
-    .expect("block-delete edits are always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits,
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("block-delete edits are always well-formed")
+    };
 
-    let text_buffer = buffer.as_text_buffer();
+    let text_buffer = editor.buffer(buffer_id).unwrap().as_text_buffer();
     let line_len = text_buffer.line_len(top_row);
     let offset = Point::new(top_row, top_col.min(line_len)).to_offset(text_buffer);
     let anchor = text_buffer.anchor_before(offset);
@@ -850,10 +872,21 @@ fn apply_delete_block(
         reversed: false,
         goal: SelectionGoal::None,
     };
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by a block delete");
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a block delete");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     let mut outcome = Outcome::from_mutation(&mutation);
     if let Some(eff) = effect {
@@ -1120,34 +1153,52 @@ fn apply_case_transform(
         .collect();
     let replacement = transform(&source);
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits: vec![PlannedEdit {
-                selection: None,
-                edit: Edit::replace(
-                    TextRange {
-                        start: ByteOffset(range.start),
-                        end: ByteOffset(range.end),
-                    },
-                    replacement,
-                ),
-            }],
-            selections: None,
-        },
-    )
-    .expect("a case-transform edit is always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::replace(
+                        TextRange {
+                            start: ByteOffset(range.start),
+                            end: ByteOffset(range.end),
+                        },
+                        replacement,
+                    ),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("a case-transform edit is always well-formed")
+    };
 
-    let landing = landing_selection(buffer, primary_id, range.start, range.linewise);
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by a case transform");
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        landing_selection(buffer, primary_id, range.start, range.linewise)
+    };
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a case transform");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     Outcome::from_mutation(&mutation)
 }
@@ -1194,25 +1245,43 @@ fn apply_case_transform_block(
         return Outcome::default();
     }
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits,
-            selections: None,
-        },
-    )
-    .expect("block case-transform edits are always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits,
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("block case-transform edits are always well-formed")
+    };
 
-    let landing = landing_selection(buffer, primary_id, top, false);
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by a block case transform");
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        landing_selection(buffer, primary_id, top, false)
+    };
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a block case transform");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     Outcome::from_mutation(&mutation)
 }
@@ -1441,26 +1510,44 @@ fn indent_rows(
         return Outcome::default();
     }
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits,
-            selections: None,
-        },
-    )
-    .expect("indent/outdent edits are always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits,
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("indent/outdent edits are always well-formed")
+    };
 
-    let row_start_offset = Point::new(start_row, 0).to_offset(buffer.as_text_buffer());
-    let landing = landing_selection(buffer, primary_id, row_start_offset, true);
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by indent/outdent");
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        let row_start_offset = Point::new(start_row, 0).to_offset(buffer.as_text_buffer());
+        landing_selection(buffer, primary_id, row_start_offset, true)
+    };
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by indent/outdent");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     Outcome::from_mutation(&mutation)
 }
@@ -1601,47 +1688,65 @@ pub fn delete_char(editor: &mut Editor, window: WindowId, count: u32) -> Outcome
 
     let effect = super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits: vec![PlannedEdit {
-                selection: None,
-                edit: Edit::delete(TextRange {
-                    start: ByteOffset(start_offset),
-                    end: ByteOffset(end_offset),
-                }),
-            }],
-            selections: None,
-        },
-    )
-    .expect("deleting a character-derived range is always well-formed");
-
-    let text_buffer = buffer.as_text_buffer();
-    let new_line_len = text_buffer.line_len(row);
-    let target_col = if new_line_len == 0 {
-        0
-    } else {
-        col.min(new_line_len - 1)
-    };
-    let target_offset = Point::new(row, target_col).to_offset(text_buffer);
-    let anchor = text_buffer.anchor_before(target_offset);
-    let landing = Selection {
-        id: primary.id,
-        start: anchor,
-        end: anchor,
-        reversed: false,
-        goal: SelectionGoal::None,
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::delete(TextRange {
+                        start: ByteOffset(start_offset),
+                        end: ByteOffset(end_offset),
+                    }),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("deleting a character-derived range is always well-formed")
     };
 
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by a delete");
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let new_line_len = text_buffer.line_len(row);
+        let target_col = if new_line_len == 0 {
+            0
+        } else {
+            col.min(new_line_len - 1)
+        };
+        let target_offset = Point::new(row, target_col).to_offset(text_buffer);
+        let anchor = text_buffer.anchor_before(target_offset);
+        Selection {
+            id: primary.id,
+            start: anchor,
+            end: anchor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }
+    };
+
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a delete");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     let mut outcome = Outcome::from_mutation(&mutation);
     if let Some(eff) = effect {
@@ -1693,45 +1798,175 @@ pub fn delete_char_before(editor: &mut Editor, window: WindowId, count: u32) -> 
 
     let effect = super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::User,
-            edits: vec![PlannedEdit {
-                selection: None,
-                edit: Edit::delete(TextRange {
-                    start: ByteOffset(start_offset),
-                    end: ByteOffset(end_offset),
-                }),
-            }],
-            selections: None,
-        },
-    )
-    .expect("deleting a character-derived range is always well-formed");
-
-    let text_buffer = buffer.as_text_buffer();
-    let target_offset = Point::new(row, start_col).to_offset(text_buffer);
-    let anchor = text_buffer.anchor_before(target_offset);
-    let landing = Selection {
-        id: primary.id,
-        start: anchor,
-        end: anchor,
-        reversed: false,
-        goal: SelectionGoal::None,
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::delete(TextRange {
+                        start: ByteOffset(start_offset),
+                        end: ByteOffset(end_offset),
+                    }),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("deleting a character-derived range is always well-formed")
     };
 
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by a delete");
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let target_offset = Point::new(row, start_col).to_offset(text_buffer);
+        let anchor = text_buffer.anchor_before(target_offset);
+        Selection {
+            id: primary.id,
+            start: anchor,
+            end: anchor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }
+    };
+
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a delete");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     let mut outcome = Outcome::from_mutation(&mutation);
     if let Some(eff) = effect {
         outcome.effects.push(eff);
     }
     outcome
+}
+
+pub fn change_case(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let buffer_id = editor
+        .window(window)
+        .expect("dispatch only runs against a live window")
+        .buffer_id();
+    let primary = editor
+        .window(window)
+        .unwrap()
+        .selections()
+        .primary()
+        .clone();
+    let buffer = editor.buffer(buffer_id).expect("live buffer");
+    let text_buffer = buffer.as_text_buffer();
+
+    let cursor_point = primary.head().to_point(text_buffer);
+    let row = cursor_point.row;
+    let col = cursor_point.column;
+    let line_len = text_buffer.line_len(row);
+
+    if line_len == 0 {
+        return Outcome::default();
+    }
+
+    if col >= line_len {
+        return Outcome::default();
+    }
+
+    let count = count.max(1);
+    let end_col = (col + count).min(line_len);
+    if col >= end_col {
+        return Outcome::default();
+    }
+
+    let start_offset = Point::new(row, col).to_offset(text_buffer);
+    let end_offset = Point::new(row, end_col).to_offset(text_buffer);
+
+    let original_text: String = buffer
+        .snapshot()
+        .chunks_for_range(TextRange {
+            start: ByteOffset(start_offset),
+            end: ByteOffset(end_offset),
+        })
+        .expect("range is valid")
+        .collect();
+
+    let toggled = toggle_case(&original_text);
+
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer_mut = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer_mut,
+            EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::replace(
+                        TextRange {
+                            start: ByteOffset(start_offset),
+                            end: ByteOffset(end_offset),
+                        },
+                        toggled,
+                    ),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("replacing a character-derived range is always well-formed")
+    };
+
+    let landing = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let new_line_len = text_buffer.line_len(row);
+        let mut target_col = end_col;
+        if target_col >= new_line_len && new_line_len > 0 {
+            target_col = new_line_len - 1;
+        }
+        let target_offset = Point::new(row, target_col).to_offset(text_buffer);
+        let anchor = text_buffer.anchor_before(target_offset);
+        Selection {
+            id: primary.id,
+            start: anchor.clone(),
+            end: anchor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }
+    };
+
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by a change_case");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer_mut = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer_mut.record_selections(tx_id, final_selections);
+    }
+
+    Outcome::from_mutation(&mutation)
 }

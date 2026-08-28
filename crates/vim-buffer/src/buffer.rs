@@ -363,4 +363,19 @@ impl Buffer {
             after_marks,
         );
     }
+
+    pub fn record_selections(
+        &mut self,
+        transaction: text::TransactionId,
+        selections: SelectionSet,
+    ) {
+        let after_marks = self.marks.clone();
+        self.undo_metadata.record(
+            transaction,
+            Some(selections),
+            self.changedtick,
+            self.marks.clone(),
+            after_marks,
+        );
+    }
 }

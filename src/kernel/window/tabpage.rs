@@ -368,4 +368,8 @@ impl TabStore {
     pub fn len(&self) -> usize {
         self.ordered.len()
     }
+
+    pub fn ordered(&self) -> &[TabPageId] {
+        &self.ordered
+    }
 }

@@ -103,10 +103,12 @@ pub enum Action {
     ResizeDown,
 
     // MOTIONS
+    /*
     StandBy {
         count: u32,
         select: bool,
     },
+    */
 
     MoveLeft {
         count: u32,
@@ -497,24 +499,29 @@ pub enum Action {
     },
     InsertText(String),
     InsertRegister,
+    /*
     InsertNewLineMotion {
         count: u32,
         motion: Box<Action>,
     },
+    */
     InsertTab,
     DeleteLines {
         start_line: u32,
         end_line: u32,
     },
+    /*
     YankLines {
         start_line: u32,
         end_line: u32,
     },
+    */
     PutLines {
         line: u32,
         before: bool,
     },
     Command(String),
+    /*
     Script {
         count: u32,
         script: String,
@@ -523,6 +530,7 @@ pub enum Action {
         count: u32,
         keys: String,
     },
+    */
     Sequence {
         count: u32,
         actions: Vec<Box<Action>>,
@@ -635,7 +643,7 @@ impl std::fmt::Display for Action {
             Action::SearchWordUnderBackward { count } => {
                 write!(f, "SearchWordUnderBackward {}", count)
             }
-            Action::StandBy { count, .. } => write!(f, "StandBy({})", count),
+            // Action::StandBy { count, .. } => write!(f, "StandBy({})", count),
             Action::MoveLeft { count, .. } => write!(f, "MoveLeft({})", count),
             Action::MoveRight { count, .. } => write!(f, "MoveRight({})", count),
             Action::MoveUp { count, .. } => write!(f, "MoveUp({})", count),
@@ -744,9 +752,11 @@ impl std::fmt::Display for Action {
             Action::InsertNewLine { count } => write!(f, "InsertNewLine({})", count),
             Action::InsertText(s) => write!(f, "InsertText({})", s),
             Action::InsertRegister => write!(f, "InsertRegister"),
+            /*
             Action::InsertNewLineMotion { count, motion } => {
                 write!(f, "InsertNewLineMotion({}, {})", count, motion)
             }
+            */
             Action::InsertTab => write!(f, "InsertTab"),
             Action::DeleteLines {
                 start_line,
@@ -754,22 +764,26 @@ impl std::fmt::Display for Action {
             } => {
                 write!(f, "DeleteLines({}, {})", start_line, end_line)
             }
+            /*
             Action::YankLines {
                 start_line,
                 end_line,
             } => {
                 write!(f, "YankLines({}, {})", start_line, end_line)
             }
+            */
             Action::PutLines { line, before } => {
                 write!(f, "PutLines({}, before={})", line, before)
             }
             Action::Command(s) => write!(f, "Command({})", s),
+            /*
             Action::Script { count, script } => {
                 write!(f, "Script({}, count={})", script, count)
             }
             Action::KeySequence { count, keys } => {
                 write!(f, "KeySequence({}, count={})", keys, count)
             }
+            */
             Action::Sequence { count, actions } => {
                 write!(f, "Sequence(count={}, actions=[", count)?;
                 for (i, act) in actions.iter().enumerate() {
@@ -787,7 +801,7 @@ impl std::fmt::Display for Action {
 impl Action {
     pub fn with_select(self, select: bool) -> Self {
         match self {
-            Action::StandBy { count, .. } => Action::StandBy { count, select },
+            // Action::StandBy { count, .. } => Action::StandBy { count, select },
             Action::MoveLeft { count, .. } => Action::MoveLeft { count, select },
             Action::MoveRight { count, .. } => Action::MoveRight { count, select },
             Action::MoveUp { count, .. } => Action::MoveUp { count, select },
@@ -1106,10 +1120,12 @@ impl Action {
             Action::SearchBackward { .. } => Action::SearchBackward { count },
             Action::SearchWordUnderForward { .. } => Action::SearchWordUnderForward { count },
             Action::SearchWordUnderBackward { .. } => Action::SearchWordUnderBackward { count },
+            /*
             Action::StandBy { .. } => Action::StandBy {
                 count,
                 select: false,
             },
+            */
             Action::MoveLeft { .. } => Action::MoveLeft {
                 count,
                 select: false,
@@ -1180,9 +1196,11 @@ impl Action {
             Action::InsertNewLine { .. } => Action::InsertNewLine { count },
             Action::InsertText(s) => Action::InsertText(s),
             Action::InsertRegister => Action::InsertRegister,
+            /*
             Action::InsertNewLineMotion { motion, .. } => {
                 Action::InsertNewLineMotion { count, motion }
             }
+            */
             Action::InsertTab => Action::InsertTab,
             Action::DeleteLines {
                 start_line,
@@ -1191,6 +1209,7 @@ impl Action {
                 start_line,
                 end_line,
             },
+            /*
             Action::YankLines {
                 start_line,
                 end_line,
@@ -1198,8 +1217,9 @@ impl Action {
                 start_line,
                 end_line,
             },
+            */
             Action::PutLines { line, before } => Action::PutLines { line, before },
-
+ 
             Action::Clear => Action::Clear,
             Action::NoOp => Action::NoOp,
             Action::Quit => Action::Quit,
@@ -1207,8 +1227,10 @@ impl Action {
             Action::EndMacro => Action::EndMacro,
             Action::ReplayMacro { register, .. } => Action::ReplayMacro { register, count },
             Action::Command(s) => Action::Command(s),
+            /*
             Action::Script { script, .. } => Action::Script { count, script },
             Action::KeySequence { keys, .. } => Action::KeySequence { count, keys },
+            */
             Action::MarkSet { ch } => Action::MarkSet { ch },
             Action::MarkJump { ch, select, linewise } => Action::MarkJump { ch, select, linewise },
             Action::JumpToOlderPosition => Action::JumpToOlderPosition,
@@ -1328,7 +1350,7 @@ impl Action {
             Action::LowerCaseLine { count } => *count,
             Action::ToggleCaseLine { count } => *count,
             Action::InsertNewLine { count } => *count,
-            Action::InsertNewLineMotion { count, .. } => *count,
+            // Action::InsertNewLineMotion { count, .. } => *count,
             Action::MoveToNextCharacter { count, .. } => *count,
             Action::MoveToPreviousCharacter { count, .. } => *count,
             Action::RepeatCharacterSearchForward { count, .. } => *count,
@@ -1344,8 +1366,10 @@ impl Action {
             Action::MoveToNextArgument { count, .. } => *count,
             Action::MoveToPreviousArgument { count, .. } => *count,
             Action::Sequence { count, .. } => *count,
+            /*
             Action::Script { count, .. } => *count,
             Action::KeySequence { count, .. } => *count,
+            */
             _ => 1,
         }
     }

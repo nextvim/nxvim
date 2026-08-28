@@ -16,6 +16,7 @@ pub struct EditDescription {
     /// can restore the cursor to where it was. `None` leaves selections
     /// untouched by the commit itself.
     pub selections: Option<SelectionSet>,
+    pub join_previous: bool,
 }
 
 /// Applies `description` to `buffer` as one transaction and returns what
@@ -26,6 +27,9 @@ pub fn apply(
     description: EditDescription,
 ) -> Result<MutationOutcome, BufferError> {
     let mut transaction = buffer.transaction(description.origin);
+    if description.join_previous {
+        transaction.join_previous();
+    }
     for edit in description.edits {
         transaction.push(edit);
     }

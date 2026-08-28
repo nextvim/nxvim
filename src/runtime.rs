@@ -22,7 +22,7 @@ pub fn run(
     let mut input = InputTranslator::with_mappings(app.shared_keymaps());
     let mut render_state = view::RenderState::new();
     // Temporary debug status (mode + last resolved action), see `view::render`.
-    let mut status = format!("-- {:?} -- last: (none)", app.editor().mode());
+    let mut status = String::new();
     // Invalidations accumulated since the last frame was flushed, and
     // whether the next frame must repaint unconditionally (forced by a
     // resize). The very first frame always renders fully.
@@ -52,6 +52,7 @@ pub fn run(
             continue;
         }
         let ev = event::read()?;
+        status = String::new();
 
         if let Event::Resize(columns, rows) = ev {
             screen = vim_ui::Rect::new(0, 0, columns, rows);
@@ -80,13 +81,6 @@ pub fn run(
         if is_command_mode {
             if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
                 let outcome = app.handle_raw_key(raw_key);
-                status = format!(
-                    "-- {:?} -- mutated: {} invalidation: {:?} events: {}",
-                    app.editor().mode(),
-                    outcome.mutated,
-                    outcome.invalidation,
-                    outcome.events.len()
-                );
                 if outcome.invalidation != RedrawInvalidation::None {
                     pending_invalidations.push(outcome.invalidation);
                 }
@@ -94,23 +88,11 @@ pub fn run(
         } else {
             let buf_id = app.editor().current_context().buffer.get();
             if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id)) {
-                let action_desc = format!("{:?}", resolved.action);
                 let outcome = app.handle_action(resolved.action, resolved.register);
                 if outcome.invalidation != RedrawInvalidation::None {
                     pending_invalidations.push(outcome.invalidation);
                 }
-                // status = format!(
-                //     "-- {:?} -- last: {action_desc} -- mutated: {} invalidation: {:?} events: {}",
-                //     app.editor().mode(),
-                //     outcome.mutated,
-                //     outcome.invalidation,
-                //     outcome.events.len()
-                // );
             }
-            // else {
-            status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
-            // }
-            status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
         }
 
         if let Some(request) = app.take_request() {

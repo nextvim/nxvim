@@ -42,6 +42,18 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
                 insert_text(editor, ctx.window, &text)
             }
         }
+        Action::MoveLeft { count, select } => {
+            super::normal::motions::move_left(editor, ctx.window, count, select)
+        }
+        Action::MoveRight { count, select } => {
+            super::normal::motions::move_right(editor, ctx.window, count, select)
+        }
+        Action::MoveUp { count, select } => {
+            super::normal::motions::move_up(editor, ctx.window, count, select)
+        }
+        Action::MoveDown { count, select } => {
+            super::normal::motions::move_down(editor, ctx.window, count, select)
+        }
         // `Esc` in Insert mode resolves to `Action::Clear`, not
         // `Action::SetToNormal` (see `vim_input::Keymap::vim_defaults`'s
         // `insert_actions` table) — `vim_input::Resolver` treats both as
@@ -105,25 +117,32 @@ fn insert_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
         buffer.as_text_buffer().offset_for_anchor(&head)
     };
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::InsertMode,
-            edits: vec![vim_buffer::PlannedEdit {
-                selection: None,
-                edit: vim_buffer::Edit::insert(vim_buffer::ByteOffset(offset), text.to_string()),
-            }],
-            selections: None,
-        },
-    )
-    .expect("inserting at the cursor is always a well-formed edit");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::InsertMode,
+                edits: vec![vim_buffer::PlannedEdit {
+                    selection: None,
+                    edit: vim_buffer::Edit::insert(vim_buffer::ByteOffset(offset), text.to_string()),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("inserting at the cursor is always a well-formed edit")
+    };
 
     let new_offset = offset + text.len();
-    let new_anchor = buffer.as_text_buffer().anchor_after(new_offset);
+    let new_anchor = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        buffer.as_text_buffer().anchor_after(new_offset)
+    };
     let primary_id = editor.window(window).unwrap().selections().primary().id;
     let win = editor.windows_mut().get_mut(window).expect("live window");
     win.selections_mut()
@@ -135,6 +154,15 @@ fn insert_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
             goal: SelectionGoal::None,
         })
         .expect("primary id is unchanged by an insert");
+    let final_selections = win.selections().clone();
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     Outcome::from_mutation(&mutation)
 }
@@ -211,25 +239,32 @@ fn overtype_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
         return Outcome::default();
     }
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::InsertMode,
-            edits,
-            selections: None,
-        },
-    )
-    .expect("overtype edits are always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::InsertMode,
+                edits,
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("overtype edits are always well-formed")
+    };
 
     // The typed text's total byte length is unaffected by how wide the
     // characters it overtyped were -- see this function's `overtype_text`
     // sibling `insert_text`'s identical `offset + text.len()` derivation.
     let new_offset = start_offset + text.len();
-    let new_anchor = buffer.as_text_buffer().anchor_after(new_offset);
+    let new_anchor = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        buffer.as_text_buffer().anchor_after(new_offset)
+    };
     let primary_id = editor.window(window).unwrap().selections().primary().id;
     let win = editor.windows_mut().get_mut(window).expect("live window");
     win.selections_mut()
@@ -243,6 +278,15 @@ fn overtype_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
         .expect("primary id is unchanged by an overtype");
     for record in overtyped {
         win.push_replace_overtype(record);
+    }
+    let final_selections = win.selections().clone();
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
     }
 
     Outcome::from_mutation(&mutation)
@@ -295,10 +339,7 @@ fn replace_backspace(editor: &mut Editor, window: WindowId) -> Outcome {
         return Outcome::default();
     }
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
+    let selections_before = editor.window(window).unwrap().selections().clone();
     let edit = match entry {
         Some(original) => vim_buffer::Edit::replace(
             vim_buffer::TextRange {
@@ -312,20 +353,30 @@ fn replace_backspace(editor: &mut Editor, window: WindowId) -> Outcome {
             end: vim_buffer::ByteOffset(cursor_offset),
         }),
     };
-    let mutation = transaction::apply(
-        buffer,
-        EditDescription {
-            origin: EditOrigin::InsertMode,
-            edits: vec![vim_buffer::PlannedEdit {
-                selection: None,
-                edit,
-            }],
-            selections: None,
-        },
-    )
-    .expect("restoring/removing one overtyped character is always well-formed");
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::InsertMode,
+                edits: vec![vim_buffer::PlannedEdit {
+                    selection: None,
+                    edit,
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("restoring/removing one overtyped character is always well-formed")
+    };
 
-    let anchor = buffer.as_text_buffer().anchor_before(prev_offset);
+    let anchor = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        buffer.as_text_buffer().anchor_before(prev_offset)
+    };
     let win = editor.windows_mut().get_mut(window).expect("live window");
     win.selections_mut()
         .replace_primary(Selection {
@@ -336,6 +387,15 @@ fn replace_backspace(editor: &mut Editor, window: WindowId) -> Outcome {
             goal: SelectionGoal::None,
         })
         .expect("primary id is unchanged by a replace-mode backspace");
+    let final_selections = win.selections().clone();
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     Outcome::from_mutation(&mutation)
 }

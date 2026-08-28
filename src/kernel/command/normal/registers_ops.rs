@@ -90,12 +90,7 @@ fn put_impl(
         .primary()
         .clone();
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
-
-    let text_buffer = buffer.as_text_buffer();
+    let text_buffer = editor.buffer(buffer_id).expect("live buffer").as_text_buffer();
     let cursor_offset = primary.head().to_offset(text_buffer);
 
     let linewise = kind == RegisterKind::Line;
@@ -139,21 +134,26 @@ fn put_impl(
         insert_text.push('\n');
     }
 
-    let mutation = crate::kernel::transaction::apply(
-        buffer,
-        crate::kernel::transaction::EditDescription {
-            origin: EditOrigin::User,
-            edits: vec![PlannedEdit {
-                selection: None,
-                edit: Edit::insert(ByteOffset(insert_offset), insert_text),
-            }],
-            selections: None,
-        },
-    )
-    .expect("pasting is always well-formed");
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor.buffers_mut().get_mut(buffer_id).expect("live buffer");
+        crate::kernel::transaction::apply(
+            buffer,
+            crate::kernel::transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::insert(ByteOffset(insert_offset), insert_text),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("pasting is always well-formed")
+    };
 
     // Recalculate landing selection
-    let text_buffer = buffer.as_text_buffer();
+    let text_buffer = editor.buffer(buffer_id).expect("live buffer").as_text_buffer();
     let landing = if linewise {
         let row = insert_offset
             .to_point(text_buffer)
@@ -180,10 +180,18 @@ fn put_impl(
         }
     };
 
-    let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(landing)
-        .expect("primary id is unchanged by paste");
+    let final_selections = {
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        win.selections_mut()
+            .replace_primary(landing)
+            .expect("primary id is unchanged by paste");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor.buffers_mut().get_mut(buffer_id).expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
 
     Outcome::from_mutation(&mutation)
 }

@@ -142,12 +142,18 @@ impl View for TextView {
     fn cursor_screen_pos(&self, area: Rect) -> Option<(u16, u16)> {
         let model = self.model.as_ref()?;
         let cursor = model.cursor.filter(|cursor| cursor.visible)?;
-        if cursor.position.row >= area.height as u32 || cursor.position.column >= area.width as u32
+        let row_idx = cursor.position.row as usize;
+        let gutter_width = model.rows.get(row_idx)
+            .and_then(|row| row.gutter.as_ref())
+            .map(|g| g.text.chars().count())
+            .unwrap_or(0);
+        let col = cursor.position.column as u16 + gutter_width as u16;
+        if cursor.position.row >= area.height as u32 || col as u32 >= area.width as u32
         {
             return None;
         }
         Some((
-            area.x + cursor.position.column as u16,
+            area.x + col,
             area.y + cursor.position.row as u16,
         ))
     }

@@ -47,6 +47,7 @@ pub struct Editor {
     pub(crate) registers: Registers,
     pub(crate) pending_register: Option<char>,
     pub(crate) primed_clipboard_register: Option<String>,
+    pub(crate) pending_substitute: Option<command::substitute::PendingSubstitute>,
 }
 
 impl Editor {
@@ -111,6 +112,7 @@ impl Editor {
             registers: Registers::new(),
             pending_register: None,
             primed_clipboard_register: None,
+            pending_substitute: None,
         }
     }
 
@@ -253,6 +255,18 @@ impl Editor {
                 win.set_buffer(fallback_id);
             }
         }
+    }
+
+    pub fn has_pending_substitute(&self) -> bool {
+        self.pending_substitute.is_some()
+    }
+
+    pub fn prompt_next_substitute(&mut self) -> Outcome {
+        command::substitute::prompt_next_substitute(self)
+    }
+
+    pub fn handle_substitute_confirm(&mut self, choice: char) -> Outcome {
+        command::substitute::handle_substitute_confirm(self, choice)
     }
 
     pub(crate) fn set_window_buffer(&mut self, window_id: WindowId, buffer_id: BufferId) {
@@ -683,6 +697,26 @@ mod tests {
         let mut editor = Editor::new("Foo Bar\n");
         editor.execute(Action::ToggleCaseLine { count: 1 });
         assert_eq!(text_of(&editor), "fOO bAR\n");
+
+        let mut editor = Editor::new("Foo Bar\n");
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveToWord {
+            count: 1,
+            select: true,
+        });
+        editor.execute(Action::ToggleCase { count: 1 });
+        assert_eq!(text_of(&editor), "fOO bar\n");
+    }
+
+    #[test]
+    fn change_case_flips_character_and_moves_right() {
+        let mut editor = Editor::new("Foo Bar\n");
+        // Initial cursor at 'F'
+        editor.execute(Action::ChangeCase { count: 1 });
+        assert_eq!(text_of(&editor), "foo Bar\n");
+        // If cursor moves to 'o', the next ChangeCase should toggle 'o' to 'O'
+        editor.execute(Action::ChangeCase { count: 2 }); // toggles "oo" to "OO", cursor moves to " "
+        assert_eq!(text_of(&editor), "fOO Bar\n");
     }
 
     /// `gUw`/`gUU` uppercase a motion/whole line.
@@ -866,6 +900,37 @@ mod tests {
         let outcome = editor.execute(Action::Redo { count: 1 });
         assert_eq!(text_of(&editor), "bar baz");
         assert!(!outcome.mutated);
+    }
+
+    #[test]
+    fn undo_restores_cursor_position() {
+        let mut editor = Editor::new("foo bar baz");
+        editor.execute(Action::MoveToWord { count: 1, select: false });
+        assert_eq!(cursor(&editor), Point::new(0, 4));
+
+        editor.execute(dw());
+        assert_eq!(text_of(&editor), "foo baz");
+        assert_eq!(cursor(&editor), Point::new(0, 4));
+
+        editor.execute(Action::Undo { count: 1 });
+        assert_eq!(text_of(&editor), "foo bar baz");
+        assert_eq!(cursor(&editor), Point::new(0, 4));
+
+        editor.execute(Action::Redo { count: 1 });
+        assert_eq!(text_of(&editor), "foo baz");
+        assert_eq!(cursor(&editor), Point::new(0, 4));
+    }
+
+    #[test]
+    fn arrow_keys_in_insert_mode() {
+        let mut editor = Editor::new("foo baz");
+        editor.execute(Action::SetToInsert);
+        editor.execute(Action::InsertText("bar ".to_string()));
+        assert_eq!(text_of(&editor), "bar foo baz");
+
+        editor.execute(Action::MoveLeft { count: 4, select: false });
+        editor.execute(Action::InsertText("mid ".to_string()));
+        assert_eq!(text_of(&editor), "mid bar foo baz");
     }
 
     #[test]

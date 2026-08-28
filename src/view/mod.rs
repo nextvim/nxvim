@@ -8,14 +8,17 @@ pub mod tests;
 use crate::kernel::ids::WindowId;
 use crate::kernel::outcome::RedrawInvalidation;
 use display_map::{DisplayMap, DisplayPoint};
+use text::ToOffset;
+use std::borrow::Cow;
 use std::collections::HashMap;
+use vim_formatter::{FormatResolver, CompiledFormat, FormatDialect, RenderItem, StyleId, ExprId};
 use std::io::{self, Write};
 use vim_buffer::BufferId;
 use vim_ui::ColorScheme;
 use vim_ui::{
     Rect, Style,
     model::{
-        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, TextCursor,
+        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, GutterCell, TextCursor,
         TextSpan, TextViewModel,
     },
     renderer::{BufferedRenderer, Renderer},
@@ -89,11 +92,30 @@ pub fn render(
     pending: &[RedrawInvalidation],
     force_full: bool,
 ) -> io::Result<()> {
+    use text::ToOffset;
     let projections = crate::app::view_sync::project(editor);
+    let laststatus = editor.global_options().laststatus;
+    let ruler = editor.global_options().ruler;
+    let showtabline = editor.global_options().showtabline;
+    let tab_count = editor.tabs().len();
+    let has_tabline = match showtabline {
+        0 => false,
+        1 => tab_count >= 2,
+        2 => true,
+        _ => true,
+    };
     let tab = editor.tabs().active();
-    let layout_screen = Rect {
-        height: screen.height.saturating_sub(1),
-        ..screen
+    let layout_screen = if has_tabline {
+        Rect {
+            y: screen.y + 1,
+            height: screen.height.saturating_sub(2),
+            ..screen
+        }
+    } else {
+        Rect {
+            height: screen.height.saturating_sub(1),
+            ..screen
+        }
     };
     let rects = layout::layout(tab, layout_screen);
 
@@ -156,8 +178,22 @@ pub fn render(
             cache.last_model = None;
         }
 
+        let has_statusline = match laststatus {
+            0 => false,
+            1 => projections.len() >= 2,
+            2 => true,
+            3 => false,
+            _ => true,
+        };
+
+        let view_rect = if has_statusline {
+            Rect::new(rect.x, rect.y, rect.width, rect.height.saturating_sub(1))
+        } else {
+            rect
+        };
+
         if let Some(win) = editor.windows_mut().get_mut(projection.window) {
-            win.set_viewport_height(rect.height as u32);
+            win.set_viewport_height(view_rect.height as u32);
         }
 
         let rebuild = should_rebuild(
@@ -190,11 +226,19 @@ pub fn render(
                 .point_to_display_point(head_point);
 
             let snapshot = cache.display_map.snapshot();
+            let (number, relativenumber, signcolumn, foldcolumn) = if let Some(win) = editor.window(projection.window) {
+                let opts = win.options();
+                (opts.number, opts.relativenumber, opts.signcolumn.clone(), opts.foldcolumn)
+            } else {
+                (false, false, "auto".to_string(), 0)
+            };
+            let cursor_row = head_point.row;
+            let number_width = (buffer_row_count.max(1) as f64).log10().ceil().max(4.0) as usize;
 
             // Build TextViewModel
             let mut rows = Vec::new();
             let scroll_y = snapshot.scroll_y;
-            let visible_rows = snapshot.visible_rows.min(rect.height as u32);
+            let visible_rows = snapshot.visible_rows.min(view_rect.height as u32);
 
             for i in 0..visible_rows {
                 let display_row = scroll_y + i;
@@ -219,11 +263,54 @@ pub fn render(
                     DisplayRowKind::Virtual
                 };
 
+                let mut gutter_text = String::new();
+                if foldcolumn > 0 {
+                    gutter_text.push_str(&" ".repeat(foldcolumn as usize));
+                }
+                if signcolumn == "yes" {
+                    gutter_text.push_str("  ");
+                }
+                if number || relativenumber {
+                    if let Some(brow) = buffer_row {
+                        if kind == DisplayRowKind::Buffer {
+                            let abs_line = brow + 1;
+                            let cursor_line = cursor_row + 1;
+                            let display_val = if relativenumber {
+                                if abs_line == cursor_line {
+                                    if number {
+                                        abs_line
+                                    } else {
+                                        0
+                                    }
+                                } else {
+                                    abs_line.abs_diff(cursor_line)
+                                }
+                            } else {
+                                abs_line
+                            };
+                            gutter_text.push_str(&format!("{:>width$} ", display_val, width = number_width));
+                        } else {
+                            gutter_text.push_str(&" ".repeat(number_width + 1));
+                        }
+                    } else {
+                        gutter_text.push_str(&" ".repeat(number_width + 1));
+                    }
+                }
+
+                let gutter = if !gutter_text.is_empty() {
+                    Some(GutterCell {
+                        text: gutter_text,
+                        style: scheme.get_style("LineNr").cloned().unwrap_or_default(),
+                    })
+                } else {
+                    None
+                };
+
                 let spans = vec![TextSpan::new(line_text, Style::default())];
                 rows.push(DisplayRow {
                     buffer_row,
                     kind,
-                    gutter: None,
+                    gutter,
                     spans,
                     fill_style: Style::default(),
                 });
@@ -282,8 +369,8 @@ pub fn render(
             };
 
             let cursor_visible = projection.is_current
-                && cursor_display_pos.row < rect.height as u32
-                && cursor_display_pos.column < rect.width as u32;
+                && cursor_display_pos.row < view_rect.height as u32
+                && cursor_display_pos.column < view_rect.width as u32;
 
             let cursor = Some(TextCursor {
                 position: cursor_display_pos,
@@ -292,8 +379,8 @@ pub fn render(
             });
 
             let model = TextViewModel {
-                viewport_width: rect.width,
-                viewport_height: rect.height,
+                viewport_width: view_rect.width,
+                viewport_height: view_rect.height,
                 rows,
                 selections,
                 cursor,
@@ -318,17 +405,36 @@ pub fn render(
         };
 
         let mut text_view = TextView::new();
-        text_view.set_model(model);
+        text_view.set_model(model.clone());
 
         // Draw the window. Always drawn (even when the model was reused)
         // so the `BufferedRenderer`'s cell diff, not this loop, decides
-        // whether anything actually gets written to the terminal.
-        text_view.draw(rect, &mut renderer)?;
+        text_view.draw(view_rect, &mut renderer)?;
+
+        if has_statusline {
+            let status_y = rect.y + rect.height.saturating_sub(1);
+            let status_style = scheme.get_style("StatusLine").cloned().unwrap_or_default();
+            draw_status_line(
+                &mut renderer,
+                projection,
+                editor.mode(),
+                model.cursor.clone(),
+                ruler,
+                rect,
+                status_y,
+                status_style,
+                &scheme,
+            )?;
+        }
 
         if projection.is_current {
             current_window_view = Some(text_view);
-            current_window_rect = Some(rect);
+            current_window_rect = Some(view_rect);
         }
+    }
+
+    if has_tabline {
+        draw_tab_line(&mut renderer, editor, screen, &scheme)?;
     }
 
     let status_row = screen.height.saturating_sub(1);
@@ -350,8 +456,79 @@ pub fn render(
             CursorShape::Block,
         )?;
     } else {
-        // Print status line at the bottom of the screen
-        renderer.print(&pad_or_truncate(status, screen.width as usize))?;
+        // Build the bottom text
+        if !status.is_empty() {
+            let bottom_text = pad_or_truncate(status, screen.width as usize);
+            renderer.set_style(Style::default())?;
+            renderer.print(&bottom_text)?;
+        } else if laststatus == 3 {
+            if let Some(proj) = projections.iter().find(|p| p.is_current) {
+                let primary_sel = proj.selections.primary();
+                let head_point = proj.snapshot.offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
+                let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window) {
+                    cache.display_map.snapshot().point_to_display_point(head_point)
+                } else {
+                    DisplayPoint::new(head_point.row, head_point.column)
+                };
+                let cursor_display_pos = DisplayPosition {
+                    row: display_cursor.row().saturating_sub(proj.scroll_top),
+                    column: display_cursor.column(),
+                };
+                let temp_cursor = TextCursor {
+                    position: cursor_display_pos,
+                    shape: CursorShape::Block,
+                    visible: true,
+                };
+                let status_style = scheme.get_style("StatusLine").cloned().unwrap_or_default();
+                let _ = draw_status_line(
+                    &mut renderer,
+                    proj,
+                    editor.mode(),
+                    Some(temp_cursor),
+                    ruler,
+                    screen,
+                    status_row,
+                    status_style,
+                    &scheme,
+                );
+            } else {
+                renderer.set_style(Style::default())?;
+                renderer.print(&" ".repeat(screen.width as usize))?;
+            }
+        } else {
+            let mode_str = match editor.mode() {
+                crate::kernel::mode::Mode::Insert => "-- INSERT --",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => "-- VISUAL --",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => "-- VISUAL LINE --",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => "-- VISUAL BLOCK --",
+                _ => "",
+            };
+            let left = mode_str.to_string();
+            let right = if ruler {
+                if let Some(proj) = projections.iter().find(|p| p.is_current) {
+                    let primary_sel = proj.selections.primary();
+                    let head_point = proj.snapshot.offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
+                    let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window) {
+                        cache.display_map.snapshot().point_to_display_point(head_point)
+                    } else {
+                        DisplayPoint::new(head_point.row, head_point.column)
+                    };
+                    format!("{},{} ", display_cursor.row() + 1, display_cursor.column() + 1)
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            let bottom_text = if left.len() + right.len() >= screen.width as usize {
+                left[..(screen.width as usize).saturating_sub(right.len())].to_string() + &right
+            } else {
+                let pad_len = screen.width as usize - left.len() - right.len();
+                format!("{}{}{}", left, " ".repeat(pad_len), right)
+            };
+            renderer.set_style(Style::default())?;
+            renderer.print(&bottom_text)?;
+        };
 
         // Position cursor using TextView's helpers
         let cursor_shown =
@@ -375,6 +552,146 @@ pub fn render(
     Ok(())
 }
 
+struct WindowResolver<'a> {
+    projection: &'a crate::app::view_sync::WindowProjection,
+    mode: crate::kernel::mode::Mode,
+    cursor: Option<TextCursor>,
+}
+
+impl<'a> FormatResolver for WindowResolver<'a> {
+    fn file_name(&self) -> Cow<'_, str> {
+        let path = std::path::Path::new(&self.projection.name);
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned().into())
+            .unwrap_or_else(|| Cow::Borrowed("[No Name]"))
+    }
+
+    fn full_path(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.projection.name)
+    }
+
+    fn line(&self) -> usize {
+        if let Some(c) = &self.cursor {
+            c.position.row as usize + 1
+        } else {
+            use text::ToOffset;
+            let primary_sel = self.projection.selections.primary();
+            let head_point = self.projection.snapshot.offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
+            head_point.row as usize + 1
+        }
+    }
+
+    fn column(&self) -> usize {
+        if let Some(c) = &self.cursor {
+            c.position.column as usize + 1
+        } else {
+            use text::ToOffset;
+            let primary_sel = self.projection.selections.primary();
+            let head_point = self.projection.snapshot.offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
+            head_point.column as usize + 1
+        }
+    }
+
+    fn total_lines(&self) -> usize {
+        self.projection.snapshot.row_count() as usize
+    }
+
+    fn is_modified(&self) -> bool {
+        self.projection.is_modified
+    }
+
+    fn resolve_highlight(&self, name: &str) -> Option<StyleId> {
+        match name {
+            "StatusLine" => Some(StyleId(1)),
+            "StatusLineNC" => Some(StyleId(2)),
+            "TabLine" => Some(StyleId(3)),
+            "TabLineSel" => Some(StyleId(4)),
+            "TabLineFill" => Some(StyleId(5)),
+            _ => None,
+        }
+    }
+
+    fn eval_expression(&self, _id: ExprId, source: &str) -> Cow<'_, str> {
+        if source == "mode()" {
+            let mode_str = match self.mode {
+                crate::kernel::mode::Mode::Normal => "NORMAL",
+                crate::kernel::mode::Mode::Insert => "INSERT",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => "VISUAL",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => "V-LINE",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => "V-BLOCK",
+                crate::kernel::mode::Mode::Command(_) => "COMMAND",
+                _ => "NORMAL",
+            };
+            Cow::Borrowed(mode_str)
+        } else {
+            Cow::Borrowed("")
+        }
+    }
+}
+
+fn draw_status_line(
+    renderer: &mut BufferedRenderer,
+    projection: &crate::app::view_sync::WindowProjection,
+    mode: crate::kernel::mode::Mode,
+    cursor: Option<TextCursor>,
+    ruler: bool,
+    rect: Rect,
+    y: u16,
+    default_style: Style,
+    scheme: &ColorScheme,
+) -> io::Result<()> {
+    let resolver = WindowResolver {
+        projection,
+        mode,
+        cursor,
+    };
+    let format_str = if ruler {
+        "%{mode()} %f %m%= %l,%c"
+    } else {
+        "%{mode()} %f %m%="
+    };
+    if let Ok(ast) = vim_formatter::parse(format_str, FormatDialect::StatusLine) {
+        if let Ok(compiled) = CompiledFormat::compile(&ast) {
+            if let Ok(items) = compiled.render(&resolver, rect.width as usize) {
+                let mut current_x = rect.x;
+                for item in items {
+                    match item {
+                        RenderItem::Text { text, style } => {
+                            let mut item_style = default_style;
+                            if let Some(style_id) = style {
+                                let style_name = match style_id.0 {
+                                    1 => "StatusLine",
+                                    2 => "StatusLineNC",
+                                    3 => "TabLine",
+                                    4 => "TabLineSel",
+                                    5 => "TabLineFill",
+                                    _ => "",
+                                };
+                                if !style_name.is_empty() {
+                                    if let Some(s) = scheme.get_style(style_name) {
+                                        item_style = *s;
+                                    }
+                                }
+                            }
+                            renderer.move_to(current_x, y)?;
+                            renderer.set_style(item_style)?;
+                            renderer.print(&text)?;
+                            current_x += text.len() as u16;
+                        }
+                        _ => {}
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    // Fallback if formatting fails
+    renderer.move_to(rect.x, y)?;
+    renderer.set_style(default_style)?;
+    renderer.print(&" ".repeat(rect.width as usize))?;
+    Ok(())
+}
+
 /// Pads `text` with spaces to exactly `width` columns (byte-length based,
 /// matching the ASCII-only status/prompt text produced today), or
 /// truncates it if longer, so a shorter frame's leftover characters from a
@@ -387,4 +704,93 @@ fn pad_or_truncate(text: &str, width: usize) -> String {
         owned.push_str(&" ".repeat(width - text.len()));
         owned
     }
+}
+
+fn draw_tab_line(
+    renderer: &mut BufferedRenderer,
+    editor: &crate::kernel::Editor,
+    screen: Rect,
+    scheme: &ColorScheme,
+) -> io::Result<()> {
+    let mut format_str = String::new();
+    let tabs = editor.tabs();
+    let active_id = tabs.active_id();
+    for (i, &tab_id) in tabs.ordered().iter().enumerate() {
+        let is_active = tab_id == active_id;
+        let index = i + 1;
+        if is_active {
+            format_str.push_str("%#TabLineSel#");
+        } else {
+            format_str.push_str("%#TabLine#");
+        }
+        format_str.push_str(&format!("%{}T", index));
+        let tab = tabs.get(tab_id).unwrap();
+        let win_id = tab.active_window();
+        let name = if let Some(win) = editor.window(win_id) {
+            if let Some(buf) = editor.buffer(win.buffer_id()) {
+                buf.path()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "[No Name]".to_string())
+            } else {
+                "[No Name]".to_string()
+            }
+        } else {
+            "[No Name]".to_string()
+        };
+        format_str.push_str(&format!(" {}: {} ", index, name));
+    }
+    format_str.push_str("%#TabLineFill#%T%=");
+
+    struct TablineResolver;
+    impl FormatResolver for TablineResolver {
+        fn resolve_highlight(&self, name: &str) -> Option<StyleId> {
+            match name {
+                "TabLine" => Some(StyleId(3)),
+                "TabLineSel" => Some(StyleId(4)),
+                "TabLineFill" => Some(StyleId(5)),
+                _ => None,
+            }
+        }
+    }
+
+    let default_style = scheme.get_style("TabLineFill").cloned().unwrap_or_default();
+    if let Ok(ast) = vim_formatter::parse(&format_str, FormatDialect::TabLine) {
+        if let Ok(compiled) = CompiledFormat::compile(&ast) {
+            if let Ok(items) = compiled.render(&TablineResolver, screen.width as usize) {
+                let mut current_x = 0;
+                for item in items {
+                    match item {
+                        RenderItem::Text { text, style } => {
+                            let mut item_style = default_style;
+                            if let Some(style_id) = style {
+                                let style_name = match style_id.0 {
+                                    3 => "TabLine",
+                                    4 => "TabLineSel",
+                                    5 => "TabLineFill",
+                                    _ => "",
+                                };
+                                if !style_name.is_empty() {
+                                    if let Some(s) = scheme.get_style(style_name) {
+                                        item_style = *s;
+                                    }
+                                }
+                            }
+                            renderer.move_to(current_x, 0)?;
+                            renderer.set_style(item_style)?;
+                            renderer.print(&text)?;
+                            current_x += text.len() as u16;
+                        }
+                        _ => {}
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    // Fallback
+    renderer.move_to(0, 0)?;
+    renderer.set_style(default_style)?;
+    renderer.print(&" ".repeat(screen.width as usize))?;
+    Ok(())
 }

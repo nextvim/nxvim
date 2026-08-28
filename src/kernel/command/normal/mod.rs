@@ -56,6 +56,21 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::ToggleCaseMotion { count, motion } => {
             operators::toggle_case_motion(editor, ctx.window, count, &motion)
         }
+        Action::ToggleCase { count } => {
+            if editor.mode().is_visual() {
+                operators::toggle_case_motion(
+                    editor,
+                    ctx.window,
+                    count,
+                    &Action::MoveRight {
+                        count: 0,
+                        select: true,
+                    },
+                )
+            } else {
+                Outcome::default()
+            }
+        }
         Action::UpperCaseLine { count } => operators::upper_case_line(editor, ctx.window, count),
         Action::LowerCaseLine { count } => operators::lower_case_line(editor, ctx.window, count),
         Action::ToggleCaseLine { count } => operators::toggle_case_line(editor, ctx.window, count),
@@ -242,6 +257,7 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::DeleteCharBefore { count } => {
             operators::delete_char_before(editor, ctx.window, count)
         }
+        Action::ChangeCase { count } => operators::change_case(editor, ctx.window, count),
         _ => Outcome::default(),
     }
 }

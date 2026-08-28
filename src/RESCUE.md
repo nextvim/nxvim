@@ -496,13 +496,13 @@ one compiles and the kernel-purity grep above is clean.
         `'incsearch'` from 7.1, uses marks (7.5) to jump on match, and feeds
         the `/` register (7.6).
 
-   7.8. **Substitute** — `kernel/command/substitute.rs` / `app/prompt.rs`,
+   7.8. [x] **Substitute** — `kernel/command/substitute.rs` / `app/prompt.rs`,
         matching the Salvage Ledger's kernel/app split (matching and
         replacement planning in kernel, confirm-prompt lifecycle in app).
         `:s`, flags, confirm prompt. Depends on 7.7's pattern matching and
         7.4's transaction path.
 
-   7.9. **Folds** — `kernel/window/mod.rs` fold state, per Rule 4 item 2
+   7.9. [x] **Folds** — `kernel/window/mod.rs` fold state, per Rule 4 item 2
         (window-owned, not buffer-owned). `zf`/`zo`/`zc`/`za`, manual/
         indent fold methods. Depends on 7.2's motions for fold-create
         ranges.
@@ -647,7 +647,7 @@ one compiles and the kernel-purity grep above is clean.
         (real per-frame content to render) and reuses `Cell`/
         `ScreenBuffer` as-is rather than inventing a second grid type.
 
-   8.4. **Gutters** — number/relative-number column, sign column, fold
+   8.4. [x] **Gutters** — number/relative-number column, sign column, fold
         column, composed left-to-right into each `DisplayRow`'s
         `GutterCell` in the same order `drawline.c` uses (fold column,
         sign column, number column, then text). `number`/`relativenumber`/
@@ -657,7 +657,7 @@ one compiles and the kernel-purity grep above is clean.
         plumbing to exist, and on 7.9's fold state for the fold column to
         mean anything.
 
-   8.5. **Statusline** — a real per-window (or single shared, per
+   8.5. [x] **Statusline** — a real per-window (or single shared, per
         `'laststatus'`) status line built from kernel facts `app/
         view_sync.rs` projects (buffer name, modified flag, mode, cursor
         line/column — Vim's `'ruler'`), replacing `runtime.rs`'s hardcoded
@@ -666,7 +666,7 @@ one compiles and the kernel-purity grep above is clean.
         7.1's recipe. Depends on 8.1 for cursor/position data already
         flowing through the display map.
 
-   8.6. **Tabline** — one line across the top listing tab pages, gated by
+   8.6. [x] **Tabline** — one line across the top listing tab pages, gated by
         `'showtabline'`, reusing 8.5's projection-then-format pattern.
         Depends on the windows/tabs milestone (3) already landed and on
         8.5's statusline pattern.

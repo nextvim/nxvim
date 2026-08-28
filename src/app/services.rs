@@ -26,6 +26,12 @@ pub fn describe_effect(effect: &Effect) -> Option<AppRequest> {
             vim_clipboard::write_system_clipboard(reg_name, text);
             None
         }
+        Effect::ConfirmSubstitute { replacement, .. } => {
+            Some(AppRequest::ShowMessage(format!(
+                "replace with {} (y/n/a/q/l)?",
+                replacement
+            )))
+        }
         _ => None,
     }
 }

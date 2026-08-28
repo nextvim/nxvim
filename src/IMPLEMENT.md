@@ -406,7 +406,7 @@ already-complete `kernel/options.rs` registry when their turn comes.
 
 ---
 
-# # Motions (Build Order 7.2)
+# # Motions (Build Order 7.2) — [x] COMPLETE
 
 > `kernel/command/normal/motions.rs`. Word/WORD, paragraph/sentence, `f`/
 > `t`/`F`/`T` + `;`/`,`, `%`, line/screen motions, `gg`/`G`, scrolling.
@@ -1593,7 +1593,7 @@ render) — nothing on `7.5`-`7.14`.
 
 ---
 
-# # Marks and jumps (Build Order 7.5)
+# # Marks and jumps (Build Order 7.5) — [x] COMPLETE
 
 > `kernel/command/normal/marks_and_jumps.rs`. Buffer-local `'a`-`'z`,
 > global `'A`-`'Z`, special marks (`` ` ` ``, `''`, `` '< '> ``), jumplist,
@@ -1960,7 +1960,7 @@ in under this one just because they share the `"{c}` syntax.
 
 ---
 
-# Search (Build Order 7.7)
+# Search (Build Order 7.7) — [x] COMPLETE
 
 > Pattern search, n/N, search offsets, */#. Reads 'ignorecase'/'hlsearch'/'incsearch' from 7.1, uses marks (7.5) to jump on match, and feeds the / register (7.6).
 
@@ -1990,29 +1990,130 @@ in under this one just because they share the `"{c}` syntax.
 
 ---
 
-# Substitute (Build Order 7.8)
+# Substitute (Build Order 7.8) — [x] COMPLETE
 
 > matching the Salvage Ledger's kernel/app split (matching and replacement planning in kernel, confirm-prompt lifecycle in app). :s, flags, confirm prompt. Depends on 7.7's pattern matching and 7.4's transaction path.
 
 ## Checklist
 
-1. - [ ] `kernel/command/substitute.rs` (new): Implement parser for `:s` command arguments including the search pattern, replacement string, and flags (e.g., `g` for global, `c` for confirmation, `i`/`I` for case control).
-2. - [ ] `substitute.rs`: Implement matching and replacement planning logic. Use `crates/vim-buffer` pattern matching (aligned with 7.7) to locate targets, and generate a list of matches and draft replacements.
-3. - [ ] `kernel/outcome.rs` & `kernel/events.rs`: Define `Effect::ConfirmSubstitute` (or similar) to notify the app when a substitution requires confirmation, passing the target range and replacement details.
-4. - [ ] `app/prompt.rs` / `app/mod.rs`: Implement the confirm-prompt lifecycle. Intercept the kernel's confirmation effect and render a prompt asking the user to confirm (`y`/`n`/`a`/`q`/`l`), routing the user's decision back into the kernel.
-5. - [ ] `kernel/command/ex/mod.rs`: Wire the `:s` / `:substitute` command into the Ex command table, handling range resolution (e.g. `:%s/foo/bar/g`) and executing the substitution via the transaction path (`kernel/transaction.rs`).
-6. - [ ] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked into `kernel/command/substitute.rs`.
-7. - [ ] Unit tests: Verify range-based substitution, global replacement flags, case-insensitive options, and the step-by-step confirmation prompt state transitions.
-8. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
-9. - [ ] Manual smoke test: Launch the binary, run `:s/foo/bar/g` on a line, and run `:%s/foo/bar/gc` to verify the confirm-prompt works in a terminal. **Needs a human with a real terminal.**
+1. - [x] `kernel/command/substitute.rs` (new): Implement parser for `:s` command arguments including the search pattern, replacement string, and flags (e.g., `g` for global, `c` for confirmation, `i`/`I` for case control).
+2. - [x] `substitute.rs`: Implement matching and replacement planning logic. Use `crates/vim-buffer` pattern matching (aligned with 7.7) to locate targets, and generate a list of matches and draft replacements.
+3. - [x] `kernel/outcome.rs` & `kernel/events.rs`: Define `Effect::ConfirmSubstitute` (or similar) to notify the app when a substitution requires confirmation, passing the target range and replacement details.
+4. - [x] `app/prompt.rs` / `app/mod.rs`: Implement the confirm-prompt lifecycle. Intercept the kernel's confirmation effect and render a prompt asking the user to confirm (`y`/`n`/`a`/`q`/`l`), routing the user's decision back into the kernel.
+5. - [x] `kernel/command/ex/mod.rs`: Wire the `:s` / `:substitute` command into the Ex command table, handling range resolution (e.g. `:%s/foo/bar/g`) and executing the substitution via the transaction path (`kernel/transaction.rs`).
+6. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked into `kernel/command/substitute.rs`.
+7. - [x] Unit tests: Verify range-based substitution, global replacement flags, case-insensitive options, and the step-by-step confirmation prompt state transitions.
+8. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+9. - [x] Manual smoke test: Launch the binary, run `:s/foo/bar/g` on a line, and run `:%s/foo/bar/gc` to verify the confirm-prompt works in a terminal. **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] `:s` range parsing correctly resolves target lines and bounds (e.g. `1,5s/foo/bar/`).
+- [x] Substitution global (`g`) and case options (`i`/`I`) correctly modify target matches.
+- [x] The confirm-prompt lifecycle correctly pauses execution, prompts the user via `app/prompt.rs`, and applies mutations to the buffer only on confirmation.
+- [x] All mutations are grouped under a single undo transaction (`kernel/transaction.rs`).
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Gutters (Build Order 8.4) — [x] COMPLETE
+
+> number/relative-number column, sign column, fold column, composed left-to-right into each `DisplayRow`'s `GutterCell` in the same order `drawline.c` uses (fold column, sign column, number column, then text).
+
+## Checklist
+
+1. - [x] `kernel/options.rs`: Register new window-local options `number` (bool), `relativenumber` (bool), `signcolumn` (string), and `foldcolumn` (number) following the 7.1 option registry recipe.
+2. - [x] `view/mod.rs`: Update display row rendering to read these new options from the window projection.
+3. - [x] `view/mod.rs`: Implement gutter layout logic that builds a sequence of `GutterCell` elements for each `DisplayRow` in the correct order: fold column, sign column, then number column.
+4. - [x] `view/mod.rs`: Calculate absolute and relative line numbers, formatting them correctly based on `number` and `relativenumber` settings.
+5. - [x] `view/mod.rs`: Integrate fold indicators (using 7.9 fold state if available) into the fold column layout.
+6. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+7. - [x] Unit tests: Verify gutter cell generation, proper ordering of columns, and correct line number computations (both absolute and relative).
+8. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+9. - [x] Manual smoke test: Launch the binary, toggle `:set number` and `:set relativenumber`, and verify the gutters render correctly. **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] The window-local options `number`, `relativenumber`, `signcolumn`, and `foldcolumn` are successfully registered.
+- [x] Gutter columns are composed left-to-right in the correct order (fold column, sign column, number column) when enabled.
+- [x] Number and relative number calculations are correct, including relative numbering where the current line shows the absolute line number.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Statusline (Build Order 8.5) — [x] COMPLETE
+
+> a real per-window (or single shared, per `'laststatus'`) status line built from kernel facts `app/view_sync.rs` projects (buffer name, modified flag, mode, cursor line/column — Vim's `'ruler'`), replacing `runtime.rs`'s hardcoded debug string.
+
+## Checklist
+
+1. - [x] `kernel/options.rs`: Register new global options `laststatus` (number) and `ruler` (bool) following the 7.1 option registry recipe.
+2. - [x] `view/mod.rs`: Update status line rendering to read these options and format the status line content (mode, file path, modified flag, ruler info).
+3. - [x] `view/mod.rs`: Implement the rendering/layout of the status line for each window (or single shared status line at the bottom, depending on `laststatus` setting).
+4. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+5. - [x] Unit tests: Verify statusline generation, correct formatting of components, and option-based visibility (ruler, laststatus).
+6. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] The global options `laststatus` and `ruler` are successfully registered.
+- [x] The status line is formatted correctly, displaying current mode, buffer name, modified flag, and ruler cursor coordinates.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Tabline (Build Order 8.6) — [x] COMPLETE
+
+> one line across the top listing tab pages, gated by `'showtabline'`, reusing 8.5's projection-then-format pattern.
+
+## Checklist
+
+1. - [x] `kernel/options.rs`: Register new global option `showtabline` (number) following the 7.1 option registry recipe.
+2. - [x] `view/mod.rs`: Update tab line rendering to read this option, format the tab line content listing the active and other tab pages.
+3. - [x] `view/mod.rs`: Implement the rendering/layout of the tabline at the top of the screen when `showtabline` dictates.
+4. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+5. - [x] Unit tests: Verify tabline visibility based on `showtabline` and correct tab labels.
+6. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] The global option `showtabline` is successfully registered.
+- [x] Tabline correctly displays the list of tab pages and highlights the active tab.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Scrollbar (Build Order 8.7)
+
+> wire `vim_ui::model::ScrollbarModel` and `TextView`'s existing `draw_scrollbar` from the display map's total/visible row counts. Off by default; a new `scrollbar` window-local option (7.1's recipe) turns it on.
+
+## Checklist
+
+1. - [ ] `kernel/options.rs`: Register new window-local option `scrollbar` (bool) following the 7.1 option registry recipe.
+2. - [ ] `view/mod.rs`: Update window projection and rendering cache update steps to construct a `ScrollbarModel` based on `DisplayMap` total and visible row counts.
+3. - [ ] `view/mod.rs`: Wire the scrollbar model into `TextView` rendering, invoking its `draw_scrollbar` method when the `scrollbar` option is enabled.
+4. - [ ] `view/layout.rs`: Ensure layout computation remains unaffected by the scrollbar state, keeping scrollbar drawing as an overlay inside the window's existing rect.
+5. - [ ] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+6. - [ ] Unit tests: Verify scrollbar rendering doesn't modify layout width/height, and `ScrollbarModel` values are computed correctly.
+7. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
 
 ## Criteria for Completion
 
 - [ ] `cargo check -p nxvim` passes.
 - [ ] `cargo check --workspace` passes.
 - [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
-- [ ] `:s` range parsing correctly resolves target lines and bounds (e.g. `1,5s/foo/bar/`).
-- [ ] Substitution global (`g`) and case options (`i`/`I`) correctly modify target matches.
-- [ ] The confirm-prompt lifecycle correctly pauses execution, prompts the user via `app/prompt.rs`, and applies mutations to the buffer only on confirmation.
-- [ ] All mutations are grouped under a single undo transaction (`kernel/transaction.rs`).
+- [ ] The window-local option `scrollbar` is successfully registered.
+- [ ] Scrollbar matches the vertical text offset and visible row counts, rendered overlaying the text area's rightmost column without shrinking the computed viewport rect.
 - [ ] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**

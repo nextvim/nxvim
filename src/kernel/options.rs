@@ -31,6 +31,9 @@ pub struct GlobalOptions {
     pub ignorecase: bool,
     pub hlsearch: bool,
     pub incsearch: bool,
+    pub laststatus: i64,
+    pub ruler: bool,
+    pub showtabline: i64,
 }
 
 impl Default for GlobalOptions {
@@ -39,6 +42,9 @@ impl Default for GlobalOptions {
             ignorecase: false,
             hlsearch: false,
             incsearch: false,
+            laststatus: 1,
+            ruler: false,
+            showtabline: 1,
         }
     }
 }
@@ -46,11 +52,23 @@ impl Default for GlobalOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowOptions {
     pub wrap: bool,
+    pub number: bool,
+    pub relativenumber: bool,
+    pub signcolumn: String,
+    pub foldcolumn: i64,
+    pub scrollbar: bool,
 }
 
 impl Default for WindowOptions {
     fn default() -> Self {
-        Self { wrap: true }
+        Self {
+            wrap: true,
+            number: false,
+            relativenumber: false,
+            signcolumn: "auto".to_string(),
+            foldcolumn: 0,
+            scrollbar: false,
+        }
     }
 }
 
@@ -70,6 +88,21 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
             canonical_name: "incsearch",
             scope: OptionScope::Global,
             kind: OptionValueKind::Bool,
+        }),
+        "laststatus" | "ls" => Some(OptionSpec {
+            canonical_name: "laststatus",
+            scope: OptionScope::Global,
+            kind: OptionValueKind::Number,
+        }),
+        "ruler" | "ru" => Some(OptionSpec {
+            canonical_name: "ruler",
+            scope: OptionScope::Global,
+            kind: OptionValueKind::Bool,
+        }),
+        "showtabline" | "stal" => Some(OptionSpec {
+            canonical_name: "showtabline",
+            scope: OptionScope::Global,
+            kind: OptionValueKind::Number,
         }),
         "expandtab" | "et" => Some(OptionSpec {
             canonical_name: "expandtab",
@@ -93,6 +126,31 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
         }),
         "wrap" => Some(OptionSpec {
             canonical_name: "wrap",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Bool,
+        }),
+        "number" | "nu" => Some(OptionSpec {
+            canonical_name: "number",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Bool,
+        }),
+        "relativenumber" | "rnu" => Some(OptionSpec {
+            canonical_name: "relativenumber",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Bool,
+        }),
+        "signcolumn" | "scl" => Some(OptionSpec {
+            canonical_name: "signcolumn",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Str,
+        }),
+        "foldcolumn" | "fdc" => Some(OptionSpec {
+            canonical_name: "foldcolumn",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Number,
+        }),
+        "scrollbar" | "sb" => Some(OptionSpec {
+            canonical_name: "scrollbar",
             scope: OptionScope::Window,
             kind: OptionValueKind::Bool,
         }),

@@ -97,6 +97,28 @@ impl App {
     }
 
     pub fn handle_raw_key(&mut self, raw_key: input::RawKey) -> Outcome {
+        if self.editor.has_pending_substitute() {
+            let outcome = match raw_key {
+                input::RawKey::Char(ch) => {
+                    if "ynaql".contains(ch) {
+                        self.editor.handle_substitute_confirm(ch)
+                    } else {
+                        Outcome::default()
+                    }
+                }
+                input::RawKey::Escape => {
+                    self.editor.handle_substitute_confirm('q')
+                }
+                _ => Outcome::default(),
+            };
+            for effect in &outcome.effects {
+                if let Some(req) = services::describe_effect(effect) {
+                    self.pending_request = Some(req);
+                }
+            }
+            return outcome;
+        }
+
         let outcome = match raw_key {
             input::RawKey::Char(ch) => {
                 self.prompt.push(ch);

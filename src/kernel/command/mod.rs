@@ -9,6 +9,7 @@ pub mod ex;
 pub mod insert;
 pub mod normal;
 pub mod search;
+pub mod substitute;
 pub mod visual;
 
 use vim_input::Action;

@@ -111,6 +111,38 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
             effects: vec![Effect::Quit],
             ..Outcome::default()
         },
+        "s" | "substitute" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+
+            let (start_line, end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
+
+            let args = match crate::kernel::command::substitute::parse_substitute(&command.arguments) {
+                Ok(a) => a,
+                Err(_) => return Outcome::default(),
+            };
+            crate::kernel::command::substitute::execute_substitute(editor, ctx, start_line, end_line, args)
+        }
         "w" | "write" => {
             let force = command.bang;
             let trimmed = command.arguments.trim();
@@ -303,28 +335,35 @@ fn execute_delete_lines(
         return Outcome::default();
     }
 
-    let buffer = editor
-        .buffers_mut()
-        .get_mut(buffer_id)
-        .expect("live buffer");
+    let selections_before = editor.window(window_id).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::delete(TextRange {
+                        start: ByteOffset(start_offset),
+                        end: ByteOffset(end_offset),
+                    }),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("deleting range-derived lines is always well-formed")
+    };
 
-    let mutation = transaction::apply(
-        buffer,
-        transaction::EditDescription {
-            origin: EditOrigin::User,
-            edits: vec![PlannedEdit {
-                selection: None,
-                edit: Edit::delete(TextRange {
-                    start: ByteOffset(start_offset),
-                    end: ByteOffset(end_offset),
-                }),
-            }],
-            selections: None,
-        },
-    )
-    .expect("deleting range-derived lines is always well-formed");
-
-    let new_anchor = buffer.as_text_buffer().anchor_before(start_offset);
+    let new_anchor = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        buffer.as_text_buffer().anchor_before(start_offset)
+    };
+    let mut final_selections = None;
     if let Some(win) = editor.windows_mut().get_mut(window_id) {
         let primary_id = win.selections().primary().id;
         let _ = win.selections_mut().replace_primary(Selection {
@@ -334,6 +373,14 @@ fn execute_delete_lines(
             reversed: false,
             goal: SelectionGoal::None,
         });
+        final_selections = Some(win.selections().clone());
+    }
+    if let (Some(tx_id), Some(selections)) = (mutation.transaction, final_selections) {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, selections);
     }
 
     Outcome::from_mutation(&mutation)
@@ -375,12 +422,20 @@ fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::Option
             "ignorecase" => editor.global_options().ignorecase.to_string(),
             "hlsearch" => editor.global_options().hlsearch.to_string(),
             "incsearch" => editor.global_options().incsearch.to_string(),
+            "laststatus" => editor.global_options().laststatus.to_string(),
+            "ruler" => editor.global_options().ruler.to_string(),
+            "showtabline" => editor.global_options().showtabline.to_string(),
             _ => String::new(),
         },
         OptionScope::Window => {
             if let Some(win) = editor.window(ctx.window) {
                 match spec.canonical_name {
                     "wrap" => win.options().wrap.to_string(),
+                    "number" => win.options().number.to_string(),
+                    "relativenumber" => win.options().relativenumber.to_string(),
+                    "signcolumn" => win.options().signcolumn.clone(),
+                    "foldcolumn" => win.options().foldcolumn.to_string(),
+                    "scrollbar" => win.options().scrollbar.to_string(),
                     _ => String::new(),
                 }
             } else {
@@ -409,12 +464,15 @@ fn get_option_bool(editor: &Editor, ctx: CommandContext, spec: options::OptionSp
             "ignorecase" => editor.global_options().ignorecase,
             "hlsearch" => editor.global_options().hlsearch,
             "incsearch" => editor.global_options().incsearch,
+            "ruler" => editor.global_options().ruler,
             _ => false,
         },
         OptionScope::Window => {
             if let Some(win) = editor.window(ctx.window) {
                 match spec.canonical_name {
                     "wrap" => win.options().wrap,
+                    "number" => win.options().number,
+                    "relativenumber" => win.options().relativenumber,
                     _ => false,
                 }
             } else {
@@ -460,6 +518,21 @@ fn set_option_val(
                         global.incsearch = b;
                     }
                 }
+                "laststatus" => {
+                    if let OptionValue::Number(n) = val {
+                        global.laststatus = n;
+                    }
+                }
+                "ruler" => {
+                    if let OptionValue::Bool(b) = val {
+                        global.ruler = b;
+                    }
+                }
+                "showtabline" => {
+                    if let OptionValue::Number(n) = val {
+                        global.showtabline = n;
+                    }
+                }
                 _ => {}
             }
         }
@@ -470,6 +543,31 @@ fn set_option_val(
                     "wrap" => {
                         if let OptionValue::Bool(b) = val {
                             opts.wrap = b;
+                        }
+                    }
+                    "number" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.number = b;
+                        }
+                    }
+                    "relativenumber" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.relativenumber = b;
+                        }
+                    }
+                    "signcolumn" => {
+                        if let OptionValue::Str(s) = val {
+                            opts.signcolumn = s;
+                        }
+                    }
+                    "foldcolumn" => {
+                        if let OptionValue::Number(num) = val {
+                            opts.foldcolumn = num;
+                        }
+                    }
+                    "scrollbar" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.scrollbar = b;
                         }
                     }
                     _ => {}
