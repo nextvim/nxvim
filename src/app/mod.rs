@@ -5,18 +5,26 @@
 //! those arrive with the milestones that need them.
 
 pub mod input;
+pub mod prompt;
+pub mod request;
 
 use crate::kernel::{Editor, outcome::Outcome};
+use prompt::CommandPrompt;
+use request::AppRequest;
 use vim_input::Action;
 
 pub struct App {
     editor: Editor,
+    prompt: CommandPrompt,
+    pending_request: Option<AppRequest>,
 }
 
 impl App {
     pub fn new(initial_text: impl Into<String>) -> Self {
         Self {
             editor: Editor::new(initial_text),
+            prompt: CommandPrompt::new(),
+            pending_request: None,
         }
     }
 
@@ -24,8 +32,43 @@ impl App {
         &self.editor
     }
 
+    pub fn prompt(&self) -> &CommandPrompt {
+        &self.prompt
+    }
+
     pub fn handle_action(&mut self, action: Action) -> Outcome {
         self.editor.execute(action)
+    }
+
+    pub fn handle_raw_key(&mut self, raw_key: input::RawKey) -> Outcome {
+        let outcome = match raw_key {
+            input::RawKey::Char(ch) => {
+                self.prompt.push(ch);
+                Outcome::default()
+            }
+            input::RawKey::Backspace => {
+                self.prompt.backspace();
+                Outcome::default()
+            }
+            input::RawKey::Enter => {
+                let line = self.prompt.take();
+                let outcome = self.editor.submit_command_line(&line);
+                if outcome.effects.contains(&crate::kernel::outcome::Effect::Quit) {
+                    self.pending_request = Some(AppRequest::Quit);
+                }
+                outcome
+            }
+            input::RawKey::Escape => {
+                self.prompt.clear();
+                // Esc back to Normal mode via Clear
+                self.editor.execute(Action::Clear)
+            }
+        };
+        outcome
+    }
+
+    pub fn take_request(&mut self) -> Option<AppRequest> {
+        self.pending_request.take()
     }
 }
 

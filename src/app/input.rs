@@ -43,6 +43,30 @@ impl InputTranslator {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RawKey {
+    Char(char),
+    Backspace,
+    Enter,
+    Escape,
+}
+
+/// Helper for raw-key bypass in Command mode.
+pub fn translate_raw(event: &Event) -> Option<RawKey> {
+    match event {
+        Event::Key(key_event) if key_event.kind != KeyEventKind::Release => {
+            match key_event.code {
+                CKey::Char(ch) => Some(RawKey::Char(ch)),
+                CKey::Backspace => Some(RawKey::Backspace),
+                CKey::Enter => Some(RawKey::Enter),
+                CKey::Esc => Some(RawKey::Escape),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Ported from `src_/app/input.rs::translate_key`.
 fn translate_key(key: KeyEvent) -> Option<Key> {
     let code = match key.code {

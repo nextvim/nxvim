@@ -26,7 +26,9 @@ pub enum RedrawInvalidation {
 /// yet — nothing produces one until a milestone needs fs/clipboard/script
 /// effects.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Effect {}
+pub enum Effect {
+    Quit,
+}
 
 /// The result of one `Editor::execute()` call.
 #[derive(Clone, Debug, Default)]

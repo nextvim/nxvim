@@ -22,6 +22,7 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::MoveUp { count, select } => motions::move_up(editor, ctx.window, count, select),
         Action::MoveDown { count, select } => motions::move_down(editor, ctx.window, count, select),
         Action::SetToInsert => super::insert::enter(editor),
+        Action::SetToCommand => super::ex::enter(editor),
         Action::DeleteMotion { count, motion } => {
             operators::delete_motion(editor, ctx.window, count, &motion)
         }

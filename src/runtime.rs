@@ -7,7 +7,7 @@
 use std::io::{self, Write};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event};
 
 use crate::app::{App, input::InputTranslator};
 use crate::view;
@@ -17,7 +17,12 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
     let mut input = InputTranslator::new();
     // Temporary debug status (mode + last resolved action), see `view::render`.
     let mut status = format!("-- {:?} -- last: (none)", app.editor().mode());
-    view::render(out, app.editor(), &status, screen)?;
+    let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
+        Some(app.prompt().text())
+    } else {
+        None
+    };
+    view::render(out, app.editor(), &status, prompt_opt, screen)?;
 
     loop {
         if !event::poll(Duration::from_millis(50))? {
@@ -25,34 +30,53 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
         }
         let ev = event::read()?;
 
-        // Temporary escape hatch until `:q` exists (no Ex commands in this
-        // milestone) — not a Vim command, just how a manual smoke test exits.
-        if let Event::Key(key) = &ev
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-            && key.code == KeyCode::Char('c')
-        {
-            return Ok(());
-        }
-
         if let Event::Resize(columns, rows) = ev {
             screen = vim_ui::Rect::new(0, 0, columns, rows);
-            view::render(out, app.editor(), &status, screen)?;
+            let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
+                Some(app.prompt().text())
+            } else {
+                None
+            };
+            view::render(out, app.editor(), &status, prompt_opt, screen)?;
             continue;
         }
 
-        if let Some(resolved) = input.translate(ev) {
-            let action_desc = format!("{:?}", resolved.action);
-            let outcome = app.handle_action(resolved.action);
-            status = format!(
-                "-- {:?} -- last: {action_desc} -- mutated: {} invalidation: {:?} events: {}",
-                app.editor().mode(),
-                outcome.mutated,
-                outcome.invalidation,
-                outcome.events.len()
-            );
+        let is_command_mode = app.editor().mode() == crate::kernel::mode::Mode::Command;
+        if is_command_mode {
+            if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
+                let outcome = app.handle_raw_key(raw_key);
+                if let Some(crate::app::request::AppRequest::Quit) = app.take_request() {
+                    return Ok(());
+                }
+                status = format!(
+                    "-- {:?} -- mutated: {} invalidation: {:?} events: {}",
+                    app.editor().mode(),
+                    outcome.mutated,
+                    outcome.invalidation,
+                    outcome.events.len()
+                );
+            }
         } else {
-            status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
+            if let Some(resolved) = input.translate(ev) {
+                let action_desc = format!("{:?}", resolved.action);
+                let outcome = app.handle_action(resolved.action);
+                status = format!(
+                    "-- {:?} -- last: {action_desc} -- mutated: {} invalidation: {:?} events: {}",
+                    app.editor().mode(),
+                    outcome.mutated,
+                    outcome.invalidation,
+                    outcome.events.len()
+                );
+            } else {
+                status = format!("-- {:?} -- last: (unresolved key)", app.editor().mode());
+            }
         }
-        view::render(out, app.editor(), &status, screen)?;
+
+        let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
+            Some(app.prompt().text())
+        } else {
+            None
+        };
+        view::render(out, app.editor(), &status, prompt_opt, screen)?;
     }
 }

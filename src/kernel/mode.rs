@@ -11,6 +11,7 @@
 pub enum Mode {
     Normal,
     Insert,
+    Command,
 }
 
 impl Mode {
@@ -20,5 +21,9 @@ impl Mode {
 
     pub const fn is_insert(self) -> bool {
         matches!(self, Mode::Insert)
+    }
+
+    pub const fn is_command(self) -> bool {
+        matches!(self, Mode::Command)
     }
 }

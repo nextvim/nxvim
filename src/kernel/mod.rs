@@ -70,6 +70,13 @@ impl Editor {
         command::dispatch(self, ctx, action)
     }
 
+    /// Submit a command line (e.g. from `:` Ex command prompt) to be parsed
+    /// and admitted by the kernel.
+    pub fn submit_command_line(&mut self, line: &str) -> Outcome {
+        let ctx = self.current;
+        command::ex::admit(self, ctx, line)
+    }
+
     pub fn mode(&self) -> Mode {
         self.mode
     }
@@ -331,6 +338,52 @@ mod tests {
         editor.execute(Action::NextTab { count: 1 });
         assert_eq!(editor.current_context().tab, tab2_id);
         assert_eq!(editor.current_context().window, tab2_win);
+    }
+
+    #[test]
+    fn command_line_ex_admission_smoke_test() {
+        use crate::kernel::{events::EditorEvent, outcome::{Effect, RedrawInvalidation}};
+
+        // 1. A range delete deletes exactly those lines
+        let mut editor = Editor::new("line1\nline2\nline3\nline4");
+        // range delete `:2,3d`
+        let outcome = editor.submit_command_line("2,3d");
+        assert_eq!(text_of(&editor), "line1\nline4");
+        assert!(outcome.mutated);
+        assert_eq!(outcome.events.len(), 1);
+        assert!(matches!(outcome.events[0], EditorEvent::TextChanged { .. }));
+        assert!(matches!(
+            outcome.invalidation,
+            RedrawInvalidation::Range { .. }
+        ));
+
+        // 2. An unknown command is a no-op Outcome
+        let mut editor = Editor::new("line1\nline2");
+        let outcome = editor.submit_command_line("unknown");
+        assert!(!outcome.mutated);
+        assert_eq!(text_of(&editor), "line1\nline2");
+
+        // 3. :quit produces Effect::Quit with no mutation
+        let mut editor = Editor::new("line1\nline2");
+        let outcome = editor.submit_command_line("q");
+        assert!(!outcome.mutated);
+        assert_eq!(outcome.effects, vec![Effect::Quit]);
+
+        let outcome = editor.submit_command_line("quit");
+        assert!(!outcome.mutated);
+        assert_eq!(outcome.effects, vec![Effect::Quit]);
+
+        // 4. Entering Command mode, typing, cancelling with Esc returns to Normal
+        let mut editor = Editor::new("line1");
+        assert_eq!(editor.mode(), Mode::Normal);
+        
+        let outcome = editor.execute(Action::SetToCommand);
+        assert_eq!(editor.mode(), Mode::Command);
+        assert!(outcome.mode_changed);
+
+        let outcome = editor.execute(Action::Clear);
+        assert_eq!(editor.mode(), Mode::Normal);
+        assert!(outcome.mode_changed);
     }
 }
 

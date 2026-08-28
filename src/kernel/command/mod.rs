@@ -5,6 +5,7 @@
 //! family module owns its own dispatch table so adding a command never
 //! requires touching this file.
 
+pub mod ex;
 pub mod insert;
 pub mod normal;
 
@@ -31,5 +32,6 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
     match editor.mode() {
         Mode::Normal => normal::dispatch(editor, ctx, action),
         Mode::Insert => insert::dispatch(editor, ctx, action),
+        Mode::Command => ex::dispatch(editor, ctx, action),
     }
 }
