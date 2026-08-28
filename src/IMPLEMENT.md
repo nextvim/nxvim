@@ -836,7 +836,7 @@ later is exactly the "cheap and boring" recipe this milestone builds.
 
 ---
 
-# View — Display-map + `TextView` wiring (Build Order 8.1)
+# # View — Display-map + `TextView` wiring (Build Order 8.1) — [x] COMPLETE
 
 > Per window, `view/` keeps a `display_map::DisplayMap` plus retained
 > per-buffer scroll state keyed by the kernel's `WindowId` — a rendering
@@ -860,7 +860,7 @@ already-complete `kernel/options.rs` registry when their turn comes.
 
 ## Checklist
 
-1. - [ ] `app/view_sync.rs` (new, named in `RESCUE.md`'s directory layout):
+1. - [x] `app/view_sync.rs` (new, named in `RESCUE.md`'s directory layout):
    a plain, kernel-read-only projection type, e.g. `pub struct
    WindowProjection { pub window: WindowId, pub buffer: BufferId, pub
    snapshot: text::BufferSnapshot, pub selections: vim_buffer::
@@ -869,15 +869,15 @@ already-complete `kernel/options.rs` registry when their turn comes.
    active tab's layout (`editor.tabs().active().layout().window_ids()`)
    and reads `editor.window(id)`/`editor.buffer(window.buffer_id())`. No
    `vim_ui`/`display_map` types appear in this file — it depends only on
-   `kernel`/`vim_buffer`/`text`, matching `app -> kernel` in the
+   `kernel`/`vim_buffer`/text, matching `app -> kernel` in the
    dependency diagram.
-2. - [ ] `view/mod.rs` (rewritten): a new `RenderState` struct holding
+2. - [x] `view/mod.rs` (rewritten): a new `RenderState` struct holding
    `windows: HashMap<WindowId, WindowRenderCache>`, where
    `WindowRenderCache { display_map: display_map::DisplayMap, buffer:
    BufferId, retained: HashMap<BufferId, display_map::DisplayMap> }`.
    `RenderState::new()` starts empty; a cache entry is created lazily the
    first time a given `WindowId` is rendered.
-3. - [ ] `view/mod.rs`: a per-window update step, mirroring `vim_ui::
+3. - [x] `view/mod.rs`: a per-window update step, mirroring `vim_ui::
    WindowState::update`'s shape (`crates/vim-ui/src/window.rs`) but
    driven by a `WindowProjection` + that window's `vim_ui::Rect` viewport
    instead of owning selections long-term. If the window has no cache
@@ -891,7 +891,7 @@ already-complete `kernel/options.rs` registry when their turn comes.
    from the `WindowProjection` each frame for `scroll_to_cursor`/model
    construction only, so `kernel::Window::selections()` stays the one and
    only owner of selection state.
-4. - [ ] `view/mod.rs`: build one `vim_ui::TextViewModel` per window from
+4. - [x] `view/mod.rs`: build one `vim_ui::TextViewModel` per window from
    its `DisplaySnapshot`. Iterate `scroll_y..scroll_y + visible_rows`,
    call `snapshot.line_text(row)` for each row's text — **not**
    `DisplaySnapshot::text_chunks()`, which calls `Box::leak` on every
@@ -905,23 +905,23 @@ already-complete `kernel/options.rs` registry when their turn comes.
    `DisplaySnapshot::anchor_to_display_point`. Call `model.validate()` in
    a `debug_assert!` — a validation failure here is this milestone's own
    bug, never something to silently render anyway.
-5. - [ ] `view/mod.rs`: hand each window's model to a `vim_ui::views::
+5. - [x] `view/mod.rs`: hand each window's model to a `vim_ui::views::
    text::TextView` (`TextView::new()` + `set_model()` + `View::draw`),
    replacing the current `full_text.split('\n')` loop and its manual
    `Print`/`Clear` calls entirely.
-6. - [ ] `view/mod.rs`: draw the terminal cursor using `TextView::
+6. - [x] `view/mod.rs`: draw the terminal cursor using `TextView::
    cursor_screen_pos`/`cursor_shape` for the *current* window only
    (preserving the "only the focused window shows a terminal cursor" rule
    the Windows/tabs milestone already established), instead of the
    existing hand-computed `cursor_x`/`cursor_y` math.
-7. - [ ] `runtime.rs`: thread a `view::RenderState` through every call site
+7. - [x] `runtime.rs`: thread a `view::RenderState` through every call site
    of `view::render` (the initial draw, `Event::Resize`, and the main
    loop) — `runtime::run` owns it locally as a plain local variable;
    rendering-cache state stays `view`-owned, sequencing stays in
    `runtime.rs`.
-8. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`. This
+8. - [x] Kernel purity check: re-run the grep from `RESCUE.md`. This
    milestone shouldn't touch `kernel/` at all; confirm that stays true.
-9. - [ ] Unit tests (`view/mod.rs` or a new `view/tests.rs`): a
+9. - [x] Unit tests (`view/mod.rs` or a new `view/tests.rs`): a
    `TextViewModel` built from a real multi-line buffer passes
    `.validate()`; moving the cursor via `Editor::execute` changes the next
    frame's `TextViewModel.cursor.position` to match; splitting a window
@@ -930,14 +930,220 @@ already-complete `kernel/options.rs` registry when their turn comes.
    reuses the retained `DisplayMap` instead of rebuilding it from scratch
    (assert via a cheap build-counter, mirroring `display_map`'s own
    `fold_map::build_count()` test pattern from its `PLAN.md`).
-10. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+10. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
     green.
-11. - [ ] Manual smoke test: launch the binary, open/edit a real
+11. - [x] Manual smoke test: launch the binary, open/edit a real
     multi-line file, split with `Ctrl-w v`, confirm each pane shows its
     own buffer's real text (not the placeholder loop's output) with the
     cursor tracked correctly, and confirm switching a window's buffer and
     back preserves scroll position. **Needs a human with a real
     terminal.**
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced;
+      `RenderState`/`WindowRenderCache` hold real per-window rendering
+      state, not a pass-through wrapper.
+- [x] No `unsafe`/`Box::leak`/thread-local state was introduced by this
+      milestone's own code — grep confirms nothing added under `view/` or
+      `app/view_sync.rs` calls `DisplaySnapshot::text_chunks`.
+- [x] Every `TextViewModel` this milestone builds is proven (by test) to
+      pass `.validate()`.
+- [x] Switching a window's buffer and back is proven (by test) to reuse
+      retained per-buffer `DisplayMap` state rather than rebuilding it
+      (Rule 4 item 5's per-buffer view-state requirement).
+- [x] `view/`'s rendering cache is proven, by grep/inspection, to be keyed
+      by the kernel's own `WindowId`/`BufferId` — no `vim_ui::
+      WindowStore`/`Ui`/`FocusManager`/`LayoutEngine` instance exists
+      anywhere under `src/`.
+- [x] Selections are proven, by inspection, to be read fresh from
+      `kernel::Window::selections()` every frame — `view/`'s cache never
+      stores an independent copy of selection state across frames.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a
+      real terminal.**
+
+---
+
+# # Motions (Build Order 7.2)
+
+> `kernel/command/normal/motions.rs`. Word/WORD, paragraph/sentence, `f`/
+> `t`/`F`/`T` + `;`/`,`, `%`, line/screen motions, `gg`/`G`, scrolling.
+> Every text object and operator below is built on the range this
+> sub-phase produces, so it lands first among command families.
+
+Most of this milestone's math already exists and is already count-aware:
+`crates/vim-buffer`'s `Motions` trait and `SelectionSet` (`move_to_word`,
+`move_to_big_word`, paragraph/sentence, `find_character`, `move_to_line`,
+...) implement nearly everything `RESCUE.md` lists, and `vim_input::Action`
+already has a variant for every one of them (`MoveToWord`,
+`MoveToMatchingDelimiter`, `MoveToNextCharacter`, `MoveToScreenTop`,
+`ScrollHalfPageDown`, ...) — none of it is wired into `kernel::Editor::
+execute()` yet (only `h`/`j`/`k`/`l` are, from Skeleton). The two real gaps
+are `%` (no bracket-matching exists anywhere yet) and screen/scroll motions
+(no window viewport state exists yet). `%`'s bracket matching does **not**
+need a new scanner written from scratch: `crates/vim-scanner` already
+exists in the workspace (listed as an `nxvim` dependency, but not yet used
+anywhere) and is exactly a **structural scanner** — a plain, nesting-aware,
+string-literal-aware brace/paren/bracket/quote matcher over raw text, no
+grammar or `tree_sitter` dependency, with a `StructuralScanner::
+scan_rows_for_enclosing` entry point already shaped for "find the
+delimiter pair enclosing this byte, scanning these buffer rows" — a
+near-exact fit for `%`. This milestone's job is to depend on it from
+`vim-buffer` and wire it up, not reimplement it. `it`/`at` tag objects
+(7.3) will extend this same crate for tag scanning rather than introduce a
+second mechanism, keeping `tree_sitter`/`vim-treesitter` deferred exactly
+as `RESCUE.md`'s closing note on item 8 requires ("added only once a
+concrete feature needs them").
+
+## Checklist
+
+1. - [ ] `crates/vim-buffer/Cargo.toml`: add `vim-scanner = { path =
+   "../vim-scanner" }` as a dependency — `vim-buffer` already depends on
+   `text`/`clock`, the only two crates `vim-scanner` itself depends on, so
+   this adds no new dependency chain, just a new edge between two crates
+   already in the workspace.
+2. - [ ] `crates/vim-scanner/src/lib.rs`: fix the pre-existing gap where
+   `` ` `` (backtick strings) are declared in `DelimiterKind` (with real
+   `opening_char`/`closing_char`) but the scan loop never pushes/pops
+   them and `is_quote()` excludes `BackTick` — so `StructuralScanner`
+   today silently never matches a backtick pair at all. Add the `` '`' ``
+   push/close arms next to the existing `"`/`'` arms in both `scan_chunks`
+   and `scan_rows_for_enclosing`, and make `is_quote()` include
+   `BackTick`. Vim's real quote text objects are `i"`/`i'`/`` i` `` (and
+   their `a` forms), so this fix is required for 7.3's `` i` ``/`` a` ``,
+   not optional polish.
+3. - [ ] `crates/vim-scanner/src/lib.rs`: add a unit test proving a
+   `` ` ``-delimited pair now matches (mirroring the existing
+   `matches_a_simple_brace_pair`/`escaped_quotes_do_not_end_the_string`
+   tests), and that braces/quotes inside a backtick string are still
+   ignored the same way they already are inside `"`/`'` strings.
+4. - [ ] `crates/vim-buffer/src/movement.rs`: `Motions` trait gains `fn
+   move_to_matching_delimiter(&self, anchor: bool, buffer: &Buffer) ->
+   Selection<Anchor>`. Implementation: scan the current line's text
+   (`buffer.row_text(row)`, already available via the `BufferText` trait
+   this file defines) from the cursor's column forward for the first
+   `(){}[]` character — matching real Vim's `%`, which never searches
+   past end of line for a starting bracket — then call `vim_scanner::
+   StructuralScanner::scan_rows_for_enclosing(buffer, 0, buffer.
+   row_count(), byte, true)` (`block_only: true`, matching vanilla Vim's
+   default `'matchpairs'`, which does not include quotes) to get the
+   enclosing `MatchedDelimiter`, and return the *other* end of it (`start`
+   if the cursor was on `end`, `end` if the cursor was on `start`) as the
+   new cursor position. Returns `self.clone()` (no movement) when the
+   current line has no bracket or the scan finds nothing — matching
+   Vim's `%` no-op-with-bell, never a panic or a guessed range.
+5. - [ ] `crates/vim-buffer/src/selection_set.rs`: `SelectionSet` gains
+   `pub fn move_to_matching_delimiter(&mut self, anchor: bool, buffer:
+   &Buffer)`, following the same per-cursor update pattern every other
+   `move_to_*` wrapper already uses. Real Vim's plain `%` ignores a
+   leading count (a count instead means "jump to N% through the file",
+   out of scope here), so this wrapper takes no `count` parameter.
+6. - [ ] `crates/vim-buffer/src/movement.rs` + `selection_set.rs`:
+   `Motions` trait gains `fn move_to_column(&self, anchor: bool, column:
+   u32, buffer: &Buffer) -> Selection<Anchor>` (Vim's `|`), clipping
+   `column` to the current line's length, plus the matching
+   `SelectionSet::move_to_column` wrapper — the one motion RESCUE's
+   "line/screen motions" names that has no existing implementation at
+   all (no scanner involved; plain point math).
+7. - [ ] `kernel/window/mod.rs`: `Window` gains the viewport/scroll-intent
+   state its own doc comment already anticipates (`RESCUE.md` Rule 4 item
+   2) — `viewport_height: u32` (default `1`) and `scroll_top: u32`
+   (default `0`, the topmost visible buffer line) — plus `pub fn
+   set_viewport_height(&mut self, rows: u32)`, `pub fn viewport_height(&
+   self) -> u32`, `pub fn scroll_top(&self) -> u32`, and a pure `pub fn
+   scroll_to_line(&mut self, line: u32)` that clamps `scroll_top` so
+   `line` stays within `[scroll_top, scroll_top + viewport_height)`,
+   moving it by the minimum amount needed (matching Vim's own
+   cursor-follows-scroll behavior for ordinary motions). No scanner
+   involved — this is window viewport bookkeeping, unrelated to
+   `vim-scanner`.
+8. - [ ] `kernel/command/normal/motions.rs`: implement the screen-relative
+   family against that new state: `move_to_screen_top`/`_middle`/`_bottom`
+   (`H`/`M`/`L`) compute a target line from `window.scroll_top()`/
+   `viewport_height()` and delegate to `SelectionSet::move_to_line`;
+   `scroll_line_down`/`_up` (`Ctrl-e`/`Ctrl-y`), `scroll_half_page_down`/
+   `_up` (`Ctrl-d`/`Ctrl-u`), `scroll_forward`/`_backward` (`Ctrl-f`/
+   `Ctrl-b`), and `center_cursor_line`/`cursor_line_top`/
+   `cursor_line_bottom` (`zz`/`zt`/`zb`) all mutate `window.scroll_top()`
+   directly (and, for `Ctrl-d`/`Ctrl-u`/`Ctrl-f`/`Ctrl-b`, the cursor line
+   too, matching Vim) — pure viewport/cursor moves that never touch
+   `kernel::transaction`.
+9. - [ ] `view/mod.rs`: the per-frame render loop calls `window.
+   set_viewport_height(rect.height)` before building that window's
+   `DisplayMap`/model, and seeds the display map's scroll range from
+   `window.scroll_top()` instead of only ever recomputing it from
+   `scroll_to_cursor`. This keeps `Window::scroll_top` (Rule 4 item 2's
+   window-owned "viewport/scroll intent") authoritative and `view/`'s
+   display map a rendering cache that follows it, not a second,
+   independently-computed source of truth. Ordinary cursor motions that
+   walk off-screen keep the cursor visible by calling `Window::
+   scroll_to_line` at the end of `motions.rs`'s existing `moved()` helper.
+10. - [ ] `kernel/mod.rs`: `Editor` gains `last_char_search:
+    Option<CharSearch>` (a small new `pub struct CharSearch { pub ch:
+    char, pub forward: bool, pub till: bool }` in `kernel/command/normal/
+    motions.rs`), editor-global like registers (`RESCUE.md` Rule 4 item 9's
+    precedent for session-wide command memory that isn't buffer- or
+    window-scoped).
+11. - [ ] `kernel/command/normal/motions.rs`: implement `f`/`t`/`F`/`T`
+    (`Action::MoveToNextCharacter`/`MoveToPreviousCharacter`) by calling
+    the already-implemented `SelectionSet::find_character(select, count,
+    ch, forward, till, buffer)`, then recording the search into `Editor::
+    last_char_search`; implement `;`/`,` (`Action::
+    RepeatCharacterSearchForward`/`RepeatCharacterSearchBackward`) by
+    reading `last_char_search` back and re-invoking `find_character` with
+    the same `ch`/`till` and `forward` unchanged for `;`, inverted for `,`
+    — matching Vim. No prior search recorded is a no-op, never a panic.
+12. - [ ] `kernel/command/normal/motions.rs`: wire the remaining
+    word/WORD, paragraph/sentence, line, and document motions —
+    `MoveToWord`/`MoveToPreviousWord`/`MoveToWordEnd`/
+    `MoveToPreviousWordEnd`, `MoveToBigWord`/`MoveToPreviousBigWord`/
+    `MoveToBigWordEnd`/`MoveToPreviousBigWordEnd`, `MoveToStartOfDocument`/
+    `MoveToEndOfDocument` (`gg`/`G`), `MoveToLine` (count-prefixed `G`),
+    `MoveToStartOfLine`/`MoveToStartOfLineNonSpace`/`MoveToEndOfLine`/
+    `MoveToLastNonWhitespace`, `MoveToStartOfPreviousLine`/
+    `MoveToEndOfPreviousLine`/`MoveToStartOfNextLine`/
+    `MoveToEndOfNextLine`, `MoveToPreviousParagraph`/`MoveToNextParagraph`,
+    `MoveToPreviousSentence`/`MoveToNextSentence`, `MoveToColumn`, and
+    `MoveToMatchingDelimiter` — each a thin function following the exact
+    `move_left`/`move_right` shape (`win.selections_mut().move_*(...)`,
+    then `moved(select)`), since every one of these already has a
+    count-aware `SelectionSet` method (steps 4-6 filled the only two
+    gaps: `%` and `|`).
+13. - [ ] `kernel/command/normal/mod.rs`: add one `dispatch` match arm per
+    action variant from steps 8, 11, and 12, calling the new `motions::*`
+    functions — the single boring, mechanical step the "Add a new
+    Normal-mode command" recipe promises.
+14. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`
+    (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`); also
+    grep `tree_sitter` under `crates/vim-buffer/`, `crates/vim-scanner/`,
+    and `src/kernel/` to confirm no treesitter dependency exists anywhere
+    on the path that implements `%` — `vim-scanner` itself must stay a
+    `text`/`clock`-only crate.
+15. - [ ] Unit tests (`crates/vim-buffer/src/movement.rs`): `%` jumps from
+    an opening `(`/`{`/`[` to its true partner across multiple lines and
+    through nested pairs of the same kind (proving `vim_scanner::
+    StructuralScanner::scan_rows_for_enclosing` is doing the nesting-aware
+    work, unlike the pre-existing single-line `move_within_character`
+    scan); `%` on a line with no bracket, or on an unmatched bracket, is a
+    no-op. Unit tests (`kernel/window/mod.rs` and/or `kernel/mod.rs`'s
+    test module): `H`/`M`/`L` land on the correct line for a given
+    `scroll_top`/`viewport_height`; `Ctrl-d`/`Ctrl-u` scroll half the
+    viewport and move the cursor; `;`/`,` after an `f`/`F`/`t`/`T` repeat
+    the same/opposite-direction search; `;`/`,` with no prior character
+    search is a no-op.
+16. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+17. - [ ] Manual smoke test: launch the binary, on a real multi-line file
+    exercise `w`/`b`/`e`/`ge`, `f`/`t`/`F`/`T` + `;`/`,`, `%` on nested
+    brackets, `gg`/`G`, `H`/`M`/`L`, and `Ctrl-d`/`Ctrl-u`/`Ctrl-e`/
+    `Ctrl-y`, confirming the cursor (and, for the scroll commands, the
+    visible text) lands where vanilla Vim would. **Needs a human with a
+    real terminal.**
 
 ## Criteria for Completion
 
@@ -947,22 +1153,206 @@ already-complete `kernel/options.rs` registry when their turn comes.
       `src/kernel/`) returns clean.
 - [ ] No file introduced or grown in this milestone exceeds ~500 lines.
 - [ ] No forwarding-only `*Handler`/`*Ops` type was introduced;
-      `RenderState`/`WindowRenderCache` hold real per-window rendering
-      state, not a pass-through wrapper.
-- [ ] No `unsafe`/`Box::leak`/thread-local state was introduced by this
-      milestone's own code — grep confirms nothing added under `view/` or
-      `app/view_sync.rs` calls `DisplaySnapshot::text_chunks`.
-- [ ] Every `TextViewModel` this milestone builds is proven (by test) to
-      pass `.validate()`.
-- [ ] Switching a window's buffer and back is proven (by test) to reuse
-      retained per-buffer `DisplayMap` state rather than rebuilding it
-      (Rule 4 item 5's per-buffer view-state requirement).
-- [ ] `view/`'s rendering cache is proven, by grep/inspection, to be keyed
-      by the kernel's own `WindowId`/`BufferId` — no `vim_ui::
-      WindowStore`/`Ui`/`FocusManager`/`LayoutEngine` instance exists
-      anywhere under `src/`.
-- [ ] Selections are proven, by inspection, to be read fresh from
-      `kernel::Window::selections()` every frame — `view/`'s cache never
-      stores an independent copy of selection state across frames.
+      `motions.rs` stays plain functions, one per action, mirroring the
+      existing `move_left`/`move_right` shape.
+- [ ] `%` is proven (by test) to be nesting-aware and multi-line-capable,
+      built on `vim-scanner`'s existing `StructuralScanner`, not a new
+      scanner reinvented inside `vim-buffer` — grep confirms
+      `crates/vim-buffer/src/movement.rs` calls `vim_scanner::` and no
+      `tree_sitter`/`vim-treesitter` dependency was added anywhere on that
+      path.
+- [ ] Every motion this milestone wires is proven (by test or existing
+      coverage) to never call `kernel::transaction` and never mutate
+      buffer text — motions only ever change `Window`'s `SelectionSet` or
+      viewport state.
+- [ ] `Window`'s new viewport/scroll-intent state is proven, by
+      inspection, to be the value `view/`'s rendering cache reads every
+      frame — no independent, competing scroll computation remains that
+      could silently disagree with it.
+- [ ] `;`/`,` are proven (by test) to correctly repeat/reverse the last
+      `f`/`F`/`t`/`T` search, and to no-op safely before any character
+      search has happened.
+- [ ] `vim-scanner`'s pre-existing backtick gap (`DelimiterKind::BackTick`
+      declared but never produced by a scan) is proven (by test) fixed,
+      since 7.3's `` i` ``/`` a` `` depends on it.
 - [ ] Manual smoke test passes in a live terminal. **Needs a human with a
       real terminal.**
+
+---
+
+# # Text objects (Build Order 7.3)
+
+> `kernel/command/normal/text_objects.rs`. `iw`/`aw`, quotes, brackets,
+> tags, sentence/paragraph objects. Depends on 7.2's boundary-finding
+> motion math.
+
+`vim_input`'s `i{c}`/`a{c}` keymap bindings already resolve to `Action::
+MoveWithinCharacter { count, ch }`/`Action::MoveAroundCharacter { count,
+ch }` for *any* character `c` (word included: `iw` produces `ch: 'w'`),
+but `kernel::command::normal::dispatch` doesn't handle either variant yet
+(they fall through to the default no-op). The existing `vim-buffer`
+`move_within_character`/`move_around_character` methods are a naive,
+single-line-only, non-nesting character-pair scan: they only recognize a
+fixed set of bracket/quote characters (falling back to a backtick pair for
+anything else, which is wrong for `w`), never span multiple lines, and
+never count nesting depth — good enough for a quick same-line quote pair,
+wrong for brackets or word objects. This milestone replaces them by
+reusing the same `crates/vim-scanner` dependency 7.2 already added to
+`vim-buffer` — `vim_scanner::StructuralScanner` already returns exactly
+the `MatchedDelimiter`/`inner_range()`/`outer_range()` shape `i(`/`a(`,
+`i"`/`a"`, etc. need, per its own doc comment ("a cheap fallback for
+editor features (folding, `i{`/`a{`-style text objects, etc.)"). Only two
+things genuinely don't exist yet and need new code: tag objects (`it`/
+`at`), for which `vim-scanner` has no HTML/XML-tag concept at all, and
+word objects (`iw`/`aw`), which aren't delimiter pairs and were never in
+scope for `vim-scanner` to begin with. Tag matching is added as a new,
+small extension to `vim-scanner` itself (keeping one home for all
+no-grammar structural scanning) as plain same-name balanced-tag scanning,
+explicitly **not** a treesitter/HTML-grammar parse — consistent with this
+milestone's "skip treesitter" scope and `RESCUE.md`'s "add heavier
+machinery only once a concrete feature needs it" discipline. Word objects
+are built entirely from `vim-buffer`'s own existing `Motions` word-boundary
+methods, with no scanner involved.
+
+## Checklist
+
+1. - [ ] `crates/vim-scanner/src/lib.rs`: add tag-pair scanning —
+   `pub struct TagPair { pub open: std::ops::Range<Position>, pub close:
+   std::ops::Range<Position> }` and `pub fn scan_tag_pair(text: &str,
+   byte: Position) -> Option<TagPair>` (plus a `Buffer`-based
+   `scan_tag_pair_in_rows` mirroring `scan_rows_for_enclosing`'s row-range
+   shape, for multi-line tags). Scans backward for the nearest unmatched
+   `<name ...>` opening tag and forward for its matching `</name>`,
+   tracking same-name nesting depth by plain character/substring
+   scanning — no self-closing-tag, attribute-syntax, or malformed-HTML
+   understanding beyond finding balanced same-name `<x>`/`</x>` pairs; a
+   real parser stays explicitly out of scope, matching the crate's
+   existing "purely lexical" design note at the top of the file.
+2. - [ ] `crates/vim-scanner/src/lib.rs`: unit tests for `scan_tag_pair`
+   mirroring the existing `StructuralScanner` test style: `<a><b>text</b>
+   </a>` from inside `<b>` resolves to the `<b>...</b>` pair; same-name
+   nested tags (`<a><a>x</a></a>`) resolve to the innermost pair; a
+   cursor outside any tag, or an unclosed tag, returns `None`.
+3. - [ ] `crates/vim-buffer/src/movement.rs`: add a private helper that
+   scans the current row's text (`buffer.row_text(row)`, via this file's
+   own `BufferText` trait) for the word-object range `iw`/`aw`/`iW`/`aW`
+   need, built on the *existing* `Motions::move_to_word`/
+   `move_to_word_end`/`move_to_big_word`/`move_to_big_word_end` boundary
+   math (per this milestone's dependency on 7.2), plus the
+   trailing-whitespace-inclusion rule that distinguishes `aw` from `iw`
+   (include trailing whitespace up to the next word, or leading
+   whitespace if none follows). No scanner involved.
+4. - [ ] `crates/vim-buffer/src/movement.rs`: `Motions` trait gains `fn
+   text_object(&self, anchor: bool, ch: char, around: bool, buffer:
+   &Buffer) -> Selection<Anchor>`, implemented for `Selection<Anchor>` by
+   dispatching `ch` to: word logic (`'w'`/`'W'`, step 3, no scanner);
+   bracket logic (`(){}[]` and their canonical aliases) via
+   `vim_scanner::StructuralScanner::scan_rows_for_enclosing(buffer, 0,
+   buffer.row_count(), byte, true)`, using the returned
+   `MatchedDelimiter::inner_range()`/`outer_range()` directly for `i`/`a`;
+   quote logic (`'"'`/`'\''`/`` '`' ``) via `vim_scanner::
+   StructuralScanner::scan` over just the *current row's* text (Vim's
+   quote objects never cross lines), filtering `.matches()` to the
+   requested quote kind and picking the smallest span containing the
+   cursor's column, then using `inner_range()`/`outer_range()` the same
+   way; tag logic (`'t'`) via step 1's `scan_tag_pair`; and sentence
+   (`'s'`)/paragraph (`'p'`) objects via the *existing*
+   `move_to_previous_sentence`/`move_to_next_sentence`/
+   `move_to_previous_paragraph`/`move_to_next_paragraph` boundary
+   motions. Falls back to `self.clone()` for any other `ch` or when no
+   enclosing object is found — never a panic. `move_within_character`/
+   `move_around_character` are removed once this is the only caller
+   (grep confirms nothing else references them).
+5. - [ ] `crates/vim-buffer/src/selection_set.rs`: `SelectionSet` gains
+   the matching `pub fn text_object(&mut self, anchor: bool, ch: char,
+   around: bool, buffer: &Buffer)` wrapper, following the existing
+   `move_to_*` update pattern. A leading count (`2iw`) is out of scope
+   for this sub-phase, matching real Vim's own text objects, which only
+   grow to counted repetition once composed with an operator (7.4).
+6. - [ ] `kernel/command/normal/text_objects.rs` (new, named in
+   `RESCUE.md`'s directory layout): `pub fn object_range(editor: &Editor,
+   buffer_id: BufferId, from: &Selection<Anchor>, ch: char, around: bool)
+   -> Selection<Anchor>`, forwarding to `SelectionSet::text_object`/
+   `Motions::text_object` — the plain function 7.4's `operators.rs` will
+   later import into its own `motion_target` match, per `RESCUE.md`'s
+   "operators... consumes the ranges 7.2 and 7.3 produce" dependency.
+7. - [ ] `kernel/command/normal/text_objects.rs`: `pub fn select(editor:
+   &mut Editor, window: WindowId, ch: char, around: bool) -> Outcome`
+   resolves the current buffer/primary selection, calls `object_range`,
+   and replaces the window's primary selection with the result via
+   `SelectionSet::replace_primary` (mirroring `operators::delete_motion`'s
+   existing replace-primary pattern). No `kernel::transaction` call and
+   no `TextChanged` event — text objects never mutate; report
+   `RedrawInvalidation::CurrentWindow`.
+8. - [ ] `kernel/command/normal/mod.rs`: add `Action::MoveWithinCharacter
+   { ch, .. } => text_objects::select(editor, ctx.window, ch, false)` and
+   the `Action::MoveAroundCharacter` equivalent with `around: true` — this
+   makes `iw`/`i(`/`i"`/`it`/... directly observable/testable today, even
+   before Visual mode or 7.4's operators exist to consume them, matching
+   how `dw`'s range math was proven standalone in the "Operators + undo +
+   events" milestone before Ex/scripting could trigger it end to end.
+9. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`; also grep
+   `tree_sitter` under `crates/vim-buffer/`, `crates/vim-scanner/`, and
+   `src/kernel/` to confirm this milestone's tag/bracket/quote/word
+   scanning added no treesitter/grammar dependency anywhere, including
+   inside the new `vim-scanner` tag-scanning code.
+10. - [ ] Unit tests (`crates/vim-buffer/src/movement.rs`): `iw`/`aw` on a
+    word mid-line select just the word / the word plus trailing
+    whitespace; `i(`/`a(` from inside nested parens selects the innermost
+    pair correctly (via `vim_scanner`), including a case spanning
+    multiple lines; `i"`/`a"` selects between quotes on the same line and
+    does not cross lines; `it`/`at` (via the new `vim_scanner::
+    scan_tag_pair`) select the expected inner text / whole element; `ip`/
+    `ap`/`is`/`as` select the enclosing paragraph/sentence. Unit tests
+    (`kernel/mod.rs`'s test module): dispatching `Action::
+    MoveWithinCharacter`/`MoveAroundCharacter` directly against a live
+    `Editor` updates the window's primary selection to the expected
+    range and reports `RedrawInvalidation::CurrentWindow` with no
+    mutation and no event.
+11. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+12. - [ ] Manual smoke test: launch the binary and confirm it still runs
+    and every previously-working command is unaffected. `iw`/`i(`/etc.
+    only resolve today as an operator's motion, and no operator consumes
+    them until 7.4 lands, so a positive end-user-visible demo (`diw`,
+    `di(`) is deliberately deferred to that milestone per `RESCUE.md`'s
+    own dependency note — this smoke test proves "nothing regressed,"
+    not a new visible behavior. **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [ ] No file introduced or grown in this milestone exceeds ~500 lines.
+- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced;
+      `text_objects.rs` holds `object_range` plus one dispatch function,
+      not a wrapper struct.
+- [ ] No treesitter/grammar dependency was introduced for bracket/quote/
+      tag/word structure detection — grep for `tree_sitter`/`textmate`
+      under `crates/vim-buffer/`, `crates/vim-scanner/`, and `src/kernel/`
+      returns nothing new; tag matching is proven (by test) to work via
+      `vim-scanner`'s plain scanning, not a parser.
+- [ ] Bracket and quote text objects are proven (by test) to be built on
+      `vim-scanner`'s existing `StructuralScanner` (grep confirms
+      `crates/vim-buffer/src/movement.rs` calls `vim_scanner::`) and to be
+      nesting-aware/multi-line-capable for brackets — not the
+      pre-existing single-row `move_within_character`/
+      `move_around_character` behavior this milestone replaces (and those
+      two methods are proven, by grep, to have no remaining callers).
+- [ ] `vim-scanner`'s new tag-scanning addition is proven (by test) to
+      handle same-name nested tags correctly, and to remain a plain
+      lexical scan — no new dependency was added to `crates/vim-scanner/
+      Cargo.toml` to implement it.
+- [ ] Every text object this milestone wires is proven (by test) to never
+      call `kernel::transaction` and never emit `EditorEvent::
+      TextChanged` — text objects only ever change what a selection
+      spans.
+- [ ] `object_range` is proven, by inspection, to be a plain function
+      already callable from `kernel/command/normal/mod.rs`'s dispatch and
+      shaped so 7.4's future `operators.rs` can import it directly,
+      matching `RESCUE.md`'s "operators... consumes the ranges 7.2 and
+      7.3 produce" dependency.
+- [ ] Manual smoke test (no regression) passes in a live terminal.
+      **Needs a human with a real terminal.**

@@ -9,6 +9,7 @@ pub mod prompt;
 pub mod request;
 pub mod script_host;
 pub mod services;
+pub mod view_sync;
 
 use crate::kernel::{Editor, outcome::Outcome};
 use prompt::CommandPrompt;

@@ -180,6 +180,37 @@ turns back into a single blob.
    bug that silently breaks macros, `:g`, and multi-window editing of the same
    file — check new state against this rule before deciding where it lives.
 
+### Rule 5 — Reuse before rewriting
+
+Rebuilding from a clean slate is not license to reinvent logic that already
+exists and works. Before writing new code for any feature:
+
+1. **Check `src_/` first.** Search it for the behavior you're about to
+   implement (a motion, a regex match, a transaction shape, a rendering
+   diff). If proven logic exists there, port it — per "How to use `src_/`"
+   above: copy the logic, not the module/struct/trait it was embedded in.
+   Only write from scratch when `src_/` has no equivalent or its approach
+   contradicts `docs/VIM.md`/`DESIGN.md`.
+2. **Check `crates/` next.** NxVim already has real, working crates
+   (`crates/display_map`, `crates/vim-ui`, and others) implementing pieces
+   of this machinery. Prefer wiring an existing crate over writing a
+   parallel implementation in `src/`. Read what a crate already offers
+   before assuming it's missing — the Build order section documents
+   several cases where the answer is "wire it, don't rebuild it."
+3. **Modify a crate only when reuse is otherwise impossible** — i.e. the
+   crate is missing a capability `src/` genuinely needs, not merely
+   because its API is inconvenient to call from the current call site.
+   When a crate must change: keep the change minimal and general (useful
+   outside NxVim's kernel too), do not bend the crate's API to leak
+   kernel/app-specific types into it, and prefer adding a narrow new
+   method/type over reshaping existing public API. Never fork a crate's
+   logic into `src/` as a copy-paste workaround for an inconvenient
+   signature.
+4. If you find yourself reimplementing something `src_/` or `crates/`
+   already does, stop and port/wire the existing implementation instead —
+   this is a signal the recipe was skipped, not that the existing code
+   doesn't apply.
+
 ## Architecture (target end state, restated concretely)
 
 ```
