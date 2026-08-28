@@ -14,4 +14,6 @@ pub enum EditorEvent {
     /// A buffer's text changed. Carries the `ChangedTick` so a listener can
     /// tell which revision this corresponds to.
     TextChanged { buffer: BufferId, tick: ChangedTick },
+    /// An option was set.
+    OptionSet { name: &'static str },
 }

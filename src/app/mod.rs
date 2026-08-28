@@ -8,6 +8,7 @@ pub mod input;
 pub mod prompt;
 pub mod request;
 pub mod script_host;
+pub mod services;
 
 use crate::kernel::{Editor, outcome::Outcome};
 use prompt::CommandPrompt;
@@ -116,6 +117,11 @@ impl App {
         if outcome.effects.contains(&crate::kernel::outcome::Effect::Quit) {
             self.pending_request = Some(AppRequest::Quit);
         }
+        for effect in &outcome.effects {
+            if let Some(req) = services::describe_effect(effect) {
+                self.pending_request = Some(req);
+            }
+        }
         self.process_autocommands(&outcome);
         outcome
     }
@@ -132,6 +138,7 @@ impl App {
                     let commands = self.script.fire_event("TextChanged", None);
                     autocmds_to_run.extend(commands);
                 }
+                crate::kernel::events::EditorEvent::OptionSet { .. } => {}
             }
         }
 

@@ -8,7 +8,7 @@
 //! kernel's narrow, in-memory-only slice of that surface for this
 //! milestone (no file I/O yet).
 
-use vim_buffer::{Buffer, BufferId, BufferManager};
+use vim_buffer::{Buffer, BufferError, BufferId, BufferManager, SaveOutcome};
 
 pub struct BufferStore {
     manager: BufferManager,
@@ -33,5 +33,13 @@ impl BufferStore {
 
     pub fn get_mut(&mut self, id: BufferId) -> Option<&mut Buffer> {
         self.manager.get_mut(id).ok()
+    }
+
+    pub fn save(&mut self, id: BufferId, force: bool) -> Result<SaveOutcome, BufferError> {
+        self.manager.save(id, force)
+    }
+
+    pub fn write_to(&mut self, id: BufferId, path: impl AsRef<std::path::Path>, force: bool) -> Result<SaveOutcome, BufferError> {
+        self.manager.write_to(id, path, force)
     }
 }

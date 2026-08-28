@@ -10,6 +10,7 @@ pub mod events;
 pub mod ids;
 pub mod mode;
 pub mod outcome;
+pub mod options;
 pub mod transaction;
 pub mod window;
 
@@ -21,6 +22,7 @@ use command::CommandContext;
 use ids::{WindowId, TabPageId};
 use mode::Mode;
 use outcome::Outcome;
+use options::GlobalOptions;
 use window::{
     Window, WindowStore,
     tabpage::{TabPage, TabStore},
@@ -34,6 +36,7 @@ pub struct Editor {
     tabs: TabStore,
     mode: Mode,
     current: CommandContext,
+    global_options: GlobalOptions,
 }
 
 impl Editor {
@@ -60,6 +63,7 @@ impl Editor {
                 window: window_id,
                 tab: tab_id,
             },
+            global_options: GlobalOptions::default(),
         }
     }
 
@@ -106,6 +110,14 @@ impl Editor {
     pub fn current_window(&self) -> &Window {
         self.window(self.current.window)
             .expect("the current window is always live")
+    }
+
+    pub fn global_options(&self) -> &GlobalOptions {
+        &self.global_options
+    }
+
+    pub(crate) fn global_options_mut(&mut self) -> &mut GlobalOptions {
+        &mut self.global_options
     }
 
     // -- Accessors for `kernel::command::*` family modules only. Kept
@@ -177,6 +189,7 @@ impl Editor {
 mod tests {
     use super::*;
     use text::Point;
+    use crate::kernel::outcome::Effect;
 
     fn cursor(editor: &Editor) -> Point {
         let head = editor.current_window().selections().primary().head();
@@ -384,6 +397,100 @@ mod tests {
         let outcome = editor.execute(Action::Clear);
         assert_eq!(editor.mode(), Mode::Normal);
         assert!(outcome.mode_changed);
+    }
+
+    #[test]
+    fn write_command_smoke_test() {
+        use crate::kernel::outcome::Effect;
+        use std::fs;
+
+        let temp_file_path = std::env::temp_dir().join(format!("test_file_{}.txt", rand::random::<u64>()));
+
+        // 1. :w <path> on unnamed buffer writes content
+        let mut editor = Editor::new("hello write command");
+        let outcome = editor.submit_command_line(&format!("w {}", temp_file_path.to_str().unwrap()));
+        
+        assert!(!outcome.mutated);
+        assert!(outcome.events.is_empty());
+        assert_eq!(outcome.effects.len(), 1);
+        if let Effect::FileSaved { path, bytes_written } = &outcome.effects[0] {
+            assert_eq!(path, &temp_file_path);
+            assert_eq!(*bytes_written, 20); // 19 chars + 1 newline
+        } else {
+            panic!("Expected Effect::FileSaved, got {:?}", outcome.effects[0]);
+        }
+        
+        let file_content = fs::read_to_string(&temp_file_path).unwrap();
+        assert_eq!(file_content.trim_end(), "hello write command");
+
+        // 2. following bare :w after an edit reuses the now-remembered path and overwrites it
+        editor.execute(Action::SetToInsert);
+        editor.execute(Action::InsertText("new ".to_string()));
+        editor.execute(Action::SetToNormal);
+        assert_eq!(text_of(&editor), "new hello write command");
+
+        let outcome = editor.submit_command_line("w");
+        assert!(!outcome.mutated);
+        if let Effect::FileSaved { path, bytes_written } = &outcome.effects[0] {
+            assert_eq!(path, &temp_file_path);
+            assert_eq!(*bytes_written, 24); // 23 chars + 1 newline
+        } else {
+            panic!("Expected Effect::FileSaved, got {:?}", outcome.effects[0]);
+        }
+        let file_content2 = fs::read_to_string(&temp_file_path).unwrap();
+        assert_eq!(file_content2.trim_end(), "new hello write command");
+
+        // Cleanup
+        let _ = fs::remove_file(&temp_file_path);
+
+        // 3. :w against an unwritable path produces Effect::FileSaveFailed
+        let bad_path = std::env::temp_dir().join("nonexistent_dir_12345").join("file.txt");
+        let outcome = editor.submit_command_line(&format!("w {}", bad_path.to_str().unwrap()));
+        assert!(!outcome.mutated);
+        assert_eq!(outcome.effects.len(), 1);
+        assert!(matches!(outcome.effects[0], Effect::FileSaveFailed { .. }));
+
+        // 4. :w! forces a write past a buffer whose options().readonly is set, where bare :w fails
+        let mut editor = Editor::new("readonly test");
+        let ro_file_path = std::env::temp_dir().join(format!("readonly_file_{}.txt", rand::random::<u64>()));
+
+        // First write to set a name and create the file
+        let outcome = editor.submit_command_line(&format!("w {}", ro_file_path.to_str().unwrap()));
+        assert!(matches!(outcome.effects[0], Effect::FileSaved { .. }));
+
+        // Make the buffer readonly
+        let buf_id = editor.current_context().buffer;
+        if let Some(buf) = editor.buffers_mut().get_mut(buf_id) {
+            let mut opts = buf.options().clone();
+            opts.readonly = true;
+            buf.set_options(opts).unwrap();
+        }
+
+        // Edit the buffer text
+        editor.execute(Action::SetToInsert);
+        editor.execute(Action::InsertText("edited ".to_string()));
+        editor.execute(Action::SetToNormal);
+
+        // Bare :w should fail with ReadOnly error
+        let outcome = editor.submit_command_line("w");
+        assert!(!outcome.mutated);
+        assert_eq!(outcome.effects.len(), 1);
+        if let Effect::FileSaveFailed { message } = &outcome.effects[0] {
+            assert!(message.to_lowercase().contains("readonly"), "Expected readonly error, got: {}", message);
+        } else {
+            panic!("Expected Effect::FileSaveFailed, got {:?}", outcome.effects[0]);
+        }
+
+        // Forced :w! should succeed
+        let outcome = editor.submit_command_line("w!");
+        assert!(!outcome.mutated);
+        assert_eq!(outcome.effects.len(), 1);
+        assert!(matches!(outcome.effects[0], Effect::FileSaved { .. }));
+        let final_content = fs::read_to_string(&ro_file_path).unwrap();
+        assert_eq!(final_content.trim_end(), "edited readonly test");
+
+        // Cleanup
+        let _ = fs::remove_file(&ro_file_path);
     }
 }
 

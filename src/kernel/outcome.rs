@@ -28,6 +28,9 @@ pub enum RedrawInvalidation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     Quit,
+    FileSaved { path: std::path::PathBuf, bytes_written: u64 },
+    FileSaveFailed { message: String },
+    OptionMessage { message: String },
 }
 
 /// The result of one `Editor::execute()` call.

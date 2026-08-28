@@ -14,11 +14,13 @@ use text::{Selection, SelectionGoal};
 use vim_buffer::{Buffer, BufferId, SelectionId, SelectionSet};
 
 use crate::kernel::ids::WindowId;
+use crate::kernel::options::WindowOptions;
 
 #[derive(Clone)]
 pub struct Window {
     buffer: BufferId,
     selections: SelectionSet,
+    options: WindowOptions,
 }
 
 impl Window {
@@ -38,6 +40,7 @@ impl Window {
         Self {
             buffer: buffer_id,
             selections,
+            options: WindowOptions::default(),
         }
     }
 
@@ -55,6 +58,14 @@ impl Window {
 
     pub fn set_buffer(&mut self, buffer_id: BufferId) {
         self.buffer = buffer_id;
+    }
+
+    pub fn options(&self) -> &WindowOptions {
+        &self.options
+    }
+
+    pub fn set_options(&mut self, options: WindowOptions) {
+        self.options = options;
     }
 }
 

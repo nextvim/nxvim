@@ -11,6 +11,8 @@ use crate::kernel::{
     command::CommandContext,
     mode::Mode,
     outcome::{Outcome, Effect, RedrawInvalidation},
+    events::EditorEvent,
+    options::{self, OptionScope, OptionValue, OptionValueKind},
     transaction,
 };
 use text::{Selection, SelectionGoal, ToOffset};
@@ -91,6 +93,111 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
             effects: vec![Effect::Quit],
             ..Outcome::default()
         },
+        "w" | "write" => {
+            let force = command.bang;
+            let trimmed = command.arguments.trim();
+            let res = if !trimmed.is_empty() {
+                editor.buffers_mut().write_to(ctx.buffer, trimmed, force)
+            } else {
+                editor.buffers_mut().save(ctx.buffer, force)
+            };
+
+            match res {
+                Ok(save_outcome) => Outcome {
+                    effects: vec![Effect::FileSaved {
+                        path: save_outcome.path,
+                        bytes_written: save_outcome.bytes_written,
+                    }],
+                    ..Outcome::default()
+                },
+                Err(err) => Outcome {
+                    effects: vec![Effect::FileSaveFailed {
+                        message: err.to_string(),
+                    }],
+                    ..Outcome::default()
+                },
+            }
+        }
+        "set" | "se" => {
+            let mut outcome = Outcome {
+                invalidation: RedrawInvalidation::CurrentWindow,
+                ..Outcome::default()
+            };
+
+            let args: Vec<&str> = command.arguments.split_whitespace().collect();
+            if args.is_empty() {
+                return outcome;
+            }
+
+            for arg in args {
+                let (name, action) = parse_set_arg(arg);
+                if let Some(spec) = options::lookup(&name) {
+                    match action {
+                        SetAction::Query => {
+                            let val_str = get_option_string(editor, ctx, spec);
+                            outcome.effects.push(Effect::OptionMessage {
+                                message: format!("{}={}", spec.canonical_name, val_str),
+                            });
+                        }
+                        SetAction::SetBool(val) => {
+                            if spec.kind != OptionValueKind::Bool {
+                                outcome.effects.push(Effect::OptionMessage {
+                                    message: format!("E474: Invalid argument: {}", arg),
+                                });
+                                continue;
+                            }
+                            set_option_val(editor, ctx, spec, OptionValue::Bool(val), &mut outcome);
+                        }
+                        SetAction::Toggle => {
+                            if spec.kind != OptionValueKind::Bool {
+                                outcome.effects.push(Effect::OptionMessage {
+                                    message: format!("E474: Invalid argument: {}", arg),
+                                });
+                                continue;
+                            }
+                            let current_val = get_option_bool(editor, ctx, spec);
+                            set_option_val(editor, ctx, spec, OptionValue::Bool(!current_val), &mut outcome);
+                        }
+                        SetAction::SetValue(val_str) => {
+                            let val = match spec.kind {
+                                OptionValueKind::Bool => {
+                                    match val_str.as_str() {
+                                        "true" | "on" | "1" => Ok(OptionValue::Bool(true)),
+                                        "false" | "off" | "0" => Ok(OptionValue::Bool(false)),
+                                        _ => Err(()),
+                                    }
+                                }
+                                OptionValueKind::Number => {
+                                    if let Ok(num) = val_str.parse::<i64>() {
+                                        Ok(OptionValue::Number(num))
+                                    } else {
+                                        Err(())
+                                    }
+                                }
+                                OptionValueKind::Str => {
+                                    Ok(OptionValue::Str(val_str))
+                                }
+                            };
+                            match val {
+                                Ok(v) => {
+                                    set_option_val(editor, ctx, spec, v, &mut outcome);
+                                }
+                                Err(_) => {
+                                    outcome.effects.push(Effect::OptionMessage {
+                                        message: format!("E474: Invalid argument: {}", arg),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    outcome.effects.push(Effect::OptionMessage {
+                        message: format!("E518: Unknown option: {}", name),
+                    });
+                }
+            }
+            outcome
+        }
         _ => Outcome::default(),
     }
 }
@@ -212,4 +319,169 @@ fn execute_delete_lines(
     }
 
     Outcome::from_mutation(&mutation)
+}
+
+enum SetAction {
+    Query,
+    SetBool(bool),
+    Toggle,
+    SetValue(String),
+}
+
+fn parse_set_arg(arg: &str) -> (String, SetAction) {
+    if arg.ends_with('?') {
+        let name = &arg[..arg.len() - 1];
+        return (name.to_string(), SetAction::Query);
+    }
+    if arg.ends_with('!') {
+        let name = &arg[..arg.len() - 1];
+        return (name.to_string(), SetAction::Toggle);
+    }
+    if let Some(idx) = arg.find('=') {
+        let name = &arg[..idx];
+        let val = &arg[idx + 1..];
+        return (name.to_string(), SetAction::SetValue(val.to_string()));
+    }
+    if arg.starts_with("no") {
+        let name = &arg[2..];
+        if options::lookup(name).is_some() {
+            return (name.to_string(), SetAction::SetBool(false));
+        }
+    }
+    (arg.to_string(), SetAction::SetBool(true))
+}
+
+fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::OptionSpec) -> String {
+    match spec.scope {
+        OptionScope::Global => {
+            match spec.canonical_name {
+                "ignorecase" => editor.global_options().ignorecase.to_string(),
+                "hlsearch" => editor.global_options().hlsearch.to_string(),
+                "incsearch" => editor.global_options().incsearch.to_string(),
+                _ => String::new(),
+            }
+        }
+        OptionScope::Window => {
+            if let Some(win) = editor.window(ctx.window) {
+                match spec.canonical_name {
+                    "wrap" => win.options().wrap.to_string(),
+                    _ => String::new(),
+                }
+            } else {
+                String::new()
+            }
+        }
+        OptionScope::Buffer => {
+            if let Some(buf) = editor.buffer(ctx.buffer) {
+                match spec.canonical_name {
+                    "expandtab" => buf.options().expandtab.to_string(),
+                    "textwidth" => buf.options().textwidth.to_string(),
+                    _ => String::new(),
+                }
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+fn get_option_bool(editor: &Editor, ctx: CommandContext, spec: options::OptionSpec) -> bool {
+    match spec.scope {
+        OptionScope::Global => {
+            match spec.canonical_name {
+                "ignorecase" => editor.global_options().ignorecase,
+                "hlsearch" => editor.global_options().hlsearch,
+                "incsearch" => editor.global_options().incsearch,
+                _ => false,
+            }
+        }
+        OptionScope::Window => {
+            if let Some(win) = editor.window(ctx.window) {
+                match spec.canonical_name {
+                    "wrap" => win.options().wrap,
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        OptionScope::Buffer => {
+            if let Some(buf) = editor.buffer(ctx.buffer) {
+                match spec.canonical_name {
+                    "expandtab" => buf.options().expandtab,
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn set_option_val(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    spec: options::OptionSpec,
+    val: OptionValue,
+    outcome: &mut Outcome,
+) {
+    match spec.scope {
+        OptionScope::Global => {
+            let global = editor.global_options_mut();
+            match spec.canonical_name {
+                "ignorecase" => {
+                    if let OptionValue::Bool(b) = val {
+                        global.ignorecase = b;
+                    }
+                }
+                "hlsearch" => {
+                    if let OptionValue::Bool(b) = val {
+                        global.hlsearch = b;
+                    }
+                }
+                "incsearch" => {
+                    if let OptionValue::Bool(b) = val {
+                        global.incsearch = b;
+                    }
+                }
+                _ => {}
+            }
+        }
+        OptionScope::Window => {
+            if let Some(win) = editor.windows_mut().get_mut(ctx.window) {
+                let mut opts = win.options().clone();
+                match spec.canonical_name {
+                    "wrap" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.wrap = b;
+                        }
+                    }
+                    _ => {}
+                }
+                win.set_options(opts);
+            }
+        }
+        OptionScope::Buffer => {
+            if let Some(buf) = editor.buffers_mut().get_mut(ctx.buffer) {
+                let mut opts = buf.options().clone();
+                match spec.canonical_name {
+                    "expandtab" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.expandtab = b;
+                        }
+                    }
+                    "textwidth" => {
+                        if let OptionValue::Number(num) = val {
+                            opts.textwidth = num.max(0) as u32;
+                        }
+                    }
+                    _ => {}
+                }
+                let _ = buf.set_options(opts);
+            }
+        }
+    }
+    outcome.events.push(EditorEvent::OptionSet {
+        name: spec.canonical_name,
+    });
 }

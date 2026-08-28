@@ -15,6 +15,8 @@ pub struct BufferOptions {
     pub fixeol: bool,
     pub fileformat: FileFormat,
     pub fileencoding: String,
+    pub expandtab: bool,
+    pub textwidth: u32,
 }
 
 impl From<text::LineEnding> for FileFormat {
@@ -61,6 +63,8 @@ impl Default for BufferOptions {
             fixeol: true,
             fileformat: FileFormat::Unix,
             fileencoding: "utf-8".into(),
+            expandtab: false,
+            textwidth: 0,
         }
     }
 }

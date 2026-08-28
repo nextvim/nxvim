@@ -391,9 +391,217 @@ one compiles and the kernel-purity grep above is clean.
 6. **Services** — fs, clipboard-as-effect, background workers, external
    runtime (timers/jobs/channels) — added only once a concrete feature needs
    them, per `RESET.md` Phase 7 sequencing.
-7. **Compatibility breadth** — expand Ex/option/motion coverage using
-   `src_/` as the behavioral reference, always routed through the recipes
-   above.
+7. **Compatibility breadth** — expand coverage using `src_/` as the
+   behavioral reference and `docs/VIM.md` as the behavioral authority,
+   always routed through the recipes above. This sub-phase is itself wide
+   enough to need its own sequencing: do not start a later item below until
+   the items it depends on already compile and have basic coverage, and
+   re-run the kernel-purity grep + file-size check after each one, not just
+   at the end.
+
+   7.1. **Options** — land in the option registry (kernel-owned if
+        semantic, app-owned if presentational) per "Add a new option"
+        above. Motion/search/insert breadth below reads options
+        (`ignorecase`, `expandtab`, `textwidth`, `wrap`, `hlsearch`, ...) to
+        decide behavior, so the registry needs enough breadth before those
+        sub-phases are meaningful. Do not let any later command read config
+        ad hoc instead of through this registry.
+
+   7.2. **Motions** — `kernel/command/normal/motions.rs`. Word/WORD,
+        paragraph/sentence, `f`/`t`/`F`/`T` + `;`/`,`, `%`, line/screen
+        motions, `gg`/`G`, scrolling. Every text object and operator below
+        is built on the range this sub-phase produces, so it lands first
+        among command families.
+
+   7.3. **Text objects** — `kernel/command/normal/text_objects.rs`. `iw`/
+        `aw`, quotes, brackets, tags, sentence/paragraph objects. Depends on
+        7.2's boundary-finding motion math.
+
+   7.4. **Operators** — `kernel/command/normal/operators.rs`. `d`/`c`/`y`/
+        `g~`/`gu`/`gU`/`>`/`<`/`=`/`!`, dot-repeat. Consumes the ranges 7.2
+        and 7.3 produce and must go through `kernel/transaction.rs` per
+        Rule 4 item 6 — never a family-specific edit path.
+
+   7.5. **Marks and jumps** — `kernel/command/normal/marks_and_jumps.rs`.
+        Buffer-local `'a`-`'z`, global `'A`-`'Z`, special marks (`` ` ` ``,
+        `''`, `` '< '> ``), jumplist, changelist. Scope per Rule 4 item 9
+        (buffer-local vs `Editor`-global) before anything downstream (Ex
+        ranges, search jumps, persistence) starts assuming marks exist.
+
+   7.6. **Registers** — `kernel/command/normal/registers_ops.rs`. Named/
+        numbered/unnamed/special registers (`"%`, `".`, `":`, `"/`, black
+        hole), yank/put/delete-into-register, and clipboard registers
+        (`"+`/`"*`) surfaced as an app-side effect per Rule 4 item 9 and the
+        Salvage Ledger's clipboard note. Depends on 7.4's operators (`y`,
+        `d`, `c`) as the producers that fill registers.
+
+   7.7. **Search** — `kernel/command/search.rs`. Pattern search, `n`/`N`,
+        search offsets, `*`/`#`. Reads `'ignorecase'`/`'hlsearch'`/
+        `'incsearch'` from 7.1, uses marks (7.5) to jump on match, and feeds
+        the `/` register (7.6).
+
+   7.8. **Substitute** — `kernel/command/substitute.rs` / `app/prompt.rs`,
+        matching the Salvage Ledger's kernel/app split (matching and
+        replacement planning in kernel, confirm-prompt lifecycle in app).
+        `:s`, flags, confirm prompt. Depends on 7.7's pattern matching and
+        7.4's transaction path.
+
+   7.9. **Folds** — `kernel/window/mod.rs` fold state, per Rule 4 item 2
+        (window-owned, not buffer-owned). `zf`/`zo`/`zc`/`za`, manual/
+        indent fold methods. Depends on 7.2's motions for fold-create
+        ranges.
+
+   7.10. **Ex command breadth** — `kernel/command/ex/mod.rs` plus the
+         script-owned Ex table, per "Add a new Ex command" above. Ranges/
+         addresses (needs 7.5's marks for `'a,'b`), `:global`/`:vglobal`
+         (needs 7.7's search and 7.4's operators), `:normal`, `:sort`,
+         user-defined `:command`. This composes nearly everything above, so
+         it is deliberately sequenced after motions/operators/marks/
+         registers/search rather than before them.
+
+   7.11. **Windows/tabs breadth** — `kernel/window/mod.rs`,
+         `kernel/window/tabpage.rs`. `Ctrl-W` commands, `:only`, `:vsplit`/
+         `:split` variants, quickfix/location-list windows. Builds on the
+         skeletal split/tab support already landed in milestone 3.
+
+   7.12. **Scripting breadth** — `script/`. Recursive/non-recursive
+         mappings, abbreviations, digraphs, and autocommand event coverage,
+         all emitting `app::request` values only per Rule 4 item 8 and the
+         "Add a new script-exposed function" recipe. Depends on 7.10's Ex
+         breadth (many of these are Ex-triggered) and the events introduced
+         by 7.2-7.9.
+
+   7.13. **Persistence** — `app/services.rs` plus new `app` modules as
+         needed. viminfo/shada-equivalent state, persistent undo files,
+         swap-file recovery. Depends on 7.5 (marks), 7.6 (registers), and
+         7.2's history/jumplist existing to have something to serialize.
+
+   7.14. **External/service integration breadth** —
+         `app/external_runtime.rs`, `app/services.rs`. Terminal buffers,
+         job control, channels, async command output. Expand only once a
+         concrete feature needs them, continuing milestone 6's sequencing
+         (`RESET.md` Phase 7).
+
+8. **View** — regain proper window/text/buffer rendering: real
+   `display_map` integration (folds, tabs, wrapping), gutters, a
+   statusline/tabline that report real editor state, and (as an explicit
+   enhancement beyond stock Vim) an optional scrollbar — replacing the
+   placeholder full-repaint text dump `view/mod.rs` uses today. Like item
+   7, this is wide enough to need its own sequencing.
+
+   Vim itself has no single "renderer" module for this: `drawline.c`
+   composes each screen row from wrapping, folds, syntax, signs,
+   concealment, properties, and virtual text; `drawscreen.c` decides which
+   windows/rows are dirty and calls `win_update()` only for those;
+   `screen.c` diffs the result against its own remembered grid before
+   writing anything to the terminal (see `docs/VIM.md` "Rendering and
+   UI"). The status line and command line are `message.c`'s job, driven by
+   the `'statusline'`/`'ruler'`/`'laststatus'` options; the tab line is a
+   thin variant of the same mechanism gated by `'showtabline'`/`'tabline'`.
+   Vim's terminal UI has **no scrollbar** at all — that's GUI-only
+   (`gui.c`/`gui_mch_*` scrollbar callbacks) — so a terminal scrollbar here
+   is explicitly a compatibility-optional addition, not something Vim
+   fidelity requires; keep it off by default and opt-in, the way anything
+   beyond Vim's own defaults should behave.
+
+   NxVim already has nearly all of this machinery sitting unused:
+   `crates/display_map` (`FoldMap`/`TabMap`/`WrapMap`/`InlayMap`/
+   `BlockMap`, already implementing Vim's fold/tab/wrap composition) and
+   `crates/vim-ui` (`WindowState`, `TextView` + `TextViewModel`/
+   `DisplayRow`/`GutterCell`/`ScrollbarModel`, the `Renderer` trait,
+   `CrosstermRenderer`, and a diffing `BufferedRenderer`). None of it is
+   wired into `src/view/` today — `view/mod.rs` hand-loops over raw buffer
+   text and repaints the whole screen every frame via `Clear(ClearType::
+   All)`. This milestone is mostly *wiring*, not new design — but wire it
+   as `view/`-owned rendering caches keyed by the kernel's own `WindowId`s,
+   never a second `vim_ui::WindowStore`/`Ui`/`FocusManager` tracking which
+   windows or tabs exist. Kernel already owns that (Rule 4); reintroducing
+   a second container of window/tab identity is exactly the "app-side
+   duplicate authority" the Salvage Ledger already flags for
+   `kernel/windows.rs` + `app/windows.rs` ("merge into one kernel-owned
+   window/selection/fold state; delete the app-side duplicate authority"),
+   just recurring one layer over in `view/` instead of `app/`. Only
+   `vim_ui`'s rendering-only pieces — `TextView`, the model types, the
+   `Renderer` trait, `WindowState`'s display-map/viewport-cache shape — are
+   safe to reuse; its window/tab *container* types are not. This applies to
+   layout too: `vim_ui::layout::LayoutEngine`/`LayoutNode` *owns* a
+   window-id split tree with its own mutating `split_leaf`/`remove_leaf`/
+   `adjust_size`/`set_constraint` — a second, independently-mutated layout
+   authority that would drift from kernel's own `TabPage`/`Layout`
+   (`kernel/window/tabpage.rs`, owned per Rule 4 item 4). Do not adopt it.
+   `view/layout.rs`'s existing pure `fn layout(tab: &TabPage, screen:
+   Rect) -> HashMap<WindowId, Rect>` is the right shape and stays the only
+   Rect-producing function; if `Ctrl-W +`/`-`/`<`/`>`/`=` resize support is
+   ever needed, port `LayoutNode::compute_layout_recursive`'s `Fixed`/
+   `Percentage` constraint-splitting *math* into that function, and add the
+   constraint data itself to kernel's `Layout::Split` (split ratios are
+   layout, so they belong on the kernel-owned tree, not a parallel one).
+   `vim_ui::layout::SlotLayout`/`WindowSlot` (docking top/side/bottom bars)
+   has no Vim equivalent at all and is out of scope here regardless.
+
+   8.1. **Display-map + `TextView` wiring** — `view/mod.rs` (rewritten) and
+        a new `app/view_sync.rs` (already named in the directory layout
+        above). Per window, `view/` keeps a `display_map::DisplayMap` plus
+        retained per-buffer scroll state (mirroring `vim_ui::WindowState`'s
+        existing shape) keyed by the kernel's `WindowId` — a rendering
+        cache, not a second source of truth. Each frame, `app/
+        view_sync.rs` reads kernel state only (current buffer snapshot,
+        `Window::selections()`, viewport size) into a plain projection
+        struct; `view/` feeds that into its `DisplayMap`, builds a
+        `vim_ui::TextViewModel` from the resulting `DisplaySnapshot`
+        (rows, spans, selection ranges, cursor), and hands it to
+        `vim_ui::views::text::TextView::draw`. This replaces the current
+        `full_text.split('\n')` loop entirely and is the foundation every
+        other 8.x item builds on.
+
+   8.2. **Gutters** — number/relative-number column, sign column, fold
+        column, composed left-to-right into each `DisplayRow`'s
+        `GutterCell` in the same order `drawline.c` uses (fold column,
+        sign column, number column, then text). `number`/`relativenumber`/
+        `signcolumn`/`foldcolumn` are new window-local options added
+        through 7.1's option registry and recipe, not a parallel
+        mechanism. Depends on 8.1 for the `DisplayRow`/`GutterCell`
+        plumbing to exist, and on 7.9's fold state for the fold column to
+        mean anything.
+
+   8.3. **Statusline** — a real per-window (or single shared, per
+        `'laststatus'`) status line built from kernel facts `app/
+        view_sync.rs` projects (buffer name, modified flag, mode, cursor
+        line/column — Vim's `'ruler'`), replacing `runtime.rs`'s hardcoded
+        debug string. Formatting/composition is presentation, so it lives
+        in `view/`, not `app/`; `laststatus`/`ruler` are new options via
+        7.1's recipe. Depends on 8.1 for cursor/position data already
+        flowing through the display map.
+
+   8.4. **Tabline** — one line across the top listing tab pages, gated by
+        `'showtabline'`, reusing 8.3's projection-then-format pattern.
+        Depends on the windows/tabs milestone (3) already landed and on
+        8.3's statusline pattern.
+
+   8.5. **Scrollbar (nxvim enhancement, not Vim compatibility)** — wire
+        `vim_ui::model::ScrollbarModel` and `TextView`'s existing
+        `draw_scrollbar` from the display map's total/visible row counts.
+        Off by default; a new `scrollbar` window-local option (7.1's
+        recipe) turns it on, keeping vanilla-Vim fidelity the default
+        behavior. Depends on 8.1.
+
+   8.6. **Diffed/incremental redraw** — replace `runtime.rs`'s
+        `Clear(ClearType::All)`-every-frame with `vim_ui::renderer::
+        BufferedRenderer`'s existing double-buffer diff (or an equivalent
+        `view`-owned mechanism), and use `kernel::Outcome.invalidation`
+        (`RedrawInvalidation::None`/`CurrentWindow`/`Range`) to skip
+        rebuilding `TextViewModel`s for windows nothing invalidated —
+        mirroring `changed_*()` -> dirty ranges -> `must_redraw` ->
+        `update_screen()`/`win_update()` only repainting dirty windows.
+        Depends on 8.1-8.5 already producing real per-frame content to
+        diff, and on `Outcome.invalidation` already emitted since
+        milestone 2.
+
+   Syntax/semantic highlighting (`textmate`, `vim-treesitter`) and popup/
+   completion menus are explicitly deferred past this milestone — they
+   need their own concrete feature to justify wiring, per the same "add
+   only once a feature needs it" discipline item 6's Services already
+   established.
 
 At every milestone boundary, re-run the kernel-purity grep and re-check file
 sizes (`wc -l src/kernel/**/*.rs` — flag anything approaching 500 lines for a

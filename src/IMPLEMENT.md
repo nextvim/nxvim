@@ -615,3 +615,354 @@ above.
       mutation.
 - [x] Manual smoke test passes for defining/using a mapping, a user
       command, an autocommand, and `:echo` in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Services — [x] COMPLETE
+
+> Fs, clipboard-as-effect, background workers, external runtime
+> (timers/jobs/channels) — added only once a concrete feature needs them.
+
+## Checklist
+
+1. - [x] `kernel/buffer/mod.rs`: `BufferStore` grows `save(&mut self, id:
+   BufferId, force: bool) -> Result<SaveOutcome, BufferError>` and
+   `write_to(&mut self, id: BufferId, path: impl AsRef<Path>, force: bool)
+   -> Result<SaveOutcome, BufferError>`, forwarding directly to the
+   already-buffer-lifecycle-owning `vim_buffer::BufferManager::save`/
+   `write_to` (the crate already implements atomic writes; this milestone
+   only exposes the narrow slice of it a kernel Ex command needs, per this
+   file's own doc comment anticipating exactly this). No new fs logic is
+   written in `kernel/` — it is the one dependency direction (`kernel` ->
+   `vim-buffer`) `RESCUE.md`'s architecture diagram already allows.
+2. - [x] `kernel/outcome.rs`: `Effect` gains `FileSaved { path: PathBuf,
+   bytes_written: u64 }` and `FileSaveFailed { message: String }` — the
+   first fs-shaped `Effect` variants this enum has ever needed, proving
+   out its own "grows real variants once a milestone needs one" doc
+   comment. Neither variant means anything app-specific; they are the
+   kernel's neutral report of what `BufferManager` returned.
+3. - [x] `kernel/command/ex/mod.rs`: `admit_command` gains a `"w" |
+   "write"` arm. `ExCommand::bang` maps to `force`; a non-empty
+   `ExCommand::arguments` (trimmed) is treated as an explicit path and
+   calls `BufferStore::write_to`; an empty `arguments` calls
+   `BufferStore::save` against `ctx.buffer`. Never touches
+   `kernel::transaction`, never mutates buffer text, never emits
+   `TextChanged` (same no-mutation shape as `:q`). `Ok(SaveOutcome)`
+   becomes `Effect::FileSaved`; `Err(BufferError)` becomes
+   `Effect::FileSaveFailed { message: err.to_string() }` — a missing
+   directory, a read-only buffer without `!`, or any other `BufferError`
+   must produce a message, never a panic or an `unwrap`.
+4. - [x] `app/services.rs` (new): the file named in `RESCUE.md`'s directory
+   layout. This milestone's slice is exactly one pure function,
+   `describe_effect(effect: &Effect) -> Option<AppRequest>`, translating
+   `Effect::FileSaved`/`Effect::FileSaveFailed` into
+   `AppRequest::ShowMessage` (Vim-shaped text: `"path" NB written` / the
+   raw error message). Returns `None` for `Effect::Quit` and anything else
+   — `app/mod.rs` keeps handling `Quit` directly, since it is control flow,
+   not a message. Clipboard-as-effect, background workers, and external
+   runtime are explicitly out of scope for this file until a later
+   concrete feature needs them — it grows by feature, never speculatively.
+5. - [x] `app/mod.rs`: add `pub mod services;`. In
+   `execute_ex_command`, after `admit_command` returns, iterate
+   `outcome.effects` and call `services::describe_effect` on each,
+   setting `pending_request` from whatever it returns; keep the existing
+   direct `Effect::Quit -> AppRequest::Quit` check alongside it rather
+   than folding `Quit` into `describe_effect`.
+6. - [x] Kernel purity check: re-run the grep from `RESCUE.md`
+   (`vim_buffer::` under `kernel/` is already an allowed dependency; only
+   `crate::app`, `vim_ui::`, and `vim_clipboard::` are forbidden).
+7. - [x] Scripted smoke tests: `:w <tmpdir path>` on a freshly created
+   (unnamed) buffer writes the buffer's current text to that path
+   (assert via `std::fs::read_to_string`) and the returned `Outcome`
+   carries `Effect::FileSaved` with no mutation and no `TextChanged`
+   event; a following bare `:w` after an edit reuses the now-remembered
+   path (`BufferManager::save`) and overwrites it; `:w` against an
+   unwritable path (e.g. a nonexistent parent directory) produces
+   `Effect::FileSaveFailed` and no panic; `:w!` forces a write past a
+   buffer whose `options().readonly` is set, where a bare `:w` on the same
+   buffer is proven to fail first.
+8. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+   green.
+9. - [x] Manual smoke test: launch the binary, `:w` to a real path, confirm
+   the file exists on disk with the buffer's content afterward, and
+   confirm the status/message line shows the write confirmation for at
+   least one frame (reusing the `AppRequest::ShowMessage` rendering from
+   Script host). **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced;
+      `app/services.rs` holds one pure translation function, not a wrapper
+      struct around `BufferManager` or `Effect`.
+- [x] fs I/O for `:w` is proven (by test) to happen exactly once per
+      submitted `:w`, entirely through `vim_buffer::BufferManager` via
+      `kernel::buffer::BufferStore` — grep confirms no second, ad hoc
+      `std::fs`/`std::io` call exists anywhere under `app/` or `kernel/`
+      outside that one path.
+- [x] A failed write is proven (by test) to produce
+      `Effect::FileSaveFailed` and leave the in-memory buffer's text and
+      saved/modified state untouched, never a panic or an `unwrap` on the
+      `Result`.
+- [x] `Effect::FileSaved`/`Effect::FileSaveFailed` are proven (by test) to
+      translate into `AppRequest::ShowMessage` without themselves causing
+      any kernel mutation or `TextChanged` event.
+- [x] Clipboard-as-effect, background workers, and external runtime remain
+      unimplemented — grep for `vim_clipboard`/`background_worker`/
+      `external_runtime` under `src/` returns nothing yet, confirming no
+      speculative service was added ahead of a concrete need.
+- [x] Manual smoke test passes for `:w` in a live terminal. **Needs a human
+      with a real terminal.**
+
+---
+
+# # Compatibility breadth — Options (Build Order 7.1) — [x] COMPLETE
+
+> Land in the option registry (kernel-owned if semantic, app-owned if
+> presentational) per "Add a new option". Motion/search/insert breadth
+> below reads options (`ignorecase`, `expandtab`, `textwidth`, `wrap`,
+> `hlsearch`, ...) to decide behavior, so the registry needs enough breadth
+> before those sub-phases are meaningful.
+
+This is the first of `RESCUE.md` Build Order item 7's fourteen sequenced
+sub-phases (7.1-7.14). It is scoped to exactly the options `RESCUE.md`
+names by cross-reference from later sub-phases — `ignorecase`/`hlsearch`/
+`incsearch` (7.7 Search), `expandtab`/`textwidth` (buffer-local, consumed by
+future insert/operator breadth), `wrap` (window-local) — plus the `:set`
+mechanism itself. It deliberately does not add `shiftwidth`, `tabstop`,
+`number`, or any other option `RESCUE.md` doesn't name yet; adding those
+later is exactly the "cheap and boring" recipe this milestone builds.
+
+## Checklist
+
+1. - [x] `kernel/options.rs` (new): `OptionScope` enum (`Global`/`Window`/
+   `Buffer`), `OptionValue` enum (`Bool(bool)`/`Number(i64)`/`Str(String)`),
+   `GlobalOptions` struct (`ignorecase`, `hlsearch`, `incsearch`, all
+   `bool`) with a `Default` matching vanilla Vim (all `false`), and
+   `WindowOptions` struct (`wrap: bool`) with `Default` -> `true` (Vim's
+   real default). Add one lookup table/function (e.g. `fn lookup(name:
+   &str) -> Option<OptionSpec>`) mapping every recognized name *and*
+   abbreviation (`ic`->`ignorecase`, `hls`->`hlsearch`, `is`->`incsearch`,
+   `et`->`expandtab`, `tw`->`textwidth`, `wrap`->`wrap`) to its canonical
+   name, `OptionScope`, and value kind. This table is the one obvious place
+   the "Add a new option" recipe promises for the next option.
+2. - [x] `crates/vim-buffer/src/options.rs`: `BufferOptions` gains
+   `expandtab: bool` (default `false`) and `textwidth: u32` (default `0`,
+   meaning "off", matching Vim's real default), following the existing
+   field/default pattern. No behavior reads these fields yet — that is
+   7.2/7.4's job; this milestone only makes them settable and reportable.
+3. - [x] `kernel/window/mod.rs`: `Window` gains an `options: WindowOptions`
+   field, defaulted in `Window::new`. Add `pub fn options(&self) ->
+   &WindowOptions` and `pub fn set_options(&mut self, options:
+   WindowOptions)`.
+4. - [x] `kernel/mod.rs`: `Editor` gains a `global_options: GlobalOptions`
+   field, defaulted in `Editor::new`. Add `pub fn global_options(&self) ->
+   &GlobalOptions` and `pub(crate) fn global_options_mut(&mut self) ->
+   &mut GlobalOptions`.
+5. - [x] `kernel/events.rs`: `EditorEvent` gains `OptionSet { name: &'static
+   str }`, exactly the variant name `RESCUE.md`'s "Add a new option" recipe
+   already commits to.
+6. - [x] `kernel/outcome.rs`: `Effect` gains `OptionMessage { message:
+   String }`, used for both `:set option?` query output and unknown-
+   option/type-mismatch errors — the same command-line message channel
+   real Vim uses for both, so this is one variant, not two.
+7. - [x] `kernel/command/ex/mod.rs`: new `"set" | "se"` arm in
+   `admit_command`. Split `command.arguments` on whitespace; resolve each
+   token against `options::lookup`. Handle, per token: bare bool name (set
+   true), `no`-prefixed (set false), trailing `!` (invert), trailing `?`
+   (push `Effect::OptionMessage` reporting `name=value` or `name`/`noname`,
+   no mutation), `name=value` (parse into the option's `OptionValue` kind).
+   Unknown name or a value that doesn't parse into the option's kind both
+   produce `Effect::OptionMessage` with an error message — never a panic,
+   never a silent no-op. Every successful mutation writes into
+   `GlobalOptions`, the current window's `WindowOptions`, or the current
+   buffer's `BufferOptions` per the option's registered scope (never the
+   wrong owner — this is Rule 4 item 5's scoping made concrete) and appends
+   one `EditorEvent::OptionSet { name }` to the `Outcome`. The `Outcome`
+   never calls `kernel::transaction` and never sets `mutated: true` —
+   options are not undoable text edits — but does set `invalidation:
+   RedrawInvalidation::CurrentWindow`, since an option can affect rendering
+   with no text change.
+8. - [x] `app/services.rs`: `describe_effect` grows an `Effect::OptionMessage
+   { message } => Some(AppRequest::ShowMessage(message.clone()))` arm,
+   reusing the same message channel `:w`'s feedback already uses.
+9. - [x] Kernel purity check: re-run the grep from `RESCUE.md`
+   (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`).
+10. - [x] Unit tests (in `kernel/options.rs` and/or `kernel/mod.rs`'s test
+    module): `:set ignorecase` / `:set noignorecase` / `:set ignorecase!`
+    toggle `Editor::global_options().ignorecase` and emit
+    `EditorEvent::OptionSet { name: "ignorecase" }`; `:set expandtab` and
+    `:set textwidth=72` write into `ctx.buffer`'s `BufferOptions` (not the
+    global struct); `:set wrap` writes into `ctx.window`'s `WindowOptions`
+    (not the global struct); `:set bogus` produces `Effect::OptionMessage`
+    and no panic and no event; `:set ignorecase?` produces
+    `Effect::OptionMessage` with the current value and causes no mutation
+    and no `EditorEvent::OptionSet`.
+11. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+12. - [x] Manual smoke test: launch the binary, run `:set wrap?` and
+    `:set ignorecase`, confirm the message/status line reflects each and
+    nothing panics. **Needs a human with a real terminal.**
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [x] No file introduced or grown in this milestone exceeds ~500 lines.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced; `:set`
+      dispatch is plain functions over `options::lookup`, not a wrapper
+      struct.
+- [x] Every recognized option name is proven (by test) to write into the
+      scope (`Editor`-global, `Window`-local, or `Buffer`-local) Rule 4
+      item 5 assigns it — never into the wrong owner, and never duplicated
+      across owners.
+- [x] `:set` is proven (by test) to never call `kernel::transaction` and
+      never emit `EditorEvent::TextChanged` — only `EditorEvent::OptionSet`
+      plus a `RedrawInvalidation::CurrentWindow`.
+- [x] An unknown option name and a type-mismatched value are each proven
+      (by test) to produce `Effect::OptionMessage`, never a panic and never
+      a silent no-op that leaves the user without feedback.
+- [x] `Effect::OptionMessage` is proven (by test) to translate into
+      `AppRequest::ShowMessage` without itself causing any kernel mutation
+      or event.
+- [x] Manual smoke test passes for `:set` in a live terminal. **Needs a
+      human with a real terminal.**
+
+---
+
+# View — Display-map + `TextView` wiring (Build Order 8.1)
+
+> Per window, `view/` keeps a `display_map::DisplayMap` plus retained
+> per-buffer scroll state keyed by the kernel's `WindowId` — a rendering
+> cache, not a second source of truth. Builds a `vim_ui::TextViewModel`
+> from the resulting `DisplaySnapshot` and hands it to
+> `vim_ui::views::text::TextView::draw`, replacing `view/mod.rs`'s current
+> `full_text.split('\n')` loop entirely. This is `RESCUE.md` Build Order
+> item 8's first sub-phase; it is the foundation every other 8.x item
+> builds on.
+
+**Opened ahead of `7.2`-`7.14` deliberately, not by oversight.** `7.1`
+(Options) is complete; this milestone was checked against every 8.x
+dependency named in `RESCUE.md` and has none on `7.2`-`7.14` — it only
+needs the kernel skeleton, selections, and windows/tabs, all already
+complete. The one real gap this creates: `8.2`'s fold gutter column (a
+later milestone, not this one) depends on `7.9` Folds and will render
+empty until that lands — an accepted, narrow stub, not a blocker for this
+milestone. `8.2`/`8.3`/`8.5`'s new options (`number`/`signcolumn`/
+`foldcolumn`/`laststatus`/`ruler`/`scrollbar`) will add cleanly to the
+already-complete `kernel/options.rs` registry when their turn comes.
+
+## Checklist
+
+1. - [ ] `app/view_sync.rs` (new, named in `RESCUE.md`'s directory layout):
+   a plain, kernel-read-only projection type, e.g. `pub struct
+   WindowProjection { pub window: WindowId, pub buffer: BufferId, pub
+   snapshot: text::BufferSnapshot, pub selections: vim_buffer::
+   SelectionSet, pub is_current: bool }`, and `pub fn project(editor:
+   &Editor) -> Vec<WindowProjection>` that walks every `WindowId` in the
+   active tab's layout (`editor.tabs().active().layout().window_ids()`)
+   and reads `editor.window(id)`/`editor.buffer(window.buffer_id())`. No
+   `vim_ui`/`display_map` types appear in this file — it depends only on
+   `kernel`/`vim_buffer`/`text`, matching `app -> kernel` in the
+   dependency diagram.
+2. - [ ] `view/mod.rs` (rewritten): a new `RenderState` struct holding
+   `windows: HashMap<WindowId, WindowRenderCache>`, where
+   `WindowRenderCache { display_map: display_map::DisplayMap, buffer:
+   BufferId, retained: HashMap<BufferId, display_map::DisplayMap> }`.
+   `RenderState::new()` starts empty; a cache entry is created lazily the
+   first time a given `WindowId` is rendered.
+3. - [ ] `view/mod.rs`: a per-window update step, mirroring `vim_ui::
+   WindowState::update`'s shape (`crates/vim-ui/src/window.rs`) but
+   driven by a `WindowProjection` + that window's `vim_ui::Rect` viewport
+   instead of owning selections long-term. If the window has no cache
+   entry, build one via `DisplayMap::new_windowed` sized to the viewport.
+   If `projection.buffer` differs from the cache's remembered buffer,
+   move the current entry into `retained` keyed by its old `BufferId` and
+   either reuse a `retained` entry for the new buffer or build fresh
+   (mirrors `vim_ui::WindowContent::switch_to`). Otherwise call
+   `sync_hot_window`/`fold`/`set_wrap_width` to update incrementally.
+   Selections are never stored on this cache across frames — read fresh
+   from the `WindowProjection` each frame for `scroll_to_cursor`/model
+   construction only, so `kernel::Window::selections()` stays the one and
+   only owner of selection state.
+4. - [ ] `view/mod.rs`: build one `vim_ui::TextViewModel` per window from
+   its `DisplaySnapshot`. Iterate `scroll_y..scroll_y + visible_rows`,
+   call `snapshot.line_text(row)` for each row's text — **not**
+   `DisplaySnapshot::text_chunks()`, which calls `Box::leak` on every
+   invocation (a pre-existing bug in `crates/display_map`, unrelated to
+   this milestone, but must not be propagated into code that runs every
+   frame) — wrap each row into one `TextSpan` with a placeholder default
+   `Style` (real syntax highlighting is explicitly deferred, per
+   `RESCUE.md`'s item 8 closing note), and leave `DisplayRow.gutter =
+   None` (gutters are `8.2`, not this milestone). Convert the
+   projection's primary selection to a `TextCursor`/`DisplaySelection` via
+   `DisplaySnapshot::anchor_to_display_point`. Call `model.validate()` in
+   a `debug_assert!` — a validation failure here is this milestone's own
+   bug, never something to silently render anyway.
+5. - [ ] `view/mod.rs`: hand each window's model to a `vim_ui::views::
+   text::TextView` (`TextView::new()` + `set_model()` + `View::draw`),
+   replacing the current `full_text.split('\n')` loop and its manual
+   `Print`/`Clear` calls entirely.
+6. - [ ] `view/mod.rs`: draw the terminal cursor using `TextView::
+   cursor_screen_pos`/`cursor_shape` for the *current* window only
+   (preserving the "only the focused window shows a terminal cursor" rule
+   the Windows/tabs milestone already established), instead of the
+   existing hand-computed `cursor_x`/`cursor_y` math.
+7. - [ ] `runtime.rs`: thread a `view::RenderState` through every call site
+   of `view::render` (the initial draw, `Event::Resize`, and the main
+   loop) — `runtime::run` owns it locally as a plain local variable;
+   rendering-cache state stays `view`-owned, sequencing stays in
+   `runtime.rs`.
+8. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`. This
+   milestone shouldn't touch `kernel/` at all; confirm that stays true.
+9. - [ ] Unit tests (`view/mod.rs` or a new `view/tests.rs`): a
+   `TextViewModel` built from a real multi-line buffer passes
+   `.validate()`; moving the cursor via `Editor::execute` changes the next
+   frame's `TextViewModel.cursor.position` to match; splitting a window
+   produces two independent `TextViewModel`s pointed at the correct
+   buffers/viewports; switching one window to a different buffer and back
+   reuses the retained `DisplayMap` instead of rebuilding it from scratch
+   (assert via a cheap build-counter, mirroring `display_map`'s own
+   `fold_map::build_count()` test pattern from its `PLAN.md`).
+10. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+    green.
+11. - [ ] Manual smoke test: launch the binary, open/edit a real
+    multi-line file, split with `Ctrl-w v`, confirm each pane shows its
+    own buffer's real text (not the placeholder loop's output) with the
+    cursor tracked correctly, and confirm switching a window's buffer and
+    back preserves scroll position. **Needs a human with a real
+    terminal.**
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+      `src/kernel/`) returns clean.
+- [ ] No file introduced or grown in this milestone exceeds ~500 lines.
+- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced;
+      `RenderState`/`WindowRenderCache` hold real per-window rendering
+      state, not a pass-through wrapper.
+- [ ] No `unsafe`/`Box::leak`/thread-local state was introduced by this
+      milestone's own code — grep confirms nothing added under `view/` or
+      `app/view_sync.rs` calls `DisplaySnapshot::text_chunks`.
+- [ ] Every `TextViewModel` this milestone builds is proven (by test) to
+      pass `.validate()`.
+- [ ] Switching a window's buffer and back is proven (by test) to reuse
+      retained per-buffer `DisplayMap` state rather than rebuilding it
+      (Rule 4 item 5's per-buffer view-state requirement).
+- [ ] `view/`'s rendering cache is proven, by grep/inspection, to be keyed
+      by the kernel's own `WindowId`/`BufferId` — no `vim_ui::
+      WindowStore`/`Ui`/`FocusManager`/`LayoutEngine` instance exists
+      anywhere under `src/`.
+- [ ] Selections are proven, by inspection, to be read fresh from
+      `kernel::Window::selections()` every frame — `view/`'s cache never
+      stores an independent copy of selection state across frames.
+- [ ] Manual smoke test passes in a live terminal. **Needs a human with a
+      real terminal.**
