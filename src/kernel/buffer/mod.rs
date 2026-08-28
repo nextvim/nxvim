@@ -10,6 +10,8 @@
 //! `kernel::Editor::open` for command-line file arguments), and saving
 //! (`save`/`write_to`, used by the `:w` Ex command).
 
+pub mod registers;
+
 use vim_buffer::{Buffer, BufferError, BufferId, BufferManager, ManagerOutcome, SaveOutcome};
 
 pub struct BufferStore {

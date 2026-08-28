@@ -11,6 +11,7 @@ use display_map::{DisplayMap, DisplayPoint};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use vim_buffer::BufferId;
+use vim_ui::ColorScheme;
 use vim_ui::{
     Rect, Style,
     model::{
@@ -95,6 +96,10 @@ pub fn render(
         ..screen
     };
     let rects = layout::layout(tab, layout_screen);
+
+    let scheme = ColorScheme::load_default();
+    let mut selected_style = Style::default();
+    selected_style.bg = scheme.selection;
 
     let mut renderer = render_state
         .renderer
@@ -265,7 +270,7 @@ pub fn render(
                     selections.push(DisplaySelection {
                         start: start_pos,
                         end: end_pos,
-                        style: Style::default(),
+                        style: selected_style,
                     });
                 }
             }

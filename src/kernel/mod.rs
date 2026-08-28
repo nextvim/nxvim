@@ -14,10 +14,12 @@ pub mod outcome;
 pub mod transaction;
 pub mod window;
 
-use vim_buffer::{Buffer, BufferId};
+use std::collections::HashMap;
+use vim_buffer::{Buffer, BufferId, Anchor};
 use vim_input::Action;
 
 use buffer::BufferStore;
+use buffer::registers::Registers;
 use command::CommandContext;
 use command::normal::motions::CharSearch;
 use ids::{TabPageId, WindowId};
@@ -40,6 +42,11 @@ pub struct Editor {
     global_options: GlobalOptions,
     last_char_search: Option<CharSearch>,
     last_change: Option<Action>,
+    pub(crate) global_marks: HashMap<char, (BufferId, Anchor)>,
+    pub(crate) jump_list: command::normal::marks_and_jumps::JumpList,
+    pub(crate) registers: Registers,
+    pub(crate) pending_register: Option<char>,
+    pub(crate) primed_clipboard_register: Option<String>,
 }
 
 impl Editor {
@@ -99,14 +106,43 @@ impl Editor {
             global_options: GlobalOptions::default(),
             last_char_search: None,
             last_change: None,
+            global_marks: HashMap::new(),
+            jump_list: command::normal::marks_and_jumps::JumpList::new(),
+            registers: Registers::new(),
+            pending_register: None,
+            primed_clipboard_register: None,
         }
     }
 
     /// The only way `app/` reaches into kernel state: translate one action
     /// into its effect on the current buffer/window/tab.
     pub fn execute(&mut self, action: Action) -> Outcome {
+        self.execute_with_register(action, None)
+    }
+
+    pub fn execute_with_register(&mut self, action: Action, register: Option<char>) -> Outcome {
+        self.pending_register = register;
         let ctx = self.current;
-        command::dispatch(self, ctx, action)
+        let outcome = command::dispatch(self, ctx, action);
+        self.pending_register = None;
+        self.primed_clipboard_register = None;
+        outcome
+    }
+
+    pub fn prime_clipboard_register(&mut self, text: String) {
+        self.primed_clipboard_register = Some(text);
+    }
+
+    pub(crate) fn pending_register(&self) -> Option<char> {
+        self.pending_register
+    }
+
+    pub(crate) fn registers(&self) -> &Registers {
+        &self.registers
+    }
+
+    pub(crate) fn registers_mut(&mut self) -> &mut Registers {
+        &mut self.registers
     }
 
     /// Submit a command line (e.g. from `:` Ex command prompt) to be parsed
@@ -215,6 +251,15 @@ impl Editor {
         for (_, win) in self.windows.iter_mut() {
             if win.buffer_id() == deleted_id {
                 win.set_buffer(fallback_id);
+            }
+        }
+    }
+
+    pub(crate) fn set_window_buffer(&mut self, window_id: WindowId, buffer_id: BufferId) {
+        if let Some(win) = self.windows.get_mut(window_id) {
+            win.set_buffer(buffer_id);
+            if window_id == self.current.window {
+                self.current.buffer = buffer_id;
             }
         }
     }
@@ -1289,4 +1334,200 @@ mod tests {
         editor.execute(Action::DeleteCharBefore { count: 1 });
         assert_eq!(text_of(&editor), "abX\n");
     }
+
+    #[test]
+    fn test_marks_roundtrip() {
+        let mut editor = Editor::new("  hello\n");
+        editor.execute(Action::MoveToColumn { count: 4 });
+        assert_eq!(cursor(&editor), Point::new(0, 3));
+
+        editor.execute(Action::MarkSet { ch: 'a' });
+
+        editor.execute(Action::MoveToStartOfLine { count: 1, select: false });
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+
+        editor.execute(Action::MarkJump { ch: 'a', select: false, linewise: false });
+        assert_eq!(cursor(&editor), Point::new(0, 3));
+
+        editor.execute(Action::MarkJump { ch: 'a', select: false, linewise: true });
+        assert_eq!(cursor(&editor), Point::new(0, 2));
+    }
+
+    #[test]
+    fn test_global_marks() {
+        let mut editor = Editor::new("first buffer\n");
+        let buf1 = editor.current_context().buffer;
+        
+        editor.execute(Action::MoveToColumn { count: 4 });
+        editor.execute(Action::MarkSet { ch: 'A' });
+
+        // Manually insert a second buffer and assign it to the window
+        let buf2 = editor.buffers_mut().insert("second buffer\n");
+        assert_ne!(buf1, buf2);
+        editor.set_window_buffer(editor.current_context().window, buf2);
+
+        editor.execute(Action::MarkJump { ch: 'A', select: false, linewise: false });
+        assert_eq!(editor.current_context().buffer, buf1);
+        assert_eq!(cursor(&editor), Point::new(0, 3));
+    }
+
+    #[test]
+    fn test_unset_mark_no_op() {
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::MarkJump { ch: 'z', select: false, linewise: false });
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+    }
+
+    #[test]
+    fn test_jumplist_navigation() {
+        let mut editor = Editor::new("0\n1\n2\n3\n4\n5");
+        
+        editor.execute(Action::MoveToLine { line: 6, select: false });
+        assert_eq!(cursor(&editor), Point::new(5, 0));
+
+        editor.execute(Action::JumpToOlderPosition);
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+
+        editor.execute(Action::JumpToNewerPosition);
+        assert_eq!(cursor(&editor), Point::new(5, 0));
+    }
+
+    #[test]
+    fn test_visual_exit_sets_marks() {
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveRight { count: 1, select: true });
+        editor.execute(Action::SetToNormal);
+
+        let buf = editor.current_buffer();
+        assert!(buf.marks().get('<').is_some());
+        assert!(buf.marks().get('>').is_some());
+    }
+
+    #[test]
+    fn test_named_register_roundtrip() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute_with_register(Action::YankMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord { count: 1, select: false }),
+        }, Some('a'));
+        
+        editor.execute(Action::MoveToEndOfLine { count: 1, select: false });
+        editor.execute_with_register(Action::Put { count: 1 }, Some('a'));
+        assert_eq!(text_of(&editor), "hello worldhello \n");
+    }
+
+    #[test]
+    fn test_bare_yank_delete_fills_unnamed_and_special() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute(Action::YankMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord { count: 1, select: false }),
+        });
+        let (text, _) = command::normal::registers_ops::read_register(&editor);
+        assert_eq!(text, "hello ");
+
+        editor.execute(Action::DeleteMotion {
+            count: 1,
+            motion: Box::new(Action::MoveToWord { count: 1, select: false }),
+        });
+        let (text, _) = command::normal::registers_ops::read_register(&editor);
+        assert_eq!(text, "hello ");
+        
+        let (text_small, _) = editor.registers.get(crate::kernel::buffer::registers::RegisterName::SmallDelete)
+            .map(|r| (r.text.clone(), r.kind))
+            .unwrap();
+        assert_eq!(text_small, "hello ");
+    }
+
+    #[test]
+    fn test_black_hole_register() {
+        let mut editor = Editor::new("line 1\nline 2\n");
+        editor.execute(Action::YankLine { count: 1 });
+        let (text, _) = command::normal::registers_ops::read_register(&editor);
+        assert_eq!(text, "line 1\n");
+
+        editor.execute_with_register(Action::DeleteLine { count: 1 }, Some('_'));
+        assert_eq!(text_of(&editor), "line 2\n");
+        let (text2, _) = command::normal::registers_ops::read_register(&editor);
+        assert_eq!(text2, "line 1\n");
+    }
+
+    #[test]
+    fn test_numbered_register_rotation() {
+        let mut editor = Editor::new("first\nsecond\nthird\nfourth\n");
+        editor.execute(Action::DeleteLine { count: 1 });
+        editor.execute(Action::DeleteLine { count: 1 });
+        editor.execute(Action::DeleteLine { count: 1 });
+
+        editor.execute_with_register(Action::Put { count: 1 }, Some('1'));
+        assert_eq!(text_of(&editor), "fourth\nthird\n");
+
+        editor.execute_with_register(Action::Put { count: 1 }, Some('2'));
+        assert_eq!(text_of(&editor), "fourth\nthird\nsecond\n");
+
+        editor.execute_with_register(Action::Put { count: 1 }, Some('3'));
+        assert_eq!(text_of(&editor), "fourth\nthird\nsecond\nfirst\n");
+    }
+
+    #[test]
+    fn test_linewise_yank_paste_above_below() {
+        let mut editor = Editor::new("line 1\nline 2\n");
+        editor.execute(Action::YankLine { count: 1 });
+        
+        editor.execute(Action::Put { count: 1 });
+        assert_eq!(text_of(&editor), "line 1\nline 1\nline 2\n");
+
+        editor.execute(Action::PutBefore { count: 1 });
+        assert_eq!(text_of(&editor), "line 1\nline 1\nline 1\nline 2\n");
+    }
+
+    #[test]
+    fn test_charwise_yank_paste_after_before() {
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::YankMotion {
+            count: 2,
+            motion: Box::new(Action::MoveRight { count: 1, select: false }),
+        });
+        
+        editor.execute(Action::Put { count: 1 });
+        assert_eq!(text_of(&editor), "hheello\n");
+
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::YankMotion {
+            count: 2,
+            motion: Box::new(Action::MoveRight { count: 1, select: false }),
+        });
+        
+        editor.execute(Action::PutBefore { count: 1 });
+        assert_eq!(text_of(&editor), "hehello\n");
+    }
+
+    #[test]
+    fn test_visual_mode_yank() {
+        let mut editor = Editor::new("hello world\n");
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveRight { count: 4, select: true });
+        editor.execute(Action::YankMotion {
+            count: 0,
+            motion: Box::new(Action::MoveRight { count: 0, select: true }),
+        });
+        
+        let (text, _) = command::normal::registers_ops::read_register(&editor);
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn test_insert_register_ctrl_r() {
+        let mut editor = Editor::new("world\n");
+        editor.execute(Action::YankMotion {
+            count: 5,
+            motion: Box::new(Action::MoveRight { count: 1, select: false }),
+        });
+
+        editor.execute(Action::SetToInsert);
+        editor.execute(Action::InsertRegister);
+        assert_eq!(text_of(&editor), "worldworld\n");
+    }
 }
+

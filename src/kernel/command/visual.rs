@@ -113,11 +113,24 @@ pub fn enter(editor: &mut Editor, window: WindowId, kind: VisualKind) -> Outcome
 /// Leaves Visual mode: records the exited selection/kind as `gv` history,
 /// collapses the selection to its head, and returns to `Mode::Normal`.
 pub fn exit(editor: &mut Editor, window: WindowId) -> Outcome {
-    if let Some(win) = editor.windows_mut().get_mut(window) {
+    let mut visual_info = None;
+    if let Some(win) = editor.window(window) {
         if let Some(kind) = win.visual_kind() {
-            let primary = win.selections().primary().clone();
-            win.set_last_visual(kind, primary);
+            visual_info = Some((kind, win.selections().primary().clone(), win.buffer_id()));
         }
+    }
+
+    if let Some((kind, primary, buffer_id)) = visual_info {
+        if let Some(win) = editor.windows_mut().get_mut(window) {
+            win.set_last_visual(kind, primary.clone());
+        }
+        if let Some(buf) = editor.buffers_mut().get_mut(buffer_id) {
+            let _ = buf.set_mark_anchor('<', primary.start.clone());
+            let _ = buf.set_mark_anchor('>', primary.end.clone());
+        }
+    }
+
+    if let Some(win) = editor.windows_mut().get_mut(window) {
         win.set_visual_kind(None);
 
         let primary = win.selections().primary();

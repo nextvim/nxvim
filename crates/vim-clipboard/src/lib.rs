@@ -77,7 +77,7 @@ fn clipboard_commands(
     }
 }
 
-fn write_system_clipboard(register: RegisterName, text: &str) -> bool {
+pub fn write_system_clipboard(register: RegisterName, text: &str) -> bool {
     for (program, args) in clipboard_commands(register, true) {
         let Ok(mut child) = Command::new(program)
             .args(args)
@@ -101,7 +101,7 @@ fn write_system_clipboard(register: RegisterName, text: &str) -> bool {
     false
 }
 
-fn read_system_clipboard(register: RegisterName) -> Option<String> {
+pub fn read_system_clipboard(register: RegisterName) -> Option<String> {
     clipboard_commands(register, false)
         .into_iter()
         .find_map(|(program, args)| {

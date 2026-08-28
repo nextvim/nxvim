@@ -314,7 +314,10 @@ pub enum Action {
     MarkJump {
         ch: char,
         select: bool,
+        linewise: bool,
     },
+    JumpToOlderPosition,
+    JumpToNewerPosition,
 
     MoveWithinCharacter {
         count: u32,
@@ -560,7 +563,11 @@ impl std::fmt::Display for Action {
             Action::ResizeUp => write!(f, "ResizeUp"),
             Action::ResizeDown => write!(f, "ResizeDown"),
             Action::MarkSet { ch } => write!(f, "MarkSet({})", ch),
-            Action::MarkJump { ch, select } => write!(f, "MarkJump({}, select={})", ch, select),
+            Action::MarkJump { ch, select, linewise } => {
+                write!(f, "MarkJump({}, select={}, linewise={})", ch, select, linewise)
+            }
+            Action::JumpToOlderPosition => write!(f, "JumpToOlderPosition"),
+            Action::JumpToNewerPosition => write!(f, "JumpToNewerPosition"),
             Action::MoveToWord { count, .. } => write!(f, "MoveToWord({})", count),
             Action::MoveToPreviousWord { count, .. } => write!(f, "MoveToPreviousWord({})", count),
             Action::MoveToWordEnd { count, .. } => write!(f, "MoveToWordEnd({})", count),
@@ -894,7 +901,7 @@ impl Action {
             Action::MoveToPreviousArgument { count, .. } => {
                 Action::MoveToPreviousArgument { count, select }
             }
-            Action::MarkJump { ch, .. } => Action::MarkJump { ch, select },
+            Action::MarkJump { ch, linewise, .. } => Action::MarkJump { ch, select, linewise },
             Action::Sequence { count, actions } => Action::Sequence {
                 count,
                 actions: actions
@@ -1203,7 +1210,9 @@ impl Action {
             Action::Script { script, .. } => Action::Script { count, script },
             Action::KeySequence { keys, .. } => Action::KeySequence { count, keys },
             Action::MarkSet { ch } => Action::MarkSet { ch },
-            Action::MarkJump { ch, select } => Action::MarkJump { ch, select },
+            Action::MarkJump { ch, select, linewise } => Action::MarkJump { ch, select, linewise },
+            Action::JumpToOlderPosition => Action::JumpToOlderPosition,
+            Action::JumpToNewerPosition => Action::JumpToNewerPosition,
             Action::Sequence { actions, .. } => Action::Sequence { count, actions },
         }
     }
@@ -1225,7 +1234,7 @@ impl Action {
             Action::MoveWithinCharacter { .. } => Action::MoveWithinCharacter { count, ch },
             Action::MoveAroundCharacter { .. } => Action::MoveAroundCharacter { count, ch },
             Action::MarkSet { .. } => Action::MarkSet { ch },
-            Action::MarkJump { select, .. } => Action::MarkJump { ch, select },
+            Action::MarkJump { select, linewise, .. } => Action::MarkJump { ch, select, linewise },
             Action::InsertText(_) => Action::InsertText(ch.to_string()),
             Action::BeginMacro { .. } => Action::BeginMacro {
                 register: ch.to_string(),

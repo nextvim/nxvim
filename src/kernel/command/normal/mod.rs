@@ -2,8 +2,10 @@
 //! (`RESCUE.md` Rule 3) — `motions`/`operators` today, `text_objects`/... as
 //! later milestones add them.
 
+pub mod marks_and_jumps;
 pub mod motions;
 pub mod operators;
+pub mod registers_ops;
 pub mod text_objects;
 pub mod windows;
 
@@ -212,6 +214,19 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         }
         Action::MoveAroundCharacter { ch, .. } => {
             text_objects::select(editor, ctx.window, ch, true)
+        }
+        Action::MarkSet { ch } => marks_and_jumps::set_mark(editor, ctx.window, ch),
+        Action::MarkJump {
+            ch,
+            select,
+            linewise,
+        } => marks_and_jumps::jump_to_mark(editor, ctx.window, ch, select, linewise),
+        Action::JumpToOlderPosition => marks_and_jumps::jump_older(editor, ctx.window),
+        Action::JumpToNewerPosition => marks_and_jumps::jump_newer(editor, ctx.window),
+        Action::Put { count } => registers_ops::put(editor, ctx.window, count),
+        Action::PutBefore { count } => registers_ops::put_before(editor, ctx.window, count),
+        Action::PutLines { line, before } => {
+            registers_ops::put_lines(editor, ctx.window, line, before)
         }
         _ => Outcome::default(),
     }

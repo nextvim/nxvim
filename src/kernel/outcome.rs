@@ -31,6 +31,7 @@ pub enum Effect {
     FileSaved { path: std::path::PathBuf, bytes_written: u64 },
     FileSaveFailed { message: String },
     OptionMessage { message: String },
+    ClipboardWrite { text: String, primary: bool },
 }
 
 /// The result of one `Editor::execute()` call.

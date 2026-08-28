@@ -95,7 +95,7 @@ pub fn run(
             let buf_id = app.editor().current_context().buffer.get();
             if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id)) {
                 let action_desc = format!("{:?}", resolved.action);
-                let outcome = app.handle_action(resolved.action);
+                let outcome = app.handle_action(resolved.action, resolved.register);
                 if outcome.invalidation != RedrawInvalidation::None {
                     pending_invalidations.push(outcome.invalidation);
                 }

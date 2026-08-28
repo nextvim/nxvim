@@ -3,6 +3,9 @@
 //! Motions never mutate text, so they don't go through
 //! `kernel::transaction` — they update the window's `SelectionSet` in place
 //! against the current buffer's text.
+//!
+//! // TODO(7.7): Search `/` and `?` must call super::marks_and_jumps::record_jump before moving cursor.
+
 
 use crate::kernel::{
     Editor,
@@ -202,6 +205,7 @@ pub fn move_to_previous_big_word_end(
 }
 
 pub fn move_to_start_of_document(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     win.selections_mut()
         .move_to_start_of_document(select, buffer.as_text_buffer());
@@ -209,6 +213,7 @@ pub fn move_to_start_of_document(editor: &mut Editor, window: WindowId, select: 
 }
 
 pub fn move_to_end_of_document(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     win.selections_mut()
         .move_to_end_of_document(select, buffer.as_text_buffer());
@@ -216,6 +221,7 @@ pub fn move_to_end_of_document(editor: &mut Editor, window: WindowId, select: bo
 }
 
 pub fn move_to_line(editor: &mut Editor, window: WindowId, line: u32, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     win.selections_mut()
         .move_to_line(select, line, buffer.as_text_buffer());
@@ -332,6 +338,7 @@ pub fn move_to_next_sentence(
 }
 
 pub fn move_to_matching_delimiter(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     win.selections_mut()
         .move_to_matching_delimiter(select, buffer.as_text_buffer());
@@ -358,6 +365,7 @@ pub fn move_to_last_non_whitespace(
 }
 
 pub fn move_to_screen_top(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let target_line = win.scroll_top();
     win.selections_mut()
@@ -366,6 +374,7 @@ pub fn move_to_screen_top(editor: &mut Editor, window: WindowId, select: bool) -
 }
 
 pub fn move_to_screen_middle(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let height = win.viewport_height().max(1);
     let target_line = win.scroll_top() + height / 2;
@@ -375,6 +384,7 @@ pub fn move_to_screen_middle(editor: &mut Editor, window: WindowId, select: bool
 }
 
 pub fn move_to_screen_bottom(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let height = win.viewport_height().max(1);
     let target_line = win.scroll_top() + height.saturating_sub(1);

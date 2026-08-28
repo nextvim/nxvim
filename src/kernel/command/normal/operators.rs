@@ -17,11 +17,32 @@ use vim_input::Action;
 
 use crate::kernel::{
     Editor,
+    buffer::registers::RegisterKind,
     ids::WindowId,
     mode::{Mode, VisualKind},
     outcome::{Outcome, RedrawInvalidation},
     transaction::{self, EditDescription},
 };
+
+fn is_jump_motion(motion: &Action) -> bool {
+    matches!(
+        motion,
+        Action::MoveToStartOfDocument { .. }
+            | Action::MoveToEndOfDocument { .. }
+            | Action::MoveToLine { .. }
+            | Action::MoveToMatchingDelimiter { .. }
+            | Action::MoveToScreenTop { .. }
+            | Action::MoveToScreenMiddle { .. }
+            | Action::MoveToScreenBottom { .. }
+            | Action::MarkJump { .. }
+    )
+}
+
+fn record_operator_jump(editor: &mut Editor, window: WindowId, motion: &Action) {
+    if is_jump_motion(motion) {
+        super::marks_and_jumps::record_jump(editor, window);
+    }
+}
 
 use super::text_objects;
 
@@ -137,6 +158,12 @@ fn motion_target(
     let repeats = repeats.max(1);
 
     match motion {
+        Action::MoveLeft { .. } => Some(repeat_motion(from, repeats, |s| {
+            s.move_left_once(false, text_buffer)
+        })),
+        Action::MoveRight { .. } => Some(repeat_motion(from, repeats, |s| {
+            s.move_right_once(false, text_buffer)
+        })),
         // See `motions.rs`'s `move_to_word`/kernel-wide note: `Action::
         // MoveToWord` is Vim's forward `w`, but the matching-sounding
         // `Motions::move_to_word` doesn't advance from a word start --
@@ -570,6 +597,7 @@ pub fn delete_motion(
     count: u32,
     motion: &Action,
 ) -> Outcome {
+    record_operator_jump(editor, window, motion);
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")
@@ -632,6 +660,25 @@ fn apply_delete(
     primary_id: usize,
     range: ResolvedRange,
 ) -> Outcome {
+    let deleted_text: String = {
+        let buffer = editor.buffer(buffer_id).expect("live buffer");
+        buffer
+            .snapshot()
+            .chunks_for_range(TextRange {
+                start: ByteOffset(range.start),
+                end: ByteOffset(range.end),
+            })
+            .expect("range is valid")
+            .collect()
+    };
+
+    let kind = if range.linewise {
+        RegisterKind::Line
+    } else {
+        RegisterKind::Character
+    };
+    let effect = super::registers_ops::write_register(editor, true, deleted_text, kind);
+
     let buffer = editor
         .buffers_mut()
         .get_mut(buffer_id)
@@ -658,7 +705,11 @@ fn apply_delete(
         .replace_primary(landing)
         .expect("primary id is unchanged by a delete");
 
-    Outcome::from_mutation(&mutation)
+    let mut outcome = Outcome::from_mutation(&mutation);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome
 }
 
 /// Deletes every `BlockRow`'s column sub-range as one `transaction::apply`
@@ -700,6 +751,28 @@ fn apply_delete_block(
         return Outcome::default();
     }
 
+    let joined = {
+        let buffer = editor.buffer(buffer_id).expect("live buffer");
+        let snapshot = buffer.snapshot();
+        let mut lines = Vec::new();
+        for r in &rows {
+            if r.start < r.end {
+                let line_text: String = snapshot
+                    .chunks_for_range(TextRange {
+                        start: ByteOffset(r.start),
+                        end: ByteOffset(r.end),
+                    })
+                    .expect("block row range is valid")
+                    .collect();
+                lines.push(line_text);
+            } else {
+                lines.push(String::new());
+            }
+        }
+        lines.join("\n")
+    };
+    let effect = super::registers_ops::write_register(editor, true, joined, RegisterKind::Block);
+
     let buffer = editor
         .buffers_mut()
         .get_mut(buffer_id)
@@ -730,7 +803,11 @@ fn apply_delete_block(
         .replace_primary(landing)
         .expect("primary id is unchanged by a block delete");
 
-    Outcome::from_mutation(&mutation)
+    let mut outcome = Outcome::from_mutation(&mutation);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome
 }
 
 /// Handles `Action::ChangeMotion { count, motion }`.
@@ -740,6 +817,7 @@ pub fn change_motion(
     count: u32,
     motion: &Action,
 ) -> Outcome {
+    record_operator_jump(editor, window, motion);
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")
@@ -819,6 +897,7 @@ fn apply_change(
 /// (Vim's `y` cursor rule). Actual register capture is out of scope until
 /// 7.6.
 pub fn yank_motion(editor: &mut Editor, window: WindowId, count: u32, motion: &Action) -> Outcome {
+    record_operator_jump(editor, window, motion);
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")
@@ -835,14 +914,57 @@ pub fn yank_motion(editor: &mut Editor, window: WindowId, count: u32, motion: &A
         let Some(top) = rows.iter().map(|r| r.start).min() else {
             return Outcome::default();
         };
-        return move_cursor_to_offset(editor, window, buffer_id, primary.id, top);
+        let buffer = editor.buffer(buffer_id).expect("live buffer");
+        let snapshot = buffer.snapshot();
+        let mut lines = Vec::new();
+        for r in &rows {
+            if r.start < r.end {
+                let line_text: String = snapshot
+                    .chunks_for_range(TextRange {
+                        start: ByteOffset(r.start),
+                        end: ByteOffset(r.end),
+                    })
+                    .expect("block row range is valid")
+                    .collect();
+                lines.push(line_text);
+            } else {
+                lines.push(String::new());
+            }
+        }
+        let joined = lines.join("\n");
+        let effect =
+            super::registers_ops::write_register(editor, false, joined, RegisterKind::Block);
+        let mut outcome = move_cursor_to_offset(editor, window, buffer_id, primary.id, top);
+        if let Some(eff) = effect {
+            outcome.effects.push(eff);
+        }
+        return outcome;
     }
 
     let Some(range) = resolve_motion_range(editor, window, buffer_id, &primary, motion, count)
     else {
         return Outcome::default();
     };
-    move_cursor_to_offset(editor, window, buffer_id, primary.id, range.start)
+    let buffer = editor.buffer(buffer_id).expect("live buffer");
+    let yanked_text: String = buffer
+        .snapshot()
+        .chunks_for_range(TextRange {
+            start: ByteOffset(range.start),
+            end: ByteOffset(range.end),
+        })
+        .expect("range is valid")
+        .collect();
+    let kind = if range.linewise {
+        RegisterKind::Line
+    } else {
+        RegisterKind::Character
+    };
+    let effect = super::registers_ops::write_register(editor, false, yanked_text, kind);
+    let mut outcome = move_cursor_to_offset(editor, window, buffer_id, primary.id, range.start);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome
 }
 
 /// Handles `Action::YankLine { count }` (`yy`).
@@ -858,9 +980,26 @@ pub fn yank_line(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
         .primary()
         .clone();
     let buffer = editor.buffer(buffer_id).expect("live buffer");
-    let (start_row, _end_row) = line_span_from_cursor(buffer.as_text_buffer(), &primary, count);
-    let start = Point::new(start_row, 0).to_offset(buffer.as_text_buffer());
-    move_cursor_to_offset(editor, window, buffer_id, primary.id, start)
+    let (start_row, end_row) = line_span_from_cursor(buffer.as_text_buffer(), &primary, count);
+    let (start, end) = whole_line_range(buffer.as_text_buffer(), start_row, end_row);
+    if start >= end {
+        return Outcome::default();
+    }
+    let yanked_text: String = buffer
+        .snapshot()
+        .chunks_for_range(TextRange {
+            start: ByteOffset(start),
+            end: ByteOffset(end),
+        })
+        .expect("range is valid")
+        .collect();
+    let effect =
+        super::registers_ops::write_register(editor, false, yanked_text, RegisterKind::Line);
+    let mut outcome = move_cursor_to_offset(editor, window, buffer_id, primary.id, start);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome
 }
 
 fn move_cursor_to_offset(
@@ -1033,6 +1172,7 @@ fn case_motion(
     motion: &Action,
     transform: impl Fn(&str) -> String,
 ) -> Outcome {
+    record_operator_jump(editor, window, motion);
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")
@@ -1280,6 +1420,7 @@ pub fn indent_motion(
     count: u32,
     motion: &Action,
 ) -> Outcome {
+    record_operator_jump(editor, window, motion);
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")
@@ -1307,6 +1448,7 @@ pub fn outdent_motion(
     count: u32,
     motion: &Action,
 ) -> Outcome {
+    record_operator_jump(editor, window, motion);
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")

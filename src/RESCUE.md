@@ -478,18 +478,18 @@ one compiles and the kernel-purity grep above is clean.
         and 7.3 produce and must go through `kernel/transaction.rs` per
         Rule 4 item 6 — never a family-specific edit path.
 
-   7.5. **Marks and jumps** (in progress) — `kernel/command/normal/marks_and_jumps.rs`.
-        Buffer-local `'a`-`'z`, global `'A`-`'Z`, special marks (`` ` ` ``,
-        `''`, `` '< '> ``), jumplist, changelist. Scope per Rule 4 item 9
-        (buffer-local vs `Editor`-global) before anything downstream (Ex
-        ranges, search jumps, persistence) starts assuming marks exist.
+    7.5. [x] **Marks and jumps** — `kernel/command/normal/marks_and_jumps.rs`.
+         Buffer-local `'a`-`'z`, global `'A`-`'Z`, special marks (`` ` ` ``,
+         `''`, `` '< '> ``), jumplist, changelist. Scope per Rule 4 item 9
+         (buffer-local vs `Editor`-global) before anything downstream (Ex
+         ranges, search jumps, persistence) starts assuming marks exist.
 
-   7.6. **Registers** — `kernel/command/normal/registers_ops.rs`. Named/
-        numbered/unnamed/special registers (`"%`, `".`, `":`, `"/`, black
-        hole), yank/put/delete-into-register, and clipboard registers
-        (`"+`/`"*`) surfaced as an app-side effect per Rule 4 item 9 and the
-        Salvage Ledger's clipboard note. Depends on 7.4's operators (`y`,
-        `d`, `c`) as the producers that fill registers.
+    7.6. [x] **Registers** — `kernel/command/normal/registers_ops.rs`. Named/
+         numbered/unnamed/special registers (`"%`, `".`, `":`, `"/`, black
+         hole), yank/put/delete-into-register, and clipboard registers
+         (`"+`/`"*`) surfaced as an app-side effect per Rule 4 item 9 and the
+         Salvage Ledger's clipboard note. Depends on 7.4's operators (`y`,
+         `d`, `c`) as the producers that fill registers.
 
    7.7. **Search** — `kernel/command/search.rs`. Pattern search, `n`/`N`,
         search offsets, `*`/`#`. Reads `'ignorecase'`/`'hlsearch'`/

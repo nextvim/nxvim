@@ -460,6 +460,17 @@ impl Keymap {
                 Action::MarkJump {
                     ch: '?',
                     select: false,
+                    linewise: false,
+                },
+            )
+            .expect("Valid binding");
+        motion_actions
+            .bind(
+                "'{c}",
+                Action::MarkJump {
+                    ch: '?',
+                    select: false,
+                    linewise: true,
                 },
             )
             .expect("Valid binding");
@@ -774,6 +785,12 @@ impl Keymap {
             .bind("<C-r>", Action::Redo { count: 1 })
             .expect("Valid binding");
         normal_actions
+            .bind("<C-o>", Action::JumpToOlderPosition)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-i>", Action::JumpToNewerPosition)
+            .expect("Valid binding");
+        normal_actions
             .bind("<C-q>", Action::Quit)
             .expect("Valid binding");
         normal_actions
@@ -1009,6 +1026,9 @@ impl Keymap {
             .expect("Valid binding");
         insert_actions
             .bind("<Delete>", Action::DeleteChar { count: 1 })
+            .expect("Valid binding");
+        insert_actions
+            .bind("<C-r>", Action::InsertRegister)
             .expect("Valid binding");
 
         // Visual Mode

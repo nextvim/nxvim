@@ -68,8 +68,30 @@ impl App {
         &self.prompt
     }
 
-    pub fn handle_action(&mut self, action: Action) -> Outcome {
-        let outcome = self.editor.execute(action);
+    pub fn handle_action(&mut self, action: Action, register: Option<char>) -> Outcome {
+        if register == Some('+') || register == Some('*') {
+            let reg_name = if register == Some('*') {
+                vim_clipboard::RegisterName::Selection
+            } else {
+                vim_clipboard::RegisterName::System
+            };
+            if let Some(text) = vim_clipboard::read_system_clipboard(reg_name) {
+                self.editor.prime_clipboard_register(text);
+            }
+        }
+
+        let outcome = self.editor.execute_with_register(action, register);
+        if outcome
+            .effects
+            .contains(&crate::kernel::outcome::Effect::Quit)
+        {
+            self.pending_request = Some(AppRequest::Quit);
+        }
+        for effect in &outcome.effects {
+            if let Some(req) = services::describe_effect(effect) {
+                self.pending_request = Some(req);
+            }
+        }
         self.process_autocommands(&outcome);
         outcome
     }
@@ -201,19 +223,19 @@ mod tests {
         assert_eq!(cursor(&app), Point::new(0, 0));
 
         let resolved = input.translate(key_event('l')).expect("l resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_eq!(cursor(&app), Point::new(0, 1));
 
         let resolved = input.translate(key_event('j')).expect("j resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_eq!(cursor(&app), Point::new(1, 1));
 
         let resolved = input.translate(key_event('h')).expect("h resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_eq!(cursor(&app), Point::new(1, 0));
 
         let resolved = input.translate(key_event('k')).expect("k resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_eq!(cursor(&app), Point::new(0, 0));
     }
 
@@ -232,18 +254,18 @@ mod tests {
         let mut input = InputTranslator::new();
 
         let resolved = input.translate(key_event('i')).expect("i resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_eq!(app.editor().mode(), Mode::Insert);
 
         let resolved = input
             .translate(key_event('X'))
             .expect("typed char resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
 
         let esc = Event::Key(KeyEvent::new(CKey::Esc, CMod::NONE));
         let resolved = input.translate(esc).expect("Esc resolves");
         assert_eq!(resolved.action, Action::Clear);
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_eq!(
             app.editor().mode(),
             Mode::Normal,
@@ -253,7 +275,7 @@ mod tests {
 
         let before = cursor(&app);
         let resolved = input.translate(key_event('l')).expect("l resolves");
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         assert_ne!(
             cursor(&app),
             before,
@@ -287,7 +309,7 @@ mod tests {
             }
         );
 
-        app.handle_action(resolved.action);
+        app.handle_action(resolved.action, resolved.register);
         let text: String = app.editor().current_buffer().snapshot().chunks().collect();
         assert_eq!(text, "world");
     }
@@ -316,7 +338,7 @@ mod tests {
                 select: false,
             }),
         };
-        app.handle_action(resolved);
+        app.handle_action(resolved, None);
 
         assert_eq!(app.take_request(), Some(AppRequest::Quit));
     }

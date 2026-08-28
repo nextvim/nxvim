@@ -17,6 +17,15 @@ pub fn describe_effect(effect: &Effect) -> Option<AppRequest> {
         Effect::OptionMessage { message } => {
             Some(AppRequest::ShowMessage(message.clone()))
         }
+        Effect::ClipboardWrite { text, primary } => {
+            let reg_name = if *primary {
+                vim_clipboard::RegisterName::Selection
+            } else {
+                vim_clipboard::RegisterName::System
+            };
+            vim_clipboard::write_system_clipboard(reg_name, text);
+            None
+        }
         _ => None,
     }
 }

@@ -34,6 +34,14 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::DeleteCharBefore { .. } if editor.mode().is_replace() => {
             replace_backspace(editor, ctx.window)
         }
+        Action::InsertRegister => {
+            let (text, _kind) = crate::kernel::command::normal::registers_ops::read_register(editor);
+            if text.is_empty() {
+                Outcome::default()
+            } else {
+                insert_text(editor, ctx.window, &text)
+            }
+        }
         // `Esc` in Insert mode resolves to `Action::Clear`, not
         // `Action::SetToNormal` (see `vim_input::Keymap::vim_defaults`'s
         // `insert_actions` table) — `vim_input::Resolver` treats both as
