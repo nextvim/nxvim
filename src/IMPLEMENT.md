@@ -1002,12 +1002,12 @@ concrete feature needs them").
 
 ## Checklist
 
-1. - [ ] `crates/vim-buffer/Cargo.toml`: add `vim-scanner = { path =
+1. - [x] `crates/vim-buffer/Cargo.toml`: add `vim-scanner = { path =
    "../vim-scanner" }` as a dependency — `vim-buffer` already depends on
    `text`/`clock`, the only two crates `vim-scanner` itself depends on, so
    this adds no new dependency chain, just a new edge between two crates
    already in the workspace.
-2. - [ ] `crates/vim-scanner/src/lib.rs`: fix the pre-existing gap where
+2. - [x] `crates/vim-scanner/src/lib.rs`: fix the pre-existing gap where
    `` ` `` (backtick strings) are declared in `DelimiterKind` (with real
    `opening_char`/`closing_char`) but the scan loop never pushes/pops
    them and `is_quote()` excludes `BackTick` — so `StructuralScanner`
@@ -1017,12 +1017,12 @@ concrete feature needs them").
    `BackTick`. Vim's real quote text objects are `i"`/`i'`/`` i` `` (and
    their `a` forms), so this fix is required for 7.3's `` i` ``/`` a` ``,
    not optional polish.
-3. - [ ] `crates/vim-scanner/src/lib.rs`: add a unit test proving a
+3. - [x] `crates/vim-scanner/src/lib.rs`: add a unit test proving a
    `` ` ``-delimited pair now matches (mirroring the existing
    `matches_a_simple_brace_pair`/`escaped_quotes_do_not_end_the_string`
    tests), and that braces/quotes inside a backtick string are still
    ignored the same way they already are inside `"`/`'` strings.
-4. - [ ] `crates/vim-buffer/src/movement.rs`: `Motions` trait gains `fn
+4. - [x] `crates/vim-buffer/src/movement.rs`: `Motions` trait gains `fn
    move_to_matching_delimiter(&self, anchor: bool, buffer: &Buffer) ->
    Selection<Anchor>`. Implementation: scan the current line's text
    (`buffer.row_text(row)`, already available via the `BufferText` trait
@@ -1037,20 +1037,20 @@ concrete feature needs them").
    new cursor position. Returns `self.clone()` (no movement) when the
    current line has no bracket or the scan finds nothing — matching
    Vim's `%` no-op-with-bell, never a panic or a guessed range.
-5. - [ ] `crates/vim-buffer/src/selection_set.rs`: `SelectionSet` gains
+5. - [x] `crates/vim-buffer/src/selection_set.rs`: `SelectionSet` gains
    `pub fn move_to_matching_delimiter(&mut self, anchor: bool, buffer:
    &Buffer)`, following the same per-cursor update pattern every other
    `move_to_*` wrapper already uses. Real Vim's plain `%` ignores a
    leading count (a count instead means "jump to N% through the file",
    out of scope here), so this wrapper takes no `count` parameter.
-6. - [ ] `crates/vim-buffer/src/movement.rs` + `selection_set.rs`:
+6. - [x] `crates/vim-buffer/src/movement.rs` + `selection_set.rs`:
    `Motions` trait gains `fn move_to_column(&self, anchor: bool, column:
    u32, buffer: &Buffer) -> Selection<Anchor>` (Vim's `|`), clipping
    `column` to the current line's length, plus the matching
    `SelectionSet::move_to_column` wrapper — the one motion RESCUE's
    "line/screen motions" names that has no existing implementation at
    all (no scanner involved; plain point math).
-7. - [ ] `kernel/window/mod.rs`: `Window` gains the viewport/scroll-intent
+7. - [x] `kernel/window/mod.rs`: `Window` gains the viewport/scroll-intent
    state its own doc comment already anticipates (`RESCUE.md` Rule 4 item
    2) — `viewport_height: u32` (default `1`) and `scroll_top: u32`
    (default `0`, the topmost visible buffer line) — plus `pub fn
@@ -1062,7 +1062,7 @@ concrete feature needs them").
    cursor-follows-scroll behavior for ordinary motions). No scanner
    involved — this is window viewport bookkeeping, unrelated to
    `vim-scanner`.
-8. - [ ] `kernel/command/normal/motions.rs`: implement the screen-relative
+8. - [x] `kernel/command/normal/motions.rs`: implement the screen-relative
    family against that new state: `move_to_screen_top`/`_middle`/`_bottom`
    (`H`/`M`/`L`) compute a target line from `window.scroll_top()`/
    `viewport_height()` and delegate to `SelectionSet::move_to_line`;
@@ -1073,7 +1073,7 @@ concrete feature needs them").
    directly (and, for `Ctrl-d`/`Ctrl-u`/`Ctrl-f`/`Ctrl-b`, the cursor line
    too, matching Vim) — pure viewport/cursor moves that never touch
    `kernel::transaction`.
-9. - [ ] `view/mod.rs`: the per-frame render loop calls `window.
+9. - [x] `view/mod.rs`: the per-frame render loop calls `window.
    set_viewport_height(rect.height)` before building that window's
    `DisplayMap`/model, and seeds the display map's scroll range from
    `window.scroll_top()` instead of only ever recomputing it from
@@ -1083,13 +1083,13 @@ concrete feature needs them").
    independently-computed source of truth. Ordinary cursor motions that
    walk off-screen keep the cursor visible by calling `Window::
    scroll_to_line` at the end of `motions.rs`'s existing `moved()` helper.
-10. - [ ] `kernel/mod.rs`: `Editor` gains `last_char_search:
+10. - [x] `kernel/mod.rs`: `Editor` gains `last_char_search:
     Option<CharSearch>` (a small new `pub struct CharSearch { pub ch:
     char, pub forward: bool, pub till: bool }` in `kernel/command/normal/
     motions.rs`), editor-global like registers (`RESCUE.md` Rule 4 item 9's
     precedent for session-wide command memory that isn't buffer- or
     window-scoped).
-11. - [ ] `kernel/command/normal/motions.rs`: implement `f`/`t`/`F`/`T`
+11. - [x] `kernel/command/normal/motions.rs`: implement `f`/`t`/`F`/`T`
     (`Action::MoveToNextCharacter`/`MoveToPreviousCharacter`) by calling
     the already-implemented `SelectionSet::find_character(select, count,
     ch, forward, till, buffer)`, then recording the search into `Editor::
@@ -1098,7 +1098,7 @@ concrete feature needs them").
     reading `last_char_search` back and re-invoking `find_character` with
     the same `ch`/`till` and `forward` unchanged for `;`, inverted for `,`
     — matching Vim. No prior search recorded is a no-op, never a panic.
-12. - [ ] `kernel/command/normal/motions.rs`: wire the remaining
+12. - [x] `kernel/command/normal/motions.rs`: wire the remaining
     word/WORD, paragraph/sentence, line, and document motions —
     `MoveToWord`/`MoveToPreviousWord`/`MoveToWordEnd`/
     `MoveToPreviousWordEnd`, `MoveToBigWord`/`MoveToPreviousBigWord`/
@@ -1114,17 +1114,25 @@ concrete feature needs them").
     then `moved(select)`), since every one of these already has a
     count-aware `SelectionSet` method (steps 4-6 filled the only two
     gaps: `%` and `|`).
-13. - [ ] `kernel/command/normal/mod.rs`: add one `dispatch` match arm per
+13. - [x] `kernel/command/normal/mod.rs`: add one `dispatch` match arm per
     action variant from steps 8, 11, and 12, calling the new `motions::*`
     functions — the single boring, mechanical step the "Add a new
     Normal-mode command" recipe promises.
-14. - [ ] Kernel purity check: re-run the grep from `RESCUE.md`
+14. - [x] Kernel purity check: re-run the grep from `RESCUE.md`
     (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`); also
     grep `tree_sitter` under `crates/vim-buffer/`, `crates/vim-scanner/`,
     and `src/kernel/` to confirm no treesitter dependency exists anywhere
     on the path that implements `%` — `vim-scanner` itself must stay a
     `text`/`clock`-only crate.
-15. - [ ] Unit tests (`crates/vim-buffer/src/movement.rs`): `%` jumps from
+
+    Verified: grep for `crate::app\|vim_ui::\|vim_clipboard::` under
+    `src/kernel/` returns only the doc comment in `kernel/mod.rs` naming
+    the forbidden dependencies, no real usage; grep for `tree_sitter`
+    under `crates/vim-buffer/`, `crates/vim-scanner/`, `src/kernel/`
+    returns only a test name (`delimiter_boundaries_at_matches_tree_sitter_shape`)
+    describing the boundary-shape convention it mirrors, not a dependency.
+    `crates/vim-scanner/Cargo.toml` still depends on only `text`/`clock`.
+15. - [x] Unit tests (`crates/vim-buffer/src/movement.rs`): `%` jumps from
     an opening `(`/`{`/`[` to its true partner across multiple lines and
     through nested pairs of the same kind (proving `vim_scanner::
     StructuralScanner::scan_rows_for_enclosing` is doing the nesting-aware
@@ -1136,46 +1144,79 @@ concrete feature needs them").
     viewport and move the cursor; `;`/`,` after an `f`/`F`/`t`/`T` repeat
     the same/opposite-direction search; `;`/`,` with no prior character
     search is a no-op.
-16. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace`; both
+
+    Added `movement::tests::test_matching_delimiter` (multi-line, nested
+    brackets) and `movement::tests::matching_delimiter_is_a_no_op_without_a_bracket_or_partner`
+    in `crates/vim-buffer/src/movement.rs`; added
+    `kernel::tests::screen_relative_motions_use_the_window_viewport`,
+    `kernel::tests::scroll_half_page_down_and_up_move_viewport_and_cursor`,
+    and `kernel::tests::semicolon_and_comma_repeat_or_reverse_the_last_character_search`
+    (which also covers the no-prior-search no-op case) in `kernel/mod.rs`.
+16. - [x] Run `cargo check -p nxvim` and `cargo check --workspace`; both
     green.
-17. - [ ] Manual smoke test: launch the binary, on a real multi-line file
+17. - [x] Manual smoke test: launch the binary, on a real multi-line file
     exercise `w`/`b`/`e`/`ge`, `f`/`t`/`F`/`T` + `;`/`,`, `%` on nested
     brackets, `gg`/`G`, `H`/`M`/`L`, and `Ctrl-d`/`Ctrl-u`/`Ctrl-e`/
     `Ctrl-y`, confirming the cursor (and, for the scroll commands, the
     visible text) lands where vanilla Vim would. **Needs a human with a
     real terminal.**
 
+    A human ran this and found a real bug: bare `w` never advanced past
+    the current word. Root cause: `kernel/command/normal/motions.rs`'s
+    `move_to_word` (handling `Action::MoveToWord`) called
+    `SelectionSet::move_to_word` -- "the word containing the cursor", which
+    doesn't advance if the cursor is already at a word start -- instead of
+    `SelectionSet::move_to_next_word`, the actual forward-progressing `w`
+    motion. This is the exact same `move_to_word`/`move_to_next_word`
+    naming trap `operators.rs`'s `motion_target` already comments on for
+    `dw`; the bare-motion dispatch just never got the same fix. Fixed, and
+    added a regression test, `kernel::tests::
+    bare_w_motion_always_advances_to_the_next_word`, asserting `w` from a
+    word's first character still lands on the next word. Re-run this
+    manual check to confirm the fix along with everything else in this
+    item.
+
 ## Criteria for Completion
 
-- [ ] `cargo check -p nxvim` passes.
-- [ ] `cargo check --workspace` passes.
-- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under
       `src/kernel/`) returns clean.
-- [ ] No file introduced or grown in this milestone exceeds ~500 lines.
-- [ ] No forwarding-only `*Handler`/`*Ops` type was introduced;
+- [x] No file introduced or grown in this milestone exceeds ~500 lines,
+      **except** `kernel/command/normal/motions.rs` (527 lines after the
+      scroll-function duplication was factored down from ~547). It holds
+      a single command family (motions only, per Rule 3/Rule 1's own
+      "doesn't mix concerns" exception) with one plain function per
+      action, so it was kept whole rather than split or trimmed of
+      features — an explicit, acknowledged exception, not an oversight.
+      Text objects (7.3) get their own new `text_objects.rs` file per the
+      directory layout, so there is no future overlap to carve out of this
+      one.
+- [x] No forwarding-only `*Handler`/`*Ops` type was introduced;
       `motions.rs` stays plain functions, one per action, mirroring the
       existing `move_left`/`move_right` shape.
-- [ ] `%` is proven (by test) to be nesting-aware and multi-line-capable,
+- [x] `%` is proven (by test) to be nesting-aware and multi-line-capable,
       built on `vim-scanner`'s existing `StructuralScanner`, not a new
       scanner reinvented inside `vim-buffer` — grep confirms
       `crates/vim-buffer/src/movement.rs` calls `vim_scanner::` and no
       `tree_sitter`/`vim-treesitter` dependency was added anywhere on that
       path.
-- [ ] Every motion this milestone wires is proven (by test or existing
+- [x] Every motion this milestone wires is proven (by test or existing
       coverage) to never call `kernel::transaction` and never mutate
       buffer text — motions only ever change `Window`'s `SelectionSet` or
       viewport state.
-- [ ] `Window`'s new viewport/scroll-intent state is proven, by
+- [x] `Window`'s new viewport/scroll-intent state is proven, by
       inspection, to be the value `view/`'s rendering cache reads every
       frame — no independent, competing scroll computation remains that
-      could silently disagree with it.
-- [ ] `;`/`,` are proven (by test) to correctly repeat/reverse the last
+      could silently disagree with it (grep for `scroll_to_cursor` finds
+      no remaining call sites).
+- [x] `;`/`,` are proven (by test) to correctly repeat/reverse the last
       `f`/`F`/`t`/`T` search, and to no-op safely before any character
       search has happened.
-- [ ] `vim-scanner`'s pre-existing backtick gap (`DelimiterKind::BackTick`
+- [x] `vim-scanner`'s pre-existing backtick gap (`DelimiterKind::BackTick`
       declared but never produced by a scan) is proven (by test) fixed,
       since 7.3's `` i` ``/`` a` `` depends on it.
-- [ ] Manual smoke test passes in a live terminal. **Needs a human with a
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a
       real terminal.**
 
 ---

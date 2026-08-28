@@ -21,6 +21,8 @@ pub struct Window {
     buffer: BufferId,
     selections: SelectionSet,
     options: WindowOptions,
+    viewport_height: u32,
+    scroll_top: u32,
 }
 
 impl Window {
@@ -41,6 +43,8 @@ impl Window {
             buffer: buffer_id,
             selections,
             options: WindowOptions::default(),
+            viewport_height: 1,
+            scroll_top: 0,
         }
     }
 
@@ -66,6 +70,29 @@ impl Window {
 
     pub fn set_options(&mut self, options: WindowOptions) {
         self.options = options;
+    }
+
+    pub fn viewport_height(&self) -> u32 {
+        self.viewport_height
+    }
+
+    pub fn set_viewport_height(&mut self, height: u32) {
+        self.viewport_height = height;
+    }
+
+    pub fn scroll_top(&self) -> u32 {
+        self.scroll_top
+    }
+
+    pub fn set_scroll_top(&mut self, scroll_top: u32) {
+        self.scroll_top = scroll_top;
+    }
+
+    pub fn scroll_to_line(&mut self, line: u32) {
+        let height = self.viewport_height.max(1);
+        let min_scroll = line.saturating_add(1).saturating_sub(height);
+        let max_scroll = line;
+        self.scroll_top = self.scroll_top.clamp(min_scroll, max_scroll);
     }
 }
 

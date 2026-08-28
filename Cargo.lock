@@ -3638,6 +3638,7 @@ dependencies = [
  "sum_tree",
  "text",
  "vim-regex",
+ "vim-scanner",
 ]
 
 [[package]]

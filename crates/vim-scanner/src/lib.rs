@@ -51,7 +51,7 @@ impl DelimiterKind {
     pub fn is_quote(self) -> bool {
         matches!(
             self,
-            DelimiterKind::DoubleQuote | DelimiterKind::SingleQuote
+            DelimiterKind::DoubleQuote | DelimiterKind::SingleQuote | DelimiterKind::BackTick
         )
     }
 
@@ -169,6 +169,9 @@ impl StructuralScanner {
                         '\'' if stack.last().unwrap().kind == DelimiterKind::SingleQuote => {
                             Self::close(&mut stack, &mut matches, idx);
                         }
+                        '`' if stack.last().unwrap().kind == DelimiterKind::BackTick => {
+                            Self::close(&mut stack, &mut matches, idx);
+                        }
                         _ => {}
                     }
                     continue;
@@ -193,6 +196,10 @@ impl StructuralScanner {
                     }),
                     '\'' => stack.push(Delimiter {
                         kind: DelimiterKind::SingleQuote,
+                        start: idx,
+                    }),
+                    '`' => stack.push(Delimiter {
+                        kind: DelimiterKind::BackTick,
                         start: idx,
                     }),
                     '}' if stack
@@ -350,6 +357,20 @@ impl StructuralScanner {
                                     return Some(m);
                                 }
                             }
+                            '`' if stack.last().unwrap().kind == DelimiterKind::BackTick => {
+                                let open = stack.pop().unwrap();
+                                let m = MatchedDelimiter {
+                                    kind: open.kind,
+                                    start: open.start,
+                                    end: idx,
+                                };
+                                if m.start <= byte
+                                    && byte <= m.end
+                                    && (!block_only || m.kind.is_block())
+                                {
+                                    return Some(m);
+                                }
+                            }
                             _ => {}
                         }
                         continue;
@@ -374,6 +395,10 @@ impl StructuralScanner {
                         }),
                         '\'' => stack.push(Delimiter {
                             kind: DelimiterKind::SingleQuote,
+                            start: idx,
+                        }),
+                        '`' => stack.push(Delimiter {
+                            kind: DelimiterKind::BackTick,
                             start: idx,
                         }),
                         '}' if stack
@@ -500,6 +525,17 @@ mod tests {
         let m = scan.matches()[0];
         assert_eq!(m.kind, DelimiterKind::DoubleQuote);
         assert_eq!((m.start, m.end), (0, 5));
+    }
+
+    #[test]
+    fn backticks_are_parsed_and_ignore_inner_delimiters() {
+        let text = "a ` { b } \" ' ` c";
+        let scan = StructuralScanner::scan(text);
+        // Should only match the backtick string itself, ignoring '{', '}', '"', '\'' inside it
+        assert_eq!(scan.matches().len(), 1);
+        let m = scan.matches()[0];
+        assert_eq!(m.kind, DelimiterKind::BackTick);
+        assert_eq!((m.start, m.end), (2, 14));
     }
 
     #[test]

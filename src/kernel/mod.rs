@@ -9,8 +9,8 @@ pub mod command;
 pub mod events;
 pub mod ids;
 pub mod mode;
-pub mod outcome;
 pub mod options;
+pub mod outcome;
 pub mod transaction;
 pub mod window;
 
@@ -19,10 +19,11 @@ use vim_input::Action;
 
 use buffer::BufferStore;
 use command::CommandContext;
-use ids::{WindowId, TabPageId};
+use command::normal::motions::CharSearch;
+use ids::{TabPageId, WindowId};
 use mode::Mode;
-use outcome::Outcome;
 use options::GlobalOptions;
+use outcome::Outcome;
 use window::{
     Window, WindowStore,
     tabpage::{TabPage, TabStore},
@@ -37,6 +38,7 @@ pub struct Editor {
     mode: Mode,
     current: CommandContext,
     global_options: GlobalOptions,
+    last_char_search: Option<CharSearch>,
 }
 
 impl Editor {
@@ -45,7 +47,37 @@ impl Editor {
     pub fn new(initial_text: impl Into<String>) -> Self {
         let mut buffers = BufferStore::new();
         let buffer_id = buffers.insert(initial_text);
-        let buffer = buffers.get(buffer_id).expect("buffer just inserted");
+        Self::from_buffers(buffers, buffer_id)
+    }
+
+    /// Creates an editor by loading `paths` from disk (Vim's `vim file1
+    /// file2 ...` invocation). Each path is loaded, or -- if it doesn't
+    /// exist yet -- an empty buffer named after it is created instead,
+    /// matching Vim's "edit a new file" behavior; the first successfully
+    /// opened path becomes the buffer the initial window shows. Buffers for
+    /// any further paths are loaded into the buffer store but have no
+    /// window/tab of their own yet -- there is no arglist/`:next` command
+    /// to reach them until a later milestone adds one. With no paths at
+    /// all, starts on a single empty buffer, matching plain `vim`.
+    pub fn open(paths: &[std::path::PathBuf]) -> Self {
+        let mut buffers = BufferStore::new();
+        let mut first_buffer = None;
+        for path in paths {
+            let opened = buffers
+                .load(path)
+                .or_else(|_| buffers.create_named(path, ""));
+            if let Ok((id, _)) = opened {
+                first_buffer.get_or_insert(id);
+            }
+        }
+        let buffer_id = first_buffer.unwrap_or_else(|| buffers.insert(""));
+        Self::from_buffers(buffers, buffer_id)
+    }
+
+    /// Shared by `new`/`open`: wires an already-populated `buffers` store
+    /// into one window in one tab page focused on `buffer_id`.
+    fn from_buffers(buffers: BufferStore, buffer_id: BufferId) -> Self {
+        let buffer = buffers.get(buffer_id).expect("buffer just inserted/loaded");
 
         let mut windows = WindowStore::new();
         let window_id = windows.insert(Window::new(buffer_id, buffer));
@@ -64,6 +96,7 @@ impl Editor {
                 tab: tab_id,
             },
             global_options: GlobalOptions::default(),
+            last_char_search: None,
         }
     }
 
@@ -93,7 +126,6 @@ impl Editor {
         &self.tabs
     }
 
-
     pub fn buffer(&self, id: BufferId) -> Option<&Buffer> {
         self.buffers.get(id)
     }
@@ -118,6 +150,14 @@ impl Editor {
 
     pub(crate) fn global_options_mut(&mut self) -> &mut GlobalOptions {
         &mut self.global_options
+    }
+
+    pub fn last_char_search(&self) -> Option<CharSearch> {
+        self.last_char_search
+    }
+
+    pub(crate) fn set_last_char_search(&mut self, search: CharSearch) {
+        self.last_char_search = Some(search);
     }
 
     // -- Accessors for `kernel::command::*` family modules only. Kept
@@ -184,12 +224,11 @@ impl Editor {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use text::Point;
     use crate::kernel::outcome::Effect;
+    use text::Point;
 
     fn cursor(editor: &Editor) -> Point {
         let head = editor.current_window().selections().primary().head();
@@ -242,6 +281,178 @@ mod tests {
 
         editor.execute(Action::SetToNormal);
         assert_eq!(editor.mode(), Mode::Normal);
+    }
+
+    /// `H`/`M`/`L` are relative to the window's own scroll/viewport state,
+    /// not the buffer as a whole — set both explicitly and check each
+    /// lands on the expected line.
+    #[test]
+    fn screen_relative_motions_use_the_window_viewport() {
+        let mut editor = Editor::new("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+        let window = editor.current_context().window;
+        {
+            let win = editor.windows_mut().get_mut(window).expect("live window");
+            win.set_viewport_height(4);
+            win.set_scroll_top(2);
+        }
+
+        editor.execute(Action::MoveToScreenTop {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(2, 0));
+
+        editor.execute(Action::MoveToScreenMiddle {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(4, 0));
+
+        editor.execute(Action::MoveToScreenBottom {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(5, 0));
+    }
+
+    /// `Ctrl-d`/`Ctrl-u` scroll half the viewport and move the cursor with
+    /// it, matching vanilla Vim.
+    #[test]
+    fn scroll_half_page_down_and_up_move_viewport_and_cursor() {
+        let mut editor = Editor::new("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+        let window = editor.current_context().window;
+        {
+            let win = editor.windows_mut().get_mut(window).expect("live window");
+            win.set_viewport_height(6);
+        }
+
+        editor.execute(Action::ScrollHalfPageDown { count: 1 });
+        assert_eq!(cursor(&editor), Point::new(3, 0));
+        assert_eq!(editor.window(window).expect("live window").scroll_top(), 3);
+
+        editor.execute(Action::ScrollHalfPageUp { count: 1 });
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert_eq!(editor.window(window).expect("live window").scroll_top(), 0);
+    }
+
+    /// `;`/`,` repeat the last `f`/`F`/`t`/`T` search — `;` the same
+    /// direction, `,` the opposite — and no-op before any search happened.
+    #[test]
+    fn semicolon_and_comma_repeat_or_reverse_the_last_character_search() {
+        let mut editor = Editor::new("a-b-c-d");
+
+        // No prior search: no-op, no panic.
+        let outcome = editor.execute(Action::RepeatCharacterSearchForward {
+            count: 1,
+            select: false,
+        });
+        assert!(!outcome.mutated);
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+
+        // `f-` lands on the first `-`.
+        editor.execute(Action::MoveToNextCharacter {
+            count: 1,
+            ch: '-',
+            till: false,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 1));
+
+        // `;` repeats forward to the next `-`.
+        editor.execute(Action::RepeatCharacterSearchForward {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 3));
+
+        // `,` reverses direction, searching backward for the same `-`.
+        editor.execute(Action::RepeatCharacterSearchBackward {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 1));
+    }
+
+    /// Regression test: `Action::MoveToWord` (Vim's `w`) must always
+    /// advance to the *next* word, even starting from a word's first
+    /// character -- it must never no-op there. `SelectionSet::move_to_word`
+    /// (the word *containing* the cursor) looks like the obvious method to
+    /// reach for but doesn't advance in that case; `motions::move_to_word`
+    /// must use `move_to_next_word` instead (the same distinction
+    /// `operators.rs`'s `motion_target` already documents for `dw`).
+    #[test]
+    fn bare_w_motion_always_advances_to_the_next_word() {
+        let mut editor = Editor::new("foo bar baz");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+
+        // Cursor starts on "foo"'s first character -- `w` must still move
+        // forward to "bar", not stay put.
+        editor.execute(Action::MoveToWord {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 4));
+
+        editor.execute(Action::MoveToWord {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 8));
+    }
+
+    /// `Editor::open` should behave like `vim file1 file2`: load real file
+    /// content into the initial window's buffer, fall back to an empty
+    /// named buffer for a path that doesn't exist yet, and default to a
+    /// single empty buffer when given no paths at all.
+    #[test]
+    fn open_loads_real_file_content_into_the_initial_window() {
+        let dir = std::env::temp_dir().join(format!("nxvim-open-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let existing = dir.join("existing.txt");
+        std::fs::write(&existing, "loaded from disk\nsecond line\n").expect("write fixture");
+        let missing = dir.join("does-not-exist-yet.txt");
+
+        let editor = Editor::open(&[existing.clone()]);
+        assert_eq!(text_of(&editor), "loaded from disk\nsecond line\n");
+        assert_eq!(
+            editor.current_buffer().path(),
+            Some(existing.as_path()),
+            "the loaded buffer must remember the path it came from, so :w has\n             somewhere to save back to"
+        );
+
+        let editor = Editor::open(&[missing.clone()]);
+        assert_eq!(
+            text_of(&editor),
+            "",
+            "a path that doesn't exist yet opens an empty buffer, matching Vim"
+        );
+        assert_eq!(editor.current_buffer().path(), Some(missing.as_path()));
+
+        let editor = Editor::open(&[]);
+        assert_eq!(text_of(&editor), "");
+        assert_eq!(editor.current_buffer().path(), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Multiple paths on one invocation (`vim a.txt b.txt`): the *first*
+    /// successfully opened path becomes the buffer the initial window
+    /// shows, matching Vim's default (no `-o`/`-p`) behavior; the rest are
+    /// still loaded into the buffer store.
+    #[test]
+    fn open_with_multiple_paths_shows_the_first_one() {
+        let dir = std::env::temp_dir().join(format!("nxvim-open-multi-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let first = dir.join("first.txt");
+        let second = dir.join("second.txt");
+        std::fs::write(&first, "first file\n").expect("write fixture");
+        std::fs::write(&second, "second file\n").expect("write fixture");
+
+        let editor = Editor::open(&[first.clone(), second.clone()]);
+        assert_eq!(text_of(&editor), "first file\n");
+        assert_eq!(editor.current_buffer().path(), Some(first.as_path()));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn text_of(editor: &Editor) -> String {
@@ -310,21 +521,46 @@ mod tests {
         editor.execute(Action::SplitVertical { file_path: None });
         let split_win = editor.current_context().window;
         assert_ne!(initial_win, split_win, "split should create a new window");
-        assert_eq!(editor.current_context().buffer, initial_buf, "split window should share same buffer");
+        assert_eq!(
+            editor.current_context().buffer,
+            initial_buf,
+            "split window should share same buffer"
+        );
 
-        editor.execute(Action::MoveDown { count: 1, select: false });
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: false,
+        });
         assert_eq!(cursor(&editor), Point::new(1, 0));
 
         editor.execute(Action::FocusLeftWindow);
-        assert_eq!(editor.current_context().window, initial_win, "focus should move to left window");
-        assert_eq!(cursor(&editor), Point::new(0, 0), "original window cursor should be unaffected");
+        assert_eq!(
+            editor.current_context().window,
+            initial_win,
+            "focus should move to left window"
+        );
+        assert_eq!(
+            cursor(&editor),
+            Point::new(0, 0),
+            "original window cursor should be unaffected"
+        );
 
         editor.execute(Action::FocusRightWindow);
         assert_eq!(editor.current_context().window, split_win);
         editor.execute(Action::CloseWindow);
-        assert_eq!(editor.current_context().window, initial_win, "focus should revert to sibling window");
-        assert!(editor.window(split_win).is_none(), "closed window should be removed from store");
-        assert!(editor.buffer(initial_buf).is_some(), "buffer should not be destroyed by closing window");
+        assert_eq!(
+            editor.current_context().window,
+            initial_win,
+            "focus should revert to sibling window"
+        );
+        assert!(
+            editor.window(split_win).is_none(),
+            "closed window should be removed from store"
+        );
+        assert!(
+            editor.buffer(initial_buf).is_some(),
+            "buffer should not be destroyed by closing window"
+        );
     }
 
     #[test]
@@ -355,7 +591,10 @@ mod tests {
 
     #[test]
     fn command_line_ex_admission_smoke_test() {
-        use crate::kernel::{events::EditorEvent, outcome::{Effect, RedrawInvalidation}};
+        use crate::kernel::{
+            events::EditorEvent,
+            outcome::{Effect, RedrawInvalidation},
+        };
 
         // 1. A range delete deletes exactly those lines
         let mut editor = Editor::new("line1\nline2\nline3\nline4");
@@ -389,7 +628,7 @@ mod tests {
         // 4. Entering Command mode, typing, cancelling with Esc returns to Normal
         let mut editor = Editor::new("line1");
         assert_eq!(editor.mode(), Mode::Normal);
-        
+
         let outcome = editor.execute(Action::SetToCommand);
         assert_eq!(editor.mode(), Mode::Command);
         assert!(outcome.mode_changed);
@@ -404,22 +643,28 @@ mod tests {
         use crate::kernel::outcome::Effect;
         use std::fs;
 
-        let temp_file_path = std::env::temp_dir().join(format!("test_file_{}.txt", rand::random::<u64>()));
+        let temp_file_path =
+            std::env::temp_dir().join(format!("test_file_{}.txt", rand::random::<u64>()));
 
         // 1. :w <path> on unnamed buffer writes content
         let mut editor = Editor::new("hello write command");
-        let outcome = editor.submit_command_line(&format!("w {}", temp_file_path.to_str().unwrap()));
-        
+        let outcome =
+            editor.submit_command_line(&format!("w {}", temp_file_path.to_str().unwrap()));
+
         assert!(!outcome.mutated);
         assert!(outcome.events.is_empty());
         assert_eq!(outcome.effects.len(), 1);
-        if let Effect::FileSaved { path, bytes_written } = &outcome.effects[0] {
+        if let Effect::FileSaved {
+            path,
+            bytes_written,
+        } = &outcome.effects[0]
+        {
             assert_eq!(path, &temp_file_path);
             assert_eq!(*bytes_written, 20); // 19 chars + 1 newline
         } else {
             panic!("Expected Effect::FileSaved, got {:?}", outcome.effects[0]);
         }
-        
+
         let file_content = fs::read_to_string(&temp_file_path).unwrap();
         assert_eq!(file_content.trim_end(), "hello write command");
 
@@ -431,7 +676,11 @@ mod tests {
 
         let outcome = editor.submit_command_line("w");
         assert!(!outcome.mutated);
-        if let Effect::FileSaved { path, bytes_written } = &outcome.effects[0] {
+        if let Effect::FileSaved {
+            path,
+            bytes_written,
+        } = &outcome.effects[0]
+        {
             assert_eq!(path, &temp_file_path);
             assert_eq!(*bytes_written, 24); // 23 chars + 1 newline
         } else {
@@ -444,7 +693,9 @@ mod tests {
         let _ = fs::remove_file(&temp_file_path);
 
         // 3. :w against an unwritable path produces Effect::FileSaveFailed
-        let bad_path = std::env::temp_dir().join("nonexistent_dir_12345").join("file.txt");
+        let bad_path = std::env::temp_dir()
+            .join("nonexistent_dir_12345")
+            .join("file.txt");
         let outcome = editor.submit_command_line(&format!("w {}", bad_path.to_str().unwrap()));
         assert!(!outcome.mutated);
         assert_eq!(outcome.effects.len(), 1);
@@ -452,7 +703,8 @@ mod tests {
 
         // 4. :w! forces a write past a buffer whose options().readonly is set, where bare :w fails
         let mut editor = Editor::new("readonly test");
-        let ro_file_path = std::env::temp_dir().join(format!("readonly_file_{}.txt", rand::random::<u64>()));
+        let ro_file_path =
+            std::env::temp_dir().join(format!("readonly_file_{}.txt", rand::random::<u64>()));
 
         // First write to set a name and create the file
         let outcome = editor.submit_command_line(&format!("w {}", ro_file_path.to_str().unwrap()));
@@ -476,9 +728,16 @@ mod tests {
         assert!(!outcome.mutated);
         assert_eq!(outcome.effects.len(), 1);
         if let Effect::FileSaveFailed { message } = &outcome.effects[0] {
-            assert!(message.to_lowercase().contains("readonly"), "Expected readonly error, got: {}", message);
+            assert!(
+                message.to_lowercase().contains("readonly"),
+                "Expected readonly error, got: {}",
+                message
+            );
         } else {
-            panic!("Expected Effect::FileSaveFailed, got {:?}", outcome.effects[0]);
+            panic!(
+                "Expected Effect::FileSaveFailed, got {:?}",
+                outcome.effects[0]
+            );
         }
 
         // Forced :w! should succeed
@@ -493,4 +752,3 @@ mod tests {
         let _ = fs::remove_file(&ro_file_path);
     }
 }
-

@@ -535,6 +535,32 @@ impl SelectionSet {
         }
     }
 
+    pub fn move_to_matching_delimiter(&mut self, anchor: bool, buffer: &Buffer) {
+        let cursors = self.selections.clone();
+        for cursor in cursors.iter() {
+            let next = cursor.clone().move_to_matching_delimiter(anchor, buffer);
+            self.update(buffer, &next);
+        }
+    }
+
+    pub fn move_to_column(&mut self, anchor: bool, column: u32, buffer: &Buffer) {
+        let cursors = self.selections.clone();
+        for cursor in cursors.iter() {
+            let next = cursor.clone().move_to_column(anchor, column, buffer);
+            self.update(buffer, &next);
+        }
+    }
+
+    pub fn move_to_last_non_whitespace(&mut self, anchor: bool, count: u32, buffer: &Buffer) {
+        let cursors = self.selections.clone();
+        for cursor in cursors.iter() {
+            let next = cursor
+                .clone()
+                .move_to_last_non_whitespace(anchor, count, buffer);
+            self.update(buffer, &next);
+        }
+    }
+
     pub fn move_within_character(&mut self, anchor: bool, count: u32, ch: char, buffer: &Buffer) {
         let cursors = self.selections.clone();
         for cursor in cursors.iter() {

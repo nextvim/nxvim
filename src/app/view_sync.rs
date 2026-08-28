@@ -10,6 +10,7 @@ pub struct WindowProjection {
     pub snapshot: text::BufferSnapshot,
     pub selections: SelectionSet,
     pub is_current: bool,
+    pub scroll_top: u32,
 }
 
 /// Project the kernel's active window layout into a vector of read-only projections.
@@ -29,6 +30,7 @@ pub fn project(editor: &Editor) -> Vec<WindowProjection> {
                     snapshot: buf.snapshot().into_inner(),
                     selections: win.selections().clone(),
                     is_current: id == current_ctx.window,
+                    scroll_top: win.scroll_top(),
                 });
             }
         }

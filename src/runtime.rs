@@ -12,18 +12,29 @@ use crossterm::event::{self, Event};
 use crate::app::{App, input::InputTranslator};
 use crate::view;
 
-pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut impl Write) -> io::Result<()> {
+pub fn run(
+    app: &mut App,
+    session: &crate::terminal::TerminalSession,
+    out: &mut impl Write,
+) -> io::Result<()> {
     let mut screen = session.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
     let mut input = InputTranslator::with_mappings(app.shared_keymaps());
     let mut render_state = view::RenderState::new();
     // Temporary debug status (mode + last resolved action), see `view::render`.
     let mut status = format!("-- {:?} -- last: (none)", app.editor().mode());
     let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
-        Some(app.prompt().text())
+        Some(app.prompt().text().to_string())
     } else {
         None
     };
-    view::render(out, app.editor(), &mut render_state, &status, prompt_opt, screen)?;
+    view::render(
+        out,
+        app.editor_mut(),
+        &mut render_state,
+        &status,
+        prompt_opt.as_deref(),
+        screen,
+    )?;
 
     loop {
         if !event::poll(Duration::from_millis(50))? {
@@ -34,11 +45,18 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
         if let Event::Resize(columns, rows) = ev {
             screen = vim_ui::Rect::new(0, 0, columns, rows);
             let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
-                Some(app.prompt().text())
+                Some(app.prompt().text().to_string())
             } else {
                 None
             };
-            view::render(out, app.editor(), &mut render_state, &status, prompt_opt, screen)?;
+            view::render(
+                out,
+                app.editor_mut(),
+                &mut render_state,
+                &status,
+                prompt_opt.as_deref(),
+                screen,
+            )?;
             continue;
         }
 
@@ -81,10 +99,17 @@ pub fn run(app: &mut App, session: &crate::terminal::TerminalSession, out: &mut 
         }
 
         let prompt_opt = if app.editor().mode() == crate::kernel::mode::Mode::Command {
-            Some(app.prompt().text())
+            Some(app.prompt().text().to_string())
         } else {
             None
         };
-        view::render(out, app.editor(), &mut render_state, &status, prompt_opt, screen)?;
+        view::render(
+            out,
+            app.editor_mut(),
+            &mut render_state,
+            &status,
+            prompt_opt.as_deref(),
+            screen,
+        )?;
     }
 }

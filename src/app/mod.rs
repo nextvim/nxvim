@@ -4,6 +4,7 @@
 //! `Editor::execute()` calls. No queues, no services, no script host yet —
 //! those arrive with the milestones that need them.
 
+pub mod args;
 pub mod input;
 pub mod prompt;
 pub mod request;
@@ -25,9 +26,21 @@ pub struct App {
 
 impl App {
     pub fn new(initial_text: impl Into<String>) -> Self {
-        let editor = Editor::new(initial_text);
+        Self::from_editor(Editor::new(initial_text))
+    }
+
+    /// Creates an app by loading `paths` from disk as the initial editor
+    /// state (see `kernel::Editor::open`) — what `main.rs` uses for real
+    /// command-line file arguments. `App::new` (seeded in-memory text)
+    /// stays the constructor used by tests and the no-args placeholder.
+    pub fn open(paths: &[std::path::PathBuf]) -> Self {
+        Self::from_editor(Editor::open(paths))
+    }
+
+    fn from_editor(editor: Editor) -> Self {
         let prompt = CommandPrompt::new();
-        let keymaps = std::sync::Arc::new(std::sync::RwLock::new(vim_input::MappingStore::default()));
+        let keymaps =
+            std::sync::Arc::new(std::sync::RwLock::new(vim_input::MappingStore::default()));
         let host = std::sync::Arc::new(script_host::NullHost);
         let script = crate::script::ScriptHost::new(host, keymaps);
 
@@ -45,6 +58,10 @@ impl App {
 
     pub fn editor(&self) -> &Editor {
         &self.editor
+    }
+
+    pub fn editor_mut(&mut self) -> &mut Editor {
+        &mut self.editor
     }
 
     pub fn prompt(&self) -> &CommandPrompt {
@@ -70,12 +87,12 @@ impl App {
             input::RawKey::Enter => {
                 let line = self.prompt.take();
                 let mut outcome = self.handle_submitted_line(&line);
-                
+
                 // Return the editor to Normal mode via Clear
                 let _exit_outcome = self.editor.execute(Action::Clear);
                 outcome.mode_changed = true;
                 outcome.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
-                
+
                 self.process_autocommands(&outcome);
                 outcome
             }
@@ -115,7 +132,10 @@ impl App {
 
         let ctx = self.editor.current_context();
         let outcome = crate::kernel::command::ex::admit_command(&mut self.editor, ctx, expanded);
-        if outcome.effects.contains(&crate::kernel::outcome::Effect::Quit) {
+        if outcome
+            .effects
+            .contains(&crate::kernel::outcome::Effect::Quit)
+        {
             self.pending_request = Some(AppRequest::Quit);
         }
         for effect in &outcome.effects {
@@ -260,7 +280,10 @@ mod tests {
             resolved.action,
             Action::DeleteMotion {
                 count: 1,
-                motion: Box::new(Action::MoveToWord { count: 1, select: false })
+                motion: Box::new(Action::MoveToWord {
+                    count: 1,
+                    select: false
+                })
             }
         );
 

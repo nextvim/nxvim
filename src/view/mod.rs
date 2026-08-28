@@ -42,7 +42,7 @@ impl RenderState {
 /// Renders all windows in the active tab page according to the layout tree and projection state.
 pub fn render(
     out: &mut impl Write,
-    editor: &crate::kernel::Editor,
+    editor: &mut crate::kernel::Editor,
     render_state: &mut RenderState,
     status: &str,
     prompt: Option<&str>,
@@ -112,15 +112,18 @@ pub fn render(
         let buffer_row_count = projection.snapshot.row_count();
         cache.display_map.sync_hot_window(projection.snapshot.clone(), 0..buffer_row_count);
 
-        // Update display map's scroll to center cursor or ensure it is visible
+        if let Some(win) = editor.windows_mut().get_mut(projection.window) {
+            win.set_viewport_height(rect.height as u32);
+        }
+
+        // Update display map's scroll from the window's authoritative scroll top
+        cache.display_map.scroll_y = projection.scroll_top;
+
         // Convert selections
         use text::ToOffset;
         let primary_sel = projection.selections.primary();
         let head_point = projection.snapshot.offset_to_point(primary_sel.head().to_offset(&projection.snapshot));
         let display_cursor = cache.display_map.snapshot().point_to_display_point(head_point);
-
-        // Scroll to cursor
-        cache.display_map.scroll_to_cursor(display_cursor, rect.height as i32, rect.width as i32);
 
         let snapshot = cache.display_map.snapshot();
 

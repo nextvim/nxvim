@@ -32,16 +32,144 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::SplitVertical { .. } => windows::split_vertical(editor, ctx),
         Action::CloseWindow => windows::close_window(editor, ctx),
         Action::OnlyWindow => windows::only_window(editor, ctx),
-        Action::FocusLeftWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Left),
-        Action::FocusRightWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Right),
-        Action::FocusUpWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Up),
-        Action::FocusDownWindow => windows::focus_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Down),
+        Action::FocusLeftWindow => windows::focus_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Left,
+        ),
+        Action::FocusRightWindow => windows::focus_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Right,
+        ),
+        Action::FocusUpWindow => windows::focus_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Up,
+        ),
+        Action::FocusDownWindow => windows::focus_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Down,
+        ),
         Action::NextTab { count } => windows::next_tab(editor, count),
         Action::PreviousTab { count } => windows::previous_tab(editor, count),
+        Action::MoveToWord { count, select } => {
+            motions::move_to_word(editor, ctx.window, count, select)
+        }
+        Action::MoveToPreviousWord { count, select } => {
+            motions::move_to_previous_word(editor, ctx.window, count, select)
+        }
+        Action::MoveToWordEnd { count, select } => {
+            motions::move_to_word_end(editor, ctx.window, count, select)
+        }
+        Action::MoveToPreviousWordEnd { count, select } => {
+            motions::move_to_previous_word_end(editor, ctx.window, count, select)
+        }
+        Action::MoveToBigWord { count, select } => {
+            motions::move_to_big_word(editor, ctx.window, count, select)
+        }
+        Action::MoveToPreviousBigWord { count, select } => {
+            motions::move_to_previous_big_word(editor, ctx.window, count, select)
+        }
+        Action::MoveToBigWordEnd { count, select } => {
+            motions::move_to_big_word_end(editor, ctx.window, count, select)
+        }
+        Action::MoveToPreviousBigWordEnd { count, select } => {
+            motions::move_to_previous_big_word_end(editor, ctx.window, count, select)
+        }
+        Action::MoveToStartOfDocument { select, .. } => {
+            motions::move_to_start_of_document(editor, ctx.window, select)
+        }
+        Action::MoveToEndOfDocument { select, .. } => {
+            motions::move_to_end_of_document(editor, ctx.window, select)
+        }
+        Action::MoveToLine { line, select } => {
+            motions::move_to_line(editor, ctx.window, line, select)
+        }
+        Action::MoveToStartOfLine { select, .. } => {
+            motions::move_to_start_of_line(editor, ctx.window, select)
+        }
+        Action::MoveToStartOfLineNonSpace { select, .. } => {
+            motions::move_to_start_of_line_non_space(editor, ctx.window, select)
+        }
+        Action::MoveToEndOfLine { select, .. } => {
+            motions::move_to_end_of_line(editor, ctx.window, select)
+        }
+        Action::MoveToStartOfPreviousLine { select, .. } => {
+            motions::move_to_start_of_previous_line(editor, ctx.window, select)
+        }
+        Action::MoveToEndOfPreviousLine { select, .. } => {
+            motions::move_to_end_of_previous_line(editor, ctx.window, select)
+        }
+        Action::MoveToStartOfNextLine { select, .. } => {
+            motions::move_to_start_of_next_line(editor, ctx.window, select)
+        }
+        Action::MoveToEndOfNextLine { select, .. } => {
+            motions::move_to_end_of_next_line(editor, ctx.window, select)
+        }
+        Action::MoveToPreviousParagraph { count, select } => {
+            motions::move_to_previous_paragraph(editor, ctx.window, count, select)
+        }
+        Action::MoveToNextParagraph { count, select } => {
+            motions::move_to_next_paragraph(editor, ctx.window, count, select)
+        }
+        Action::MoveToPreviousSentence { count, select } => {
+            motions::move_to_previous_sentence(editor, ctx.window, count, select)
+        }
+        Action::MoveToNextSentence { count, select } => {
+            motions::move_to_next_sentence(editor, ctx.window, count, select)
+        }
+        Action::MoveToMatchingDelimiter { select, .. } => {
+            motions::move_to_matching_delimiter(editor, ctx.window, select)
+        }
+        Action::MoveToColumn { count } => motions::move_to_column(editor, ctx.window, count, false),
+        Action::MoveToLastNonWhitespace { count, select } => {
+            motions::move_to_last_non_whitespace(editor, ctx.window, count, select)
+        }
+        Action::MoveToScreenTop { select, .. } => {
+            motions::move_to_screen_top(editor, ctx.window, select)
+        }
+        Action::MoveToScreenMiddle { select, .. } => {
+            motions::move_to_screen_middle(editor, ctx.window, select)
+        }
+        Action::MoveToScreenBottom { select, .. } => {
+            motions::move_to_screen_bottom(editor, ctx.window, select)
+        }
+        Action::ScrollLineDown { count } => motions::scroll_line_down(editor, ctx.window, count),
+        Action::ScrollLineUp { count } => motions::scroll_line_up(editor, ctx.window, count),
+        Action::ScrollHalfPageDown { count } => {
+            motions::scroll_half_page_down(editor, ctx.window, count)
+        }
+        Action::ScrollHalfPageUp { count } => {
+            motions::scroll_half_page_up(editor, ctx.window, count)
+        }
+        Action::ScrollForward { count } => motions::scroll_forward(editor, ctx.window, count),
+        Action::ScrollBackward { count } => motions::scroll_backward(editor, ctx.window, count),
+        Action::CenterCursorLine => motions::center_cursor_line(editor, ctx.window),
+        Action::CursorLineTop => motions::cursor_line_top(editor, ctx.window),
+        Action::CursorLineBottom => motions::cursor_line_bottom(editor, ctx.window),
+        Action::MoveToNextCharacter {
+            count,
+            ch,
+            till,
+            select,
+        } => motions::find_character(editor, ctx.window, count, ch, true, till, select),
+        Action::MoveToPreviousCharacter {
+            count,
+            ch,
+            till,
+            select,
+        } => motions::find_character(editor, ctx.window, count, ch, false, till, select),
+        Action::RepeatCharacterSearchForward { count, select } => {
+            motions::repeat_character_search(editor, ctx.window, count, false, select)
+        }
+        Action::RepeatCharacterSearchBackward { count, select } => {
+            motions::repeat_character_search(editor, ctx.window, count, true, select)
+        }
         _ => Outcome::default(),
     }
 }
-
 
 fn undo(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     replay_history(editor, window, count, transaction::undo)

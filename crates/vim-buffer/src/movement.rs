@@ -141,6 +141,15 @@ pub trait Motions {
         buffer: &Buffer,
     ) -> Option<Selection<Anchor>>;
 
+    fn move_to_matching_delimiter(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor>;
+    fn move_to_column(&self, anchor: bool, column: u32, buffer: &Buffer) -> Selection<Anchor>;
+    fn move_to_last_non_whitespace(
+        &self,
+        anchor: bool,
+        count: u32,
+        buffer: &Buffer,
+    ) -> Selection<Anchor>;
+
     fn move_within_character(
         &self,
         anchor: bool,
@@ -968,6 +977,109 @@ impl Motions for Selection<Anchor> {
         return None;
     }
 
+    fn move_to_matching_delimiter(&self, anchor: bool, buffer: &Buffer) -> Selection<Anchor> {
+        let point = self.head().to_point(buffer);
+        let row_text = buffer.row_text(point.row);
+        let mut target_col = None;
+        for (idx, ch) in row_text.char_indices() {
+            if idx >= point.column as usize {
+                if "(){}[]".contains(ch) {
+                    target_col = Some(idx);
+                    break;
+                }
+            }
+        }
+        let Some(col) = target_col else {
+            return self.clone();
+        };
+        let bracket_point = Point::new(point.row, col as u32);
+        let byte = bracket_point.to_offset(buffer);
+
+        if let Some(matched) = vim_scanner::StructuralScanner::scan_rows_for_enclosing(
+            buffer,
+            0,
+            buffer.row_count(),
+            byte,
+            true, // block_only
+        ) {
+            let new_byte = if byte == matched.start {
+                matched.end
+            } else if byte == matched.end {
+                matched.start
+            } else {
+                return self.clone();
+            };
+            let new_point = new_byte.to_point(buffer);
+            let offset = new_point.to_offset(buffer);
+            let new_head = buffer.anchor_at(offset, Bias::Left);
+            Selection {
+                id: self.id,
+                start: new_head,
+                end: if anchor { self.tail() } else { new_head },
+                reversed: true,
+                goal: SelectionGoal::None,
+            }
+        } else {
+            self.clone()
+        }
+    }
+
+    fn move_to_column(&self, anchor: bool, column: u32, buffer: &Buffer) -> Selection<Anchor> {
+        let mut point = self.head().to_point(buffer);
+        let row_text = buffer.row_text(point.row);
+        let mut target_col = 0;
+        let mut col_count = 0;
+        for (idx, _ch) in row_text.char_indices() {
+            col_count += 1;
+            if col_count == column {
+                target_col = idx;
+                break;
+            }
+            target_col = idx;
+        }
+        point.column = target_col as u32;
+        point = buffer.clip_point(point, self.head().bias);
+        let offset = point.to_offset(buffer);
+        let new_head = buffer.anchor_at(offset, Bias::Left);
+        Selection {
+            id: self.id,
+            start: new_head,
+            end: if anchor { self.tail() } else { new_head },
+            reversed: true,
+            goal: SelectionGoal::None,
+        }
+    }
+
+    fn move_to_last_non_whitespace(
+        &self,
+        anchor: bool,
+        count: u32,
+        buffer: &Buffer,
+    ) -> Selection<Anchor> {
+        let mut point = self.head().to_point(buffer);
+        let last_row = buffer.row_count().saturating_sub(1);
+        point.row = point
+            .row
+            .saturating_add(count.saturating_sub(1))
+            .min(last_row);
+        let row_text = buffer.row_text(point.row);
+        point.column = row_text
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| (!ch.is_whitespace()).then_some(idx as u32))
+            .unwrap_or(0);
+        point = buffer.clip_point(point, self.head().bias);
+        let offset = point.to_offset(buffer);
+        let new_head = buffer.anchor_at(offset, Bias::Left);
+        Selection {
+            id: self.id,
+            start: new_head,
+            end: if anchor { self.tail() } else { new_head },
+            reversed: true,
+            goal: SelectionGoal::None,
+        }
+    }
+
     fn move_within_character(
         &self,
         _anchor: bool,
@@ -1494,5 +1606,50 @@ mod tests {
         // The selection should have moved to the start of "pattern_here" (line 1, column 0)
         let head_pt = selections.selections[0].head().to_point(&buffer);
         assert_eq!(head_pt, Point::new(1, 0));
+    }
+
+    #[test]
+    fn test_matching_delimiter() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            "{\n  ( [x] )\n}",
+        );
+        let cursor = selection(&buffer, 0, 0, 0, false);
+        let cursor = cursor.move_to_matching_delimiter(false, &buffer);
+        assert_eq!(cursor.head().to_point(&buffer), Point::new(2, 0));
+
+        // Cursor on '(' (byte 4, row 1 col 2) jumps to its matching ')' (byte 10, row 1 col 8).
+        let cursor2 = selection(&buffer, 0, 4, 4, false);
+        let cursor2 = cursor2.move_to_matching_delimiter(false, &buffer);
+        assert_eq!(cursor2.head().to_point(&buffer), Point::new(1, 8));
+
+        // Cursor on the space before '[' (byte 5) scans forward to '[' (byte 6) and
+        // jumps to its matching ']' (byte 8, row 1 col 6).
+        let cursor3 = selection(&buffer, 0, 5, 5, false);
+        let cursor3 = cursor3.move_to_matching_delimiter(false, &buffer);
+        assert_eq!(cursor3.head().to_point(&buffer), Point::new(1, 6));
+    }
+
+    #[test]
+    fn matching_delimiter_is_a_no_op_without_a_bracket_or_partner() {
+        // No bracket anywhere on the cursor's line: no movement.
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "plain text\n");
+        let cursor = selection(&buffer, 0, 0, 0, false);
+        let moved = cursor.clone().move_to_matching_delimiter(false, &buffer);
+        assert_eq!(
+            moved.head().to_point(&buffer),
+            cursor.head().to_point(&buffer)
+        );
+
+        // An unmatched opening bracket: the scan finds no enclosing pair, so
+        // the cursor doesn't move either.
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "foo (bar\n");
+        let cursor = selection(&buffer, 0, 0, 0, false);
+        let moved = cursor.clone().move_to_matching_delimiter(false, &buffer);
+        assert_eq!(
+            moved.head().to_point(&buffer),
+            cursor.head().to_point(&buffer)
+        );
     }
 }

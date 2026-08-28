@@ -16,6 +16,7 @@ proptest = { version = "1.9", optional = true }
 sum_tree = { path = "../zed/crates/sum_tree" }
 text = { path = "../zed/crates/text" }
 vim-regex = { path = "../vim-regex" }
+vim-scanner = { path = "../vim-scanner" }
 
 [[test]]
 name = "phase1_properties"
