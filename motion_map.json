@@ -1,0 +1,282 @@
+[
+  {
+    "keys": "w",
+    "action": "MoveToWord",
+    "func": "move_to_word"
+  },
+  {
+    "keys": "e",
+    "action": "MoveToWordEnd",
+    "func": "move_to_word_end"
+  },
+  {
+    "keys": "b",
+    "action": "MoveToPreviousWord",
+    "func": "move_to_previous_word"
+  },
+  {
+    "keys": "ge",
+    "action": "MoveToPreviousWordEnd",
+    "func": "move_to_previous_word_end"
+  },
+  {
+    "keys": "gE",
+    "action": "MoveToPreviousBigWordEnd",
+    "func": "move_to_previous_big_word_end"
+  },
+  {
+    "keys": "W",
+    "action": "MoveToBigWord",
+    "func": "move_to_big_word"
+  },
+  {
+    "keys": "B",
+    "action": "MoveToPreviousBigWord",
+    "func": "move_to_previous_big_word"
+  },
+  {
+    "keys": "E",
+    "action": "MoveToBigWordEnd",
+    "func": "move_to_big_word_end"
+  },
+  {
+    "keys": "h",
+    "action": "MoveLeft",
+    "func": "move_left"
+  },
+  {
+    "keys": "l",
+    "action": "MoveRight",
+    "func": "move_right"
+  },
+  {
+    "keys": "k",
+    "action": "MoveUp",
+    "func": "move_up"
+  },
+  {
+    "keys": "j",
+    "action": "MoveDown",
+    "func": "move_down"
+  },
+  {
+    "keys": "<Left>",
+    "action": "MoveLeft",
+    "func": "move_left"
+  },
+  {
+    "keys": "<Right>",
+    "action": "MoveRight",
+    "func": "move_right"
+  },
+  {
+    "keys": "<Up>",
+    "action": "MoveUp",
+    "func": "move_up"
+  },
+  {
+    "keys": "<Down>",
+    "action": "MoveDown",
+    "func": "move_down"
+  },
+  {
+    "keys": "<PageUp>",
+    "action": "MovePageUp",
+    "func": "move_page_up"
+  },
+  {
+    "keys": "<PageDown>",
+    "action": "MovePageDown",
+    "func": "move_page_down"
+  },
+  {
+    "keys": "gg",
+    "action": "MoveToStartOfDocument",
+    "func": "move_to_start_of_document"
+  },
+  {
+    "keys": "G",
+    "action": "MoveToEndOfDocument",
+    "func": "move_to_end_of_document"
+  },
+  {
+    "keys": "0",
+    "action": "MoveToStartOfLine",
+    "func": "move_to_start_of_line"
+  },
+  {
+    "keys": "^",
+    "action": "MoveToStartOfLineNonSpace",
+    "func": "move_to_start_of_line_non_space"
+  },
+  {
+    "keys": "$",
+    "action": "MoveToEndOfLine",
+    "func": "move_to_end_of_line"
+  },
+  {
+    "keys": "g_",
+    "action": "MoveToLastNonWhitespace",
+    "func": "move_to_last_non_whitespace"
+  },
+  {
+    "keys": "%",
+    "action": "MoveToMatchingDelimiter",
+    "func": "move_to_matching_delimiter"
+  },
+  {
+    "keys": "-",
+    "action": "MoveToStartOfPreviousLine",
+    "func": "move_to_start_of_previous_line"
+  },
+  {
+    "keys": "+",
+    "action": "MoveToStartOfNextLine",
+    "func": "move_to_start_of_next_line"
+  },
+  {
+    "keys": "g-",
+    "action": "MoveToEndOfPreviousLine",
+    "func": "move_to_end_of_previous_line"
+  },
+  {
+    "keys": "g+",
+    "action": "MoveToEndOfNextLine",
+    "func": "move_to_end_of_next_line"
+  },
+  {
+    "keys": "H",
+    "action": "MoveToScreenTop",
+    "func": "move_to_screen_top"
+  },
+  {
+    "keys": "M",
+    "action": "MoveToScreenMiddle",
+    "func": "move_to_screen_middle"
+  },
+  {
+    "keys": "L",
+    "action": "MoveToScreenBottom",
+    "func": "move_to_screen_bottom"
+  },
+  {
+    "keys": "{",
+    "action": "MoveToPreviousParagraph",
+    "func": "move_to_previous_paragraph"
+  },
+  {
+    "keys": "}",
+    "action": "MoveToNextParagraph",
+    "func": "move_to_next_paragraph"
+  },
+  {
+    "keys": "(",
+    "action": "MoveToPreviousSentence",
+    "func": "move_to_previous_sentence"
+  },
+  {
+    "keys": ")",
+    "action": "MoveToNextSentence",
+    "func": "move_to_next_sentence"
+  },
+  {
+    "keys": "f{c}",
+    "action": "MoveToNextCharacter",
+    "func": "move_to_next_character"
+  },
+  {
+    "keys": "F{c}",
+    "action": "MoveToPreviousCharacter",
+    "func": "move_to_previous_character"
+  },
+  {
+    "keys": "t{c}",
+    "action": "MoveToNextCharacter",
+    "func": "move_to_next_character"
+  },
+  {
+    "keys": "T{c}",
+    "action": "MoveToPreviousCharacter",
+    "func": "move_to_previous_character"
+  },
+  {
+    "keys": ";",
+    "action": "RepeatCharacterSearchForward",
+    "func": "repeat_character_search_forward"
+  },
+  {
+    "keys": ",",
+    "action": "RepeatCharacterSearchBackward",
+    "func": "repeat_character_search_backward"
+  },
+  {
+    "keys": "`{c}",
+    "action": "MarkJump",
+    "func": "mark_jump"
+  },
+  {
+    "keys": "'{c}",
+    "action": "MarkJump",
+    "func": "mark_jump"
+  },
+  {
+    "keys": "<End>",
+    "action": "MoveToEndOfLine",
+    "func": "move_to_end_of_line"
+  },
+  {
+    "keys": "<Home>",
+    "action": "MoveToStartOfLine",
+    "func": "move_to_start_of_line"
+  },
+  {
+    "keys": "]f",
+    "action": "MoveToNextFunction",
+    "func": "move_to_next_function"
+  },
+  {
+    "keys": "[f",
+    "action": "MoveToPreviousFunction",
+    "func": "move_to_previous_function"
+  },
+  {
+    "keys": "]c",
+    "action": "MoveToNextClass",
+    "func": "move_to_next_class"
+  },
+  {
+    "keys": "[c",
+    "action": "MoveToPreviousClass",
+    "func": "move_to_previous_class"
+  },
+  {
+    "keys": "]a",
+    "action": "MoveToNextArgument",
+    "func": "move_to_next_argument"
+  },
+  {
+    "keys": "[a",
+    "action": "MoveToPreviousArgument",
+    "func": "move_to_previous_argument"
+  },
+  {
+    "keys": "]n",
+    "action": "MoveToNextBlock",
+    "func": "move_to_next_block"
+  },
+  {
+    "keys": "[n",
+    "action": "MoveToPreviousBlock",
+    "func": "move_to_previous_block"
+  },
+  {
+    "keys": "[[",
+    "action": "MoveToBlockStart",
+    "func": "move_to_block_start"
+  },
+  {
+    "keys": "]]",
+    "action": "MoveToBlockEnd",
+    "func": "move_to_block_end"
+  }
+]

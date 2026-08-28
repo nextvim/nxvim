@@ -14,7 +14,7 @@ use crate::kernel::{
 };
 use text::ToPoint;
 
-pub fn moved(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+fn moved(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let primary_sel = win.selections().primary();
     let head_point = primary_sel.head().to_point(buffer.as_text_buffer());
@@ -539,4 +539,88 @@ pub fn cursor_line_bottom(editor: &mut Editor, window: WindowId) -> Outcome {
     let height = win.viewport_height().max(1);
     win.set_scroll_top(head_row.saturating_add(1).saturating_sub(height));
     window_redraw()
+}
+
+pub fn move_page_up(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_page_down(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_next_function(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_previous_function(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_next_class(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_previous_class(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_next_argument(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_previous_argument(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_next_block(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_previous_block(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_block_start(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
+}
+
+pub fn move_to_block_end(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
+    super::marks_and_jumps::record_jump(editor, window);
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    // TODO
+    moved(editor, window, select)
 }

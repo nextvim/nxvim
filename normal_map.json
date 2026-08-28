@@ -1,0 +1,307 @@
+[
+  {
+    "keys": "<C-S-d>",
+    "action": "SelectSimilar",
+    "func": "select_similar"
+  },
+  {
+    "keys": "<leader>d",
+    "action": "DeleteLine",
+    "func": "delete_line"
+  },
+  {
+    "keys": "dd",
+    "action": "DeleteLine",
+    "func": "delete_line"
+  },
+  {
+    "keys": "cc",
+    "action": "ChangeLine",
+    "func": "change_line"
+  },
+  {
+    "keys": "yy",
+    "action": "YankLine",
+    "func": "yank_line"
+  },
+  {
+    "keys": "gUU",
+    "action": "UpperCaseLine",
+    "func": "upper_case_line"
+  },
+  {
+    "keys": "guu",
+    "action": "LowerCaseLine",
+    "func": "lower_case_line"
+  },
+  {
+    "keys": "m{c}",
+    "action": "MarkSet",
+    "func": "mark_set"
+  },
+  {
+    "keys": "q{c}",
+    "action": "BeginMacro",
+    "func": "begin_macro"
+  },
+  {
+    "keys": "@{c}",
+    "action": "ReplayMacro",
+    "func": "replay_macro"
+  },
+  {
+    "keys": "x",
+    "action": "DeleteChar",
+    "func": "delete_char"
+  },
+  {
+    "keys": "X",
+    "action": "DeleteCharBefore",
+    "func": "delete_char_before"
+  },
+  {
+    "keys": "p",
+    "action": "Put",
+    "func": "put"
+  },
+  {
+    "keys": "P",
+    "action": "PutBefore",
+    "func": "put_before"
+  },
+  {
+    "keys": "zz",
+    "action": "CenterCursorLine",
+    "func": "center_cursor_line"
+  },
+  {
+    "keys": "zt",
+    "action": "CursorLineTop",
+    "func": "cursor_line_top"
+  },
+  {
+    "keys": "zb",
+    "action": "CursorLineBottom",
+    "func": "cursor_line_bottom"
+  },
+  {
+    "keys": "gt",
+    "action": "NextTab",
+    "func": "next_tab"
+  },
+  {
+    "keys": "gT",
+    "action": "PreviousTab",
+    "func": "previous_tab"
+  },
+  {
+    "keys": "<Tab>",
+    "action": "NextTab",
+    "func": "next_tab"
+  },
+  {
+    "keys": "<BackTab>",
+    "action": "PreviousTab",
+    "func": "previous_tab"
+  },
+  {
+    "keys": "<C-w><h>",
+    "action": "FocusLeftWindow",
+    "func": "focus_left_window"
+  },
+  {
+    "keys": "<C-w><j>",
+    "action": "FocusDownWindow",
+    "func": "focus_down_window"
+  },
+  {
+    "keys": "<C-w><k>",
+    "action": "FocusUpWindow",
+    "func": "focus_up_window"
+  },
+  {
+    "keys": "<C-w><l>",
+    "action": "FocusRightWindow",
+    "func": "focus_right_window"
+  },
+  {
+    "keys": "<C-w><C-h>",
+    "action": "FocusLeftWindow",
+    "func": "focus_left_window"
+  },
+  {
+    "keys": "<C-w><C-j>",
+    "action": "FocusDownWindow",
+    "func": "focus_down_window"
+  },
+  {
+    "keys": "<C-w><C-k>",
+    "action": "FocusUpWindow",
+    "func": "focus_up_window"
+  },
+  {
+    "keys": "<C-w><C-l>",
+    "action": "FocusRightWindow",
+    "func": "focus_right_window"
+  },
+  {
+    "keys": "<C-w><s>",
+    "action": "SplitHorizontal",
+    "func": "split_horizontal"
+  },
+  {
+    "keys": "<C-w><C-s>",
+    "action": "SplitHorizontal",
+    "func": "split_horizontal"
+  },
+  {
+    "keys": "<C-w><v>",
+    "action": "SplitVertical",
+    "func": "split_vertical"
+  },
+  {
+    "keys": "<C-w><C-v>",
+    "action": "SplitVertical",
+    "func": "split_vertical"
+  },
+  {
+    "keys": "<C-w><c>",
+    "action": "CloseWindow",
+    "func": "close_window"
+  },
+  {
+    "keys": "<C-w><C-c>",
+    "action": "CloseWindow",
+    "func": "close_window"
+  },
+  {
+    "keys": "<C-w><o>",
+    "action": "OnlyWindow",
+    "func": "only_window"
+  },
+  {
+    "keys": "<C-w><C-o>",
+    "action": "OnlyWindow",
+    "func": "only_window"
+  },
+  {
+    "keys": "<C-Left>",
+    "action": "ResizeLeft",
+    "func": "resize_left"
+  },
+  {
+    "keys": "<C-Right>",
+    "action": "ResizeRight",
+    "func": "resize_right"
+  },
+  {
+    "keys": "<C-Up>",
+    "action": "ResizeUp",
+    "func": "resize_up"
+  },
+  {
+    "keys": "<C-Down>",
+    "action": "ResizeDown",
+    "func": "resize_down"
+  },
+  {
+    "keys": "J",
+    "action": "JoinLines",
+    "func": "join_lines"
+  },
+  {
+    "keys": "u",
+    "action": "Undo",
+    "func": "undo"
+  },
+  {
+    "keys": "<C-r>",
+    "action": "Redo",
+    "func": "redo"
+  },
+  {
+    "keys": "<C-o>",
+    "action": "JumpToOlderPosition",
+    "func": "jump_to_older_position"
+  },
+  {
+    "keys": "<C-i>",
+    "action": "JumpToNewerPosition",
+    "func": "jump_to_newer_position"
+  },
+  {
+    "keys": "<C-q>",
+    "action": "Quit",
+    "func": "quit"
+  },
+  {
+    "keys": ".",
+    "action": "Repeat",
+    "func": "repeat"
+  },
+  {
+    "keys": ">>",
+    "action": "Indent",
+    "func": "indent"
+  },
+  {
+    "keys": "<lt><lt>",
+    "action": "Outdent",
+    "func": "outdent"
+  },
+  {
+    "keys": "g~~",
+    "action": "ToggleCaseLine",
+    "func": "toggle_case_line"
+  },
+  {
+    "keys": "g~g~",
+    "action": "ToggleCaseLine",
+    "func": "toggle_case_line"
+  },
+  {
+    "keys": "~",
+    "action": "ChangeCase",
+    "func": "change_case"
+  },
+  {
+    "keys": "zc",
+    "action": "Fold",
+    "func": "fold"
+  },
+  {
+    "keys": "zo",
+    "action": "Unfold",
+    "func": "unfold"
+  },
+  {
+    "keys": "<Delete>",
+    "action": "DeleteChar",
+    "func": "delete_char"
+  },
+  {
+    "keys": "<Backspace>",
+    "action": "MoveLeft",
+    "func": "move_left"
+  },
+  {
+    "keys": "<Esc>",
+    "action": "Clear",
+    "func": "clear"
+  },
+  {
+    "keys": "*",
+    "action": "Sequence",
+    "func": "sequence"
+  },
+  {
+    "keys": "#",
+    "action": "Sequence",
+    "func": "sequence"
+  },
+  {
+    "keys": "gv",
+    "action": "ReselectLastVisual",
+    "func": "reselect_last_visual"
+  }
+]

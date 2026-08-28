@@ -238,6 +238,10 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::SearchWordUnderBackward { count } => {
             super::search::search_word_under(editor, false, count)
         }
+        Action::DeleteChar { count } => operators::delete_char(editor, ctx.window, count),
+        Action::DeleteCharBefore { count } => {
+            operators::delete_char_before(editor, ctx.window, count)
+        }
         _ => Outcome::default(),
     }
 }

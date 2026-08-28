@@ -80,6 +80,8 @@ pub(super) fn is_repeatable_change(action: &Action) -> bool {
             | Action::LowerCaseLine { .. }
             | Action::ToggleCaseMotion { .. }
             | Action::ToggleCaseLine { .. }
+            | Action::DeleteChar { .. }
+            | Action::DeleteCharBefore { .. }
     )
 }
 
@@ -1550,4 +1552,186 @@ fn indent_lines_from_cursor(
     indent_rows(
         editor, window, buffer_id, primary.id, start_row, end_row, outdent,
     )
+}
+
+pub fn delete_char(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let buffer_id = editor
+        .window(window)
+        .expect("dispatch only runs against a live window")
+        .buffer_id();
+    let primary = editor
+        .window(window)
+        .unwrap()
+        .selections()
+        .primary()
+        .clone();
+    let buffer = editor.buffer(buffer_id).expect("live buffer");
+    let text_buffer = buffer.as_text_buffer();
+
+    let cursor_point = primary.head().to_point(text_buffer);
+    let row = cursor_point.row;
+    let mut col = cursor_point.column;
+    let line_len = text_buffer.line_len(row);
+
+    if line_len == 0 {
+        return Outcome::default();
+    }
+
+    if col >= line_len {
+        col = line_len - 1;
+    }
+
+    let count = count.max(1);
+    let end_col = (col + count).min(line_len);
+    if col >= end_col {
+        return Outcome::default();
+    }
+
+    let start_offset = Point::new(row, col).to_offset(text_buffer);
+    let end_offset = Point::new(row, end_col).to_offset(text_buffer);
+
+    let deleted_text: String = buffer
+        .snapshot()
+        .chunks_for_range(TextRange {
+            start: ByteOffset(start_offset),
+            end: ByteOffset(end_offset),
+        })
+        .expect("range is valid")
+        .collect();
+
+    let effect = super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
+
+    let buffer = editor
+        .buffers_mut()
+        .get_mut(buffer_id)
+        .expect("live buffer");
+    let mutation = transaction::apply(
+        buffer,
+        EditDescription {
+            origin: EditOrigin::User,
+            edits: vec![PlannedEdit {
+                selection: None,
+                edit: Edit::delete(TextRange {
+                    start: ByteOffset(start_offset),
+                    end: ByteOffset(end_offset),
+                }),
+            }],
+            selections: None,
+        },
+    )
+    .expect("deleting a character-derived range is always well-formed");
+
+    let text_buffer = buffer.as_text_buffer();
+    let new_line_len = text_buffer.line_len(row);
+    let target_col = if new_line_len == 0 {
+        0
+    } else {
+        col.min(new_line_len - 1)
+    };
+    let target_offset = Point::new(row, target_col).to_offset(text_buffer);
+    let anchor = text_buffer.anchor_before(target_offset);
+    let landing = Selection {
+        id: primary.id,
+        start: anchor,
+        end: anchor,
+        reversed: false,
+        goal: SelectionGoal::None,
+    };
+
+    let win = editor.windows_mut().get_mut(window).expect("live window");
+    win.selections_mut()
+        .replace_primary(landing)
+        .expect("primary id is unchanged by a delete");
+
+    let mut outcome = Outcome::from_mutation(&mutation);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome
+}
+
+pub fn delete_char_before(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let buffer_id = editor
+        .window(window)
+        .expect("dispatch only runs against a live window")
+        .buffer_id();
+    let primary = editor
+        .window(window)
+        .unwrap()
+        .selections()
+        .primary()
+        .clone();
+    let buffer = editor.buffer(buffer_id).expect("live buffer");
+    let text_buffer = buffer.as_text_buffer();
+
+    let cursor_point = primary.head().to_point(text_buffer);
+    let row = cursor_point.row;
+    let line_len = text_buffer.line_len(row);
+    let col = cursor_point.column.min(line_len);
+
+    if col == 0 {
+        return Outcome::default();
+    }
+
+    let count = count.max(1);
+    let start_col = col.saturating_sub(count);
+    if start_col >= col {
+        return Outcome::default();
+    }
+
+    let start_offset = Point::new(row, start_col).to_offset(text_buffer);
+    let end_offset = Point::new(row, col).to_offset(text_buffer);
+
+    let deleted_text: String = buffer
+        .snapshot()
+        .chunks_for_range(TextRange {
+            start: ByteOffset(start_offset),
+            end: ByteOffset(end_offset),
+        })
+        .expect("range is valid")
+        .collect();
+
+    let effect = super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
+
+    let buffer = editor
+        .buffers_mut()
+        .get_mut(buffer_id)
+        .expect("live buffer");
+    let mutation = transaction::apply(
+        buffer,
+        EditDescription {
+            origin: EditOrigin::User,
+            edits: vec![PlannedEdit {
+                selection: None,
+                edit: Edit::delete(TextRange {
+                    start: ByteOffset(start_offset),
+                    end: ByteOffset(end_offset),
+                }),
+            }],
+            selections: None,
+        },
+    )
+    .expect("deleting a character-derived range is always well-formed");
+
+    let text_buffer = buffer.as_text_buffer();
+    let target_offset = Point::new(row, start_col).to_offset(text_buffer);
+    let anchor = text_buffer.anchor_before(target_offset);
+    let landing = Selection {
+        id: primary.id,
+        start: anchor,
+        end: anchor,
+        reversed: false,
+        goal: SelectionGoal::None,
+    };
+
+    let win = editor.windows_mut().get_mut(window).expect("live window");
+    win.selections_mut()
+        .replace_primary(landing)
+        .expect("primary id is unchanged by a delete");
+
+    let mut outcome = Outcome::from_mutation(&mutation);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome
 }

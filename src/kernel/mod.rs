@@ -609,6 +609,45 @@ mod tests {
     }
 
     #[test]
+    fn delete_char_deletes_char_under_cursor_and_is_repeatable() {
+        let mut editor = Editor::new("abcdef\n");
+        let outcome = editor.execute(Action::DeleteChar { count: 1 });
+        assert_eq!(text_of(&editor), "bcdef\n");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert!(outcome.mutated);
+
+        editor.execute(Action::DeleteChar { count: 2 });
+        assert_eq!(text_of(&editor), "def\n");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+
+        editor.execute(Action::MoveToEndOfLine { count: 1, select: false });
+        assert_eq!(cursor(&editor), Point::new(0, 3));
+        editor.execute(Action::DeleteChar { count: 1 });
+        assert_eq!(text_of(&editor), "de\n");
+        assert_eq!(cursor(&editor), Point::new(0, 1));
+
+        editor.execute(Action::Repeat { count: 1 });
+        assert_eq!(text_of(&editor), "d\n");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+    }
+
+    #[test]
+    fn delete_char_before_deletes_char_before_cursor() {
+        let mut editor = Editor::new("abcdef\n");
+        editor.execute(Action::MoveRight { count: 2, select: false });
+        assert_eq!(cursor(&editor), Point::new(0, 2));
+
+        let outcome = editor.execute(Action::DeleteCharBefore { count: 1 });
+        assert_eq!(text_of(&editor), "acdef\n");
+        assert_eq!(cursor(&editor), Point::new(0, 1));
+        assert!(outcome.mutated);
+
+        editor.execute(Action::DeleteCharBefore { count: 2 });
+        assert_eq!(text_of(&editor), "cdef\n");
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+    }
+
+    #[test]
     fn cc_deletes_the_whole_line_and_enters_insert_mode() {
         let mut editor = Editor::new("foo\nbar\n");
         let outcome = editor.execute(Action::ChangeLine { count: 1 });
