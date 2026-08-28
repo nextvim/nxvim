@@ -1,3 +1,6 @@
+//! Raw mode / alternate screen setup and teardown. Pure infra, no semantic
+//! coupling — ported as-is from `src_/terminal.rs` per `RESCUE.md`.
+
 use std::io::{self, stdout};
 
 use crossterm::{

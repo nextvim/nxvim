@@ -1,14 +1,25 @@
+//! NxVim entry point.
+//!
+//! The previous implementation lives in `src_/` as reference material only
+//! (see `src/RESCUE.md`). It is intentionally excluded from the build.
+
 mod app;
 mod kernel;
-mod model;
 mod runtime;
-pub mod script;
 mod terminal;
 mod view;
 
-#[macro_use]
-extern crate nxvim_log;
+use std::io;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    runtime::run()
+/// No file loading yet in this milestone, so the editor starts on an
+/// in-memory placeholder buffer with enough lines/columns to make `h/j/k/l`
+/// visibly testable (an empty buffer has nowhere for a motion to go).
+const PLACEHOLDER_TEXT: &str = "NxVim skeleton\n\nh/j/k/l move the cursor.\ni enters Insert mode, Esc returns to Normal.\nCtrl-C quits (no :q yet).\n";
+
+fn main() -> io::Result<()> {
+    let mut session = terminal::TerminalSession::enter()?;
+    let mut app = app::App::new(PLACEHOLDER_TEXT);
+    let result = runtime::run(&mut app, &mut io::stdout());
+    session.restore()?;
+    result
 }

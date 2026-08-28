@@ -24,3 +24,5 @@ crates/zed/tooling/rope_oracle/Cargo.lock
 *.tar.gz
 packaging/pkg/
 packaging/src/
+
+src_/

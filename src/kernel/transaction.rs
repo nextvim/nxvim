@@ -1,61 +1,46 @@
-//! Kernel-owned entry point for buffer mutations.
+//! The single mutation entry point (`RESCUE.md` Rule 4.6).
 //!
-//! The underlying transaction and history implementation remains in
-//! `vim-buffer`; this module supplies the semantic boundary used by commands.
+//! Every command family that changes text — Normal, Insert, Ex, script,
+//! autocommand-triggered — must call `apply` here. Nothing else is allowed
+//! to reach into a `vim_buffer::Buffer` and edit it directly; this is what
+//! keeps undo grouping, `TextChanged` events, and redraw invalidation
+//! uniform no matter what triggered the edit.
 
-use super::MutationOutcome;
-use vim_buffer::{Buffer, EditOrigin, SelectionSet};
+use vim_buffer::{Buffer, BufferError, EditOrigin, MutationOutcome, PlannedEdit, SelectionSet};
 
-/// Execute one mutation transaction against a buffer.
-///
-/// The callback may queue multiple replacements/inserts/deletes. They commit
-/// as one undo unit and produce one typed outcome. The callback cannot retain
-/// the transaction or buffer borrow beyond the call.
-pub(crate) fn transaction(
-    buffer: &mut Buffer,
-    origin: EditOrigin,
-    selections: Option<SelectionSet>,
-    edit: impl FnOnce(&mut vim_buffer::Transaction<'_>),
-) -> Result<MutationOutcome, String> {
-    let mut transaction = buffer.transaction(origin);
-    edit(&mut transaction);
-    transaction
-        .commit(selections)
-        .map(MutationOutcome::from_buffer)
-        .map_err(|error| error.to_string())
+/// A batch of edits to commit to one buffer as a single transaction.
+pub struct EditDescription {
+    pub origin: EditOrigin,
+    pub edits: Vec<PlannedEdit>,
+    /// The selection state to record alongside this transaction, so undo/redo
+    /// can restore the cursor to where it was. `None` leaves selections
+    /// untouched by the commit itself.
+    pub selections: Option<SelectionSet>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn groups_multiple_edits_and_reports_tick_and_ranges() {
-        let mut buffer = Buffer::new(
-            vim_buffer::BufferId::new(1).unwrap(),
-            clock::ReplicaId::LOCAL,
-            "abc",
-        );
-        let outcome = transaction(&mut buffer, EditOrigin::VimScript, None, |transaction| {
-            transaction.replace(
-                None,
-                vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(1))
-                    .unwrap(),
-                "x",
-            );
-            transaction.replace(
-                None,
-                vim_buffer::TextRange::new(vim_buffer::ByteOffset(2), vim_buffer::ByteOffset(3))
-                    .unwrap(),
-                "z",
-            );
-        })
-        .unwrap();
-
-        assert_eq!(buffer.as_text_buffer().as_rope().to_string(), "xbz");
-        assert_eq!(outcome.buffer, buffer.id());
-        assert_eq!(outcome.changed_tick, buffer.changedtick());
-        assert_eq!(outcome.changed_ranges.len(), 2);
-        assert!(outcome.transaction.is_some());
+/// Applies `description` to `buffer` as one transaction and returns what
+/// changed. This is the only function in the kernel allowed to call
+/// `Buffer::transaction`.
+pub fn apply(
+    buffer: &mut Buffer,
+    description: EditDescription,
+) -> Result<MutationOutcome, BufferError> {
+    let mut transaction = buffer.transaction(description.origin);
+    for edit in description.edits {
+        transaction.push(edit);
     }
+    transaction.commit(description.selections)
+}
+
+/// Reverts the buffer's last transaction. Undo/redo replay history rather
+/// than going through `Buffer::transaction`, but this is still the only
+/// function in the kernel allowed to call `Buffer::undo` — every buffer
+/// mutation, forward or backward, is grep-able to this one file.
+pub fn undo(buffer: &mut Buffer) -> Result<Option<MutationOutcome>, BufferError> {
+    buffer.undo()
+}
+
+/// Re-applies the last transaction undone by [`undo`].
+pub fn redo(buffer: &mut Buffer) -> Result<Option<MutationOutcome>, BufferError> {
+    buffer.redo()
 }

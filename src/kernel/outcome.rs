@@ -1,278 +1,72 @@
-use super::{BufferId, TabPageId, WindowId};
-use vim_input::Mode;
+//! What `Editor::execute()` reports back to its caller.
+//!
+//! `Effect` grows real variants (clipboard, fs, script) once a milestone
+//! needs one; today nothing produces one. `RedrawInvalidation` and
+//! `Outcome::events` grew real shape in the "Operators + undo + events"
+//! milestone: a redraw needs to know *what* changed, and every mutating
+//! command must report the same `TextChanged` event, not a bespoke one.
 
-/// Typed summary of one committed buffer transaction. The underlying
-/// `vim-buffer` outcome remains authoritative for history and revisions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MutationOutcome {
-    pub buffer: BufferId,
-    pub changed_ranges: Vec<vim_buffer::TextRange>,
-    pub changed_tick: vim_buffer::ChangedTick,
-    pub cursor_changed: bool,
-    pub selection_changed: bool,
-    pub metadata_changed: bool,
-    pub transaction: Option<text::TransactionId>,
-}
+use vim_buffer::{BufferId, MutationOutcome, TextRange};
 
-impl MutationOutcome {
-    pub(crate) fn from_buffer(outcome: vim_buffer::MutationOutcome) -> Self {
-        Self {
-            buffer: BufferId::new(outcome.buffer.get()).expect("buffer IDs are non-zero"),
-            changed_ranges: outcome.edits.iter().map(|edit| edit.new_range).collect(),
-            changed_tick: outcome.changedtick,
-            cursor_changed: outcome.selections.is_some(),
-            selection_changed: outcome.selections.is_some(),
-            metadata_changed: outcome.modified_changed,
-            transaction: outcome.transaction,
-        }
-    }
+use crate::kernel::events::EditorEvent;
 
-    /// Converts mutation facts into presentation work without choosing a
-    /// particular window or renderer.
-    pub fn invalidations(&self) -> Vec<RedrawInvalidation> {
-        let ranges = self.changed_ranges.clone();
-        let mut invalidations = vec![
-            RedrawInvalidation::buffer(
-                RedrawInvalidationKind::TextRows,
-                self.buffer,
-                ranges.clone(),
-            ),
-            RedrawInvalidation::buffer(
-                RedrawInvalidationKind::DisplayMapTransforms,
-                self.buffer,
-                ranges.clone(),
-            ),
-            RedrawInvalidation::buffer(
-                RedrawInvalidationKind::SyntaxHighlighting,
-                self.buffer,
-                ranges.clone(),
-            ),
-            RedrawInvalidation::buffer(RedrawInvalidationKind::Gutter, self.buffer, ranges),
-        ];
-        if self.cursor_changed {
-            invalidations.push(RedrawInvalidation::buffer(
-                RedrawInvalidationKind::Cursor,
-                self.buffer,
-                Vec::new(),
-            ));
-        }
-        if self.selection_changed {
-            invalidations.push(RedrawInvalidation::buffer(
-                RedrawInvalidationKind::Selection,
-                self.buffer,
-                Vec::new(),
-            ));
-        }
-        if self.metadata_changed {
-            invalidations.push(RedrawInvalidation::global(
-                RedrawInvalidationKind::Statusline,
-            ));
-        }
-        invalidations
-    }
-}
-
-/// Redraw work requested by a kernel command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum RedrawRequest {
+/// What redraw work, if any, a command's effect requires.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RedrawInvalidation {
+    #[default]
     None,
-    View,
-    Layout,
-    Full,
+    /// Only the cursor moved; the window's content is unchanged.
+    CurrentWindow,
+    /// Text changed within `range` of `buffer`; a real redraw only needs to
+    /// re-layout/re-paint that span, not the whole window.
+    Range { buffer: BufferId, range: TextRange },
 }
 
-impl Default for RedrawRequest {
-    fn default() -> Self {
-        Self::None
-    }
+/// A side effect `app::` must carry out on the kernel's behalf. No variants
+/// yet — nothing produces one until a milestone needs fs/clipboard/script
+/// effects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Effect {}
+
+/// The result of one `Editor::execute()` call.
+#[derive(Clone, Debug, Default)]
+pub struct Outcome {
+    /// Whether buffer text changed (always via `kernel::transaction`).
+    pub mutated: bool,
+    /// Whether `kernel::Mode` changed as a result of this command.
+    pub mode_changed: bool,
+    pub invalidation: RedrawInvalidation,
+    pub effects: Vec<Effect>,
+    pub events: Vec<EditorEvent>,
 }
 
-/// The independently invalidatable parts of the presentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RedrawInvalidationKind {
-    TextRows,
-    DisplayMapTransforms,
-    SyntaxHighlighting,
-    Cursor,
-    Selection,
-    Gutter,
-    Statusline,
-    Tabline,
-    Overlays,
-    CompleteLayout,
-}
-
-/// Typed redraw work. IDs and ranges are owned so invalidations can cross the
-/// controller and background-task boundaries without retaining editor borrows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RedrawInvalidation {
-    pub kind: RedrawInvalidationKind,
-    pub buffer: Option<BufferId>,
-    pub window: Option<WindowId>,
-    pub ranges: Vec<vim_buffer::TextRange>,
-}
-
-impl RedrawInvalidation {
-    pub fn buffer(
-        kind: RedrawInvalidationKind,
-        buffer: BufferId,
-        ranges: Vec<vim_buffer::TextRange>,
-    ) -> Self {
+impl Outcome {
+    /// Builds the `Outcome` every mutating command should report: a
+    /// `Range` invalidation spanning the edited bytes and one
+    /// `TextChanged` event. Kept in one place so `kernel::transaction`'s
+    /// contract (undo grouping, events, redraw invalidation are uniform no
+    /// matter what triggered the edit) is enforced by construction rather
+    /// than by convention at each call site.
+    pub fn from_mutation(mutation: &MutationOutcome) -> Self {
+        let invalidation = match (mutation.edits.first(), mutation.edits.last()) {
+            (Some(first), Some(last)) => RedrawInvalidation::Range {
+                buffer: mutation.buffer,
+                range: TextRange {
+                    start: first.new_range.start,
+                    end: last.new_range.end,
+                },
+            },
+            _ => RedrawInvalidation::None,
+        };
         Self {
-            kind,
-            buffer: Some(buffer),
-            window: None,
-            ranges,
-        }
-    }
-
-    pub fn window(kind: RedrawInvalidationKind, window: WindowId) -> Self {
-        Self {
-            kind,
-            buffer: None,
-            window: Some(window),
-            ranges: Vec::new(),
-        }
-    }
-
-    pub fn global(kind: RedrawInvalidationKind) -> Self {
-        Self {
-            kind,
-            buffer: None,
-            window: None,
-            ranges: Vec::new(),
-        }
-    }
-}
-
-/// Semantic effects produced by kernel commands. Effects carry stable IDs or
-/// owned payloads so they can cross callbacks without retaining editor borrows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandEffect {
-    CursorMoved {
-        window: WindowId,
-    },
-    BufferMutated {
-        buffer: BufferId,
-    },
-    MutationCommitted(MutationOutcome),
-    WindowChanged {
-        window: WindowId,
-    },
-    TabChanged {
-        tab: TabPageId,
-    },
-    OptionChanged {
-        name: String,
-    },
-    EventEmitted {
-        name: String,
-        payload: Option<String>,
-    },
-    ModeChanged {
-        from: Mode,
-        to: Mode,
-    },
-    Message(String),
-    QuitRequested,
-    BackgroundWorkRequested {
-        kind: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandOutcome {
-    pub effects: Vec<CommandEffect>,
-    pub redraw: RedrawRequest,
-    pub invalidations: Vec<RedrawInvalidation>,
-}
-
-impl CommandOutcome {
-    pub fn no_redraw() -> Self {
-        Self {
+            mutated: !mutation.edits.is_empty(),
+            mode_changed: false,
+            invalidation,
             effects: Vec::new(),
-            redraw: RedrawRequest::None,
-            invalidations: Vec::new(),
+            events: vec![EditorEvent::TextChanged {
+                buffer: mutation.buffer,
+                tick: mutation.changedtick,
+            }],
         }
-    }
-
-    pub fn cursor_moved(window: WindowId) -> Self {
-        Self {
-            effects: vec![CommandEffect::CursorMoved { window }],
-            redraw: RedrawRequest::View,
-            invalidations: vec![RedrawInvalidation::window(
-                RedrawInvalidationKind::Cursor,
-                window,
-            )],
-        }
-    }
-
-    pub fn buffer_mutated(buffer: BufferId) -> Self {
-        Self {
-            effects: vec![CommandEffect::BufferMutated { buffer }],
-            redraw: RedrawRequest::View,
-            invalidations: vec![
-                RedrawInvalidation::buffer(RedrawInvalidationKind::TextRows, buffer, Vec::new()),
-                RedrawInvalidation::buffer(
-                    RedrawInvalidationKind::DisplayMapTransforms,
-                    buffer,
-                    Vec::new(),
-                ),
-                RedrawInvalidation::buffer(
-                    RedrawInvalidationKind::SyntaxHighlighting,
-                    buffer,
-                    Vec::new(),
-                ),
-                RedrawInvalidation::buffer(RedrawInvalidationKind::Gutter, buffer, Vec::new()),
-            ],
-        }
-    }
-
-    pub fn mutation_committed(mutation: MutationOutcome) -> Self {
-        Self {
-            invalidations: mutation.invalidations(),
-            effects: vec![CommandEffect::MutationCommitted(mutation)],
-            redraw: RedrawRequest::View,
-        }
-    }
-
-    pub fn with_effect(effect: CommandEffect, redraw: RedrawRequest) -> Self {
-        Self {
-            effects: vec![effect],
-            redraw,
-            invalidations: Vec::new(),
-        }
-    }
-
-    pub fn merge(&mut self, mut other: Self) {
-        self.redraw = self.redraw.max(other.redraw);
-        self.invalidations.append(&mut other.invalidations);
-        self.effects.append(&mut other.effects);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn merge_preserves_effect_order_and_strongest_redraw() {
-        let mut outcome = CommandOutcome::with_effect(
-            CommandEffect::Message("first".to_string()),
-            RedrawRequest::View,
-        );
-        outcome.merge(CommandOutcome::with_effect(
-            CommandEffect::QuitRequested,
-            RedrawRequest::Full,
-        ));
-
-        assert_eq!(
-            outcome.effects,
-            vec![
-                CommandEffect::Message("first".to_string()),
-                CommandEffect::QuitRequested,
-            ]
-        );
-        assert_eq!(outcome.redraw, RedrawRequest::Full);
     }
 }

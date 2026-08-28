@@ -1,44 +1,36 @@
-//! Stable identities used across command, event, and asynchronous boundaries.
+//! Kernel-owned identity types.
 //!
-//! Buffer identity is owned by `vim-buffer`; window and tab identities are
-//! owned by `vim-ui`. Re-exporting them here avoids introducing duplicate ID
-//! types during the migration.
+//! Buffer identity belongs to `vim_buffer` (a buffer can exist with zero
+//! windows attached, so its identity must not depend on window/tab types).
+//! `WindowId` and `TabPageId` are newtypes owned here because windows and tab
+//! pages are kernel concepts with no `vim-ui` counterpart.
 
 pub use vim_buffer::BufferId;
-pub use vim_ui::{TabPageId, WindowId};
 
-macro_rules! external_id {
-    ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(std::num::NonZeroU64);
+/// Identifies a `kernel::window::Window` for as long as it exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WindowId(u64);
 
-        impl $name {
-            pub fn new(value: u64) -> Option<Self> {
-                std::num::NonZeroU64::new(value).map(Self)
-            }
+impl WindowId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
 
-            pub const fn get(self) -> u64 {
-                self.0.get()
-            }
-        }
-    };
+    pub const fn get(self) -> u64 {
+        self.0
+    }
 }
 
-external_id!(TimerId);
-external_id!(JobId);
-external_id!(ChannelId);
-external_id!(TerminalId);
+/// Identifies a `kernel::window::tabpage::TabPage` for as long as it exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TabPageId(u64);
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl TabPageId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
 
-    #[test]
-    fn external_runtime_ids_are_non_zero_and_round_trip() {
-        assert!(TimerId::new(0).is_none());
-        assert_eq!(TimerId::new(1).unwrap().get(), 1);
-        assert_eq!(JobId::new(2).unwrap().get(), 2);
-        assert_eq!(ChannelId::new(3).unwrap().get(), 3);
-        assert_eq!(TerminalId::new(4).unwrap().get(), 4);
+    pub const fn get(self) -> u64 {
+        self.0
     }
 }
