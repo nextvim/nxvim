@@ -128,6 +128,44 @@ impl RuntimePath {
             .map(|root| root.join("autoload").join(&relative))
             .find(|path| path.is_file())
     }
+
+    /// Discovers ftplugin and indent scripts in runtime order.
+    pub fn filetype_scripts(&self, filetype: &str) -> Vec<PathBuf> {
+        if !valid_filetype(filetype) {
+            return Vec::new();
+        }
+        ["ftplugin", "indent"]
+            .into_iter()
+            .flat_map(|directory| self.scripts_for_filetype(directory, filetype))
+            .collect()
+    }
+
+    /// Discovers syntax scripts in runtime order, with all regular runtime
+    /// roots preceding their corresponding `after` directories.
+    pub fn syntax_scripts(&self, filetype: &str) -> Vec<PathBuf> {
+        if !valid_filetype(filetype) {
+            return Vec::new();
+        }
+        self.scripts_for_filetype("syntax", filetype)
+    }
+
+    fn scripts_for_filetype(&self, directory: &str, filetype: &str) -> Vec<PathBuf> {
+        let filename = format!("{filetype}.vim");
+        let mut paths = Vec::new();
+        for root in &self.roots {
+            let path = root.join(directory).join(&filename);
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+        for root in &self.roots {
+            let path = root.join("after").join(directory).join(&filename);
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+        paths
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -260,24 +298,32 @@ impl ScriptLoader {
         filetype: &str,
         context: HostContext,
     ) -> CompatibilityReport {
-        let mut paths = Vec::new();
-        for directory in ["ftplugin", "indent"] {
-            for root in &self.runtime_path.roots {
-                let path = root.join(directory).join(format!("{filetype}.vim"));
-                if path.is_file() {
-                    paths.push(path);
-                }
-            }
-            for root in &self.runtime_path.roots {
-                let path = root
-                    .join("after")
-                    .join(directory)
-                    .join(format!("{filetype}.vim"));
-                if path.is_file() {
-                    paths.push(path);
-                }
-            }
+        if let Some(report) = invalid_filetype_report(filetype) {
+            return report;
         }
+        let paths = self.runtime_path.filetype_scripts(filetype);
+        self.load_discovered_scripts(paths, context)
+    }
+
+    /// Loads `syntax/{filetype}.vim` scripts using the supplied buffer host
+    /// context, followed by matching scripts under `after/syntax`.
+    pub fn load_syntax_scripts(
+        &mut self,
+        filetype: &str,
+        context: HostContext,
+    ) -> CompatibilityReport {
+        if let Some(report) = invalid_filetype_report(filetype) {
+            return report;
+        }
+        let paths = self.runtime_path.syntax_scripts(filetype);
+        self.load_discovered_scripts(paths, context)
+    }
+
+    fn load_discovered_scripts(
+        &mut self,
+        paths: Vec<PathBuf>,
+        context: HostContext,
+    ) -> CompatibilityReport {
         let mut report = CompatibilityReport {
             discovered: paths.clone(),
             ..CompatibilityReport::default()
@@ -412,6 +458,26 @@ impl ScriptLoader {
         );
         Ok(())
     }
+}
+
+fn valid_filetype(filetype: &str) -> bool {
+    !filetype.is_empty()
+        && filetype != "."
+        && filetype != ".."
+        && !filetype.contains(['/', '\\'])
+        && Path::new(filetype).components().count() == 1
+}
+
+fn invalid_filetype_report(filetype: &str) -> Option<CompatibilityReport> {
+    (!valid_filetype(filetype)).then(|| CompatibilityReport {
+        failures: vec![CompatibilityFailure {
+            path: None,
+            stage: CompatibilityStage::Discovery,
+            message: format!("invalid filetype: {filetype}"),
+            diagnostics: Vec::new(),
+        }],
+        ..CompatibilityReport::default()
+    })
 }
 
 fn autoload_references(module: &BytecodeModule) -> Vec<String> {
@@ -559,6 +625,46 @@ mod tests {
         assert_eq!(packages[2].path, root.join("pack/a/opt/optional"));
         assert!(packages[2].optional);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn syntax_scripts_follow_runtime_and_after_order() {
+        let root = std::env::temp_dir().join(format!("nxvim-syntax-{}", std::process::id()));
+        let first = root.join("first");
+        let second = root.join("second");
+        let expected = [
+            first.join("syntax/rust.vim"),
+            second.join("syntax/rust.vim"),
+            first.join("after/syntax/rust.vim"),
+            second.join("after/syntax/rust.vim"),
+        ];
+        for path in &expected {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "\n").unwrap();
+        }
+
+        let runtime = RuntimePath::new([first, second]);
+        assert_eq!(runtime.syntax_scripts("rust"), expected);
+
+        let mut loader = ScriptLoader::new(runtime);
+        let report = loader.load_syntax_scripts("rust", HostContext::default());
+        assert!(report.failures.is_empty());
+        assert_eq!(report.discovered, expected);
+        assert_eq!(report.loaded, expected);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn filetype_script_loading_rejects_path_traversal() {
+        let runtime = RuntimePath::new([]);
+        let mut loader = ScriptLoader::new(runtime);
+        for filetype in ["", ".", "..", "../rust", "foo/bar", "foo\\bar"] {
+            assert!(loader.runtime_path.syntax_scripts(filetype).is_empty());
+            let report = loader.load_syntax_scripts(filetype, HostContext::default());
+            assert!(report.discovered.is_empty());
+            assert_eq!(report.failures.len(), 1);
+            assert_eq!(report.failures[0].stage, CompatibilityStage::Discovery);
+        }
     }
 
     #[test]

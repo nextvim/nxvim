@@ -28,10 +28,20 @@ pub enum RedrawInvalidation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     Quit,
-    FileSaved { path: std::path::PathBuf, bytes_written: u64 },
-    FileSaveFailed { message: String },
-    OptionMessage { message: String },
-    ClipboardWrite { text: String, primary: bool },
+    FileSaved {
+        path: std::path::PathBuf,
+        bytes_written: u64,
+    },
+    FileSaveFailed {
+        message: String,
+    },
+    OptionMessage {
+        message: String,
+    },
+    ClipboardWrite {
+        text: String,
+        primary: bool,
+    },
     ConfirmSubstitute {
         buffer: BufferId,
         match_range: TextRange,

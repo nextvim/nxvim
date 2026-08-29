@@ -1,12 +1,12 @@
 use crate::kernel::{
     Editor,
+    buffer::registers::{Register, RegisterKind, RegisterName},
     command::normal::marks_and_jumps,
     outcome::{Outcome, RedrawInvalidation},
-    buffer::registers::{Register, RegisterName, RegisterKind},
 };
-use text::{Bias, SelectionGoal, ToOffset, ToPoint, Point, Anchor, Selection};
+use text::{Anchor, Bias, Point, Selection, SelectionGoal, ToOffset, ToPoint};
 use vim_buffer::{Buffer, BufferText};
-use vim_regex::{CompileOptions, Regex, EditorOptions};
+use vim_regex::{CompileOptions, EditorOptions, Regex};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchOffset {
@@ -148,14 +148,9 @@ pub fn find_search_target(
     let mut current_col = point.column;
 
     for _ in 0..count {
-        if let Some((r, col, len)) = find_next_occurrence(
-            buffer,
-            &regex,
-            current_row,
-            current_col,
-            forward,
-            row_count,
-        ) {
+        if let Some((r, col, len)) =
+            find_next_occurrence(buffer, &regex, current_row, current_col, forward, row_count)
+        {
             found_match = Some((r, col, len));
             current_row = r;
             current_col = if forward {
@@ -198,7 +193,10 @@ pub fn find_search_target(
 
     // Apply new cursor position
     let offset_val = Point::new(target_row, target_col).to_offset(buffer.as_text_buffer());
-    let new_head = buffer.snapshot().as_inner().anchor_at(offset_val, Bias::Left);
+    let new_head = buffer
+        .snapshot()
+        .as_inner()
+        .anchor_at(offset_val, Bias::Left);
 
     let mut primary = from_selection.clone();
     primary.start = new_head.clone();
@@ -279,11 +277,7 @@ pub fn search(
     }
 }
 
-pub fn search_word_under(
-    editor: &mut Editor,
-    forward: bool,
-    count: u32,
-) -> Outcome {
+pub fn search_word_under(editor: &mut Editor, forward: bool, count: u32) -> Outcome {
     let window = match editor.window(editor.current_context().window) {
         Some(w) => w,
         None => return Outcome::default(),
@@ -311,7 +305,10 @@ fn find_next_occurrence(
     if forward {
         let row_text = buffer.as_text_buffer().row_text(start_row);
         let matches = row_text.find_pattern(regex);
-        if let Some(&(start, len, _)) = matches.iter().find(|&&(start, _, _)| start >= (start_col + 1) as usize) {
+        if let Some(&(start, len, _)) = matches
+            .iter()
+            .find(|&&(start, _, _)| start >= (start_col + 1) as usize)
+        {
             return Some((start_row, start as u32, len));
         }
 
@@ -327,7 +324,10 @@ fn find_next_occurrence(
             let text = buffer.as_text_buffer().row_text(r);
             let matches = text.find_pattern(regex);
             if r == start_row {
-                if let Some(&(start, len, _)) = matches.iter().find(|&&(start, _, _)| start <= start_col as usize) {
+                if let Some(&(start, len, _)) = matches
+                    .iter()
+                    .find(|&&(start, _, _)| start <= start_col as usize)
+                {
                     return Some((r, start as u32, len));
                 }
             } else {
@@ -339,7 +339,11 @@ fn find_next_occurrence(
     } else {
         let row_text = buffer.as_text_buffer().row_text(start_row);
         let matches = row_text.find_pattern(regex);
-        if let Some(&(start, len, _)) = matches.iter().rev().find(|&&(start, _, _)| start < start_col as usize) {
+        if let Some(&(start, len, _)) = matches
+            .iter()
+            .rev()
+            .find(|&&(start, _, _)| start < start_col as usize)
+        {
             return Some((start_row, start as u32, len));
         }
 
@@ -355,7 +359,11 @@ fn find_next_occurrence(
             let text = buffer.as_text_buffer().row_text(r);
             let matches = text.find_pattern(regex);
             if r == start_row {
-                if let Some(&(start, len, _)) = matches.iter().rev().find(|&&(start, _, _)| start >= start_col as usize) {
+                if let Some(&(start, len, _)) = matches
+                    .iter()
+                    .rev()
+                    .find(|&&(start, _, _)| start >= start_col as usize)
+                {
                     return Some((r, start as u32, len));
                 }
             } else {

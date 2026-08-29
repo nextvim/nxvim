@@ -62,8 +62,23 @@ impl HybridRegex {
     }
 
     pub fn find(&self, context: &dyn MatchContext) -> Result<Option<Match>, CompileError> {
+        self.find_from(context, 0)
+    }
+
+    /// Finds the first match whose backend search begins at or after `start`.
+    ///
+    /// The complete [`MatchContext`] remains visible, so line anchors and Vim
+    /// positional assertions retain buffer-relative semantics.
+    pub fn find_from(
+        &self,
+        context: &dyn MatchContext,
+        start: usize,
+    ) -> Result<Option<Match>, CompileError> {
         let text = context.text();
-        let mut search_start = 0;
+        if start > text.len() || !text.is_char_boundary(start) {
+            return Err(backend_error("search start is not a valid UTF-8 boundary"));
+        }
+        let mut search_start = start;
         let mut candidates = 0;
 
         loop {

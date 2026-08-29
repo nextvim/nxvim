@@ -137,11 +137,14 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                     None => return Outcome::default(),
                 };
 
-            let args = match crate::kernel::command::substitute::parse_substitute(&command.arguments) {
-                Ok(a) => a,
-                Err(_) => return Outcome::default(),
-            };
-            crate::kernel::command::substitute::execute_substitute(editor, ctx, start_line, end_line, args)
+            let args =
+                match crate::kernel::command::substitute::parse_substitute(&command.arguments) {
+                    Ok(a) => a,
+                    Err(_) => return Outcome::default(),
+                };
+            crate::kernel::command::substitute::execute_substitute(
+                editor, ctx, start_line, end_line, args,
+            )
         }
         "w" | "write" => {
             let force = command.bang;

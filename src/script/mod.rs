@@ -15,10 +15,7 @@ pub struct ScriptHost {
 impl ScriptHost {
     pub fn new(host: Arc<dyn Host>, keymaps: SharedKeymapStore) -> Self {
         let runtime = HostRuntime::with_keymaps(host, keymaps.clone());
-        Self {
-            runtime,
-            keymaps,
-        }
+        Self { runtime, keymaps }
     }
 
     pub fn shared_keymaps(&self) -> SharedKeymapStore {

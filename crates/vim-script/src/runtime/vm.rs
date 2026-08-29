@@ -383,6 +383,19 @@ impl Vm {
                 })?;
                 *local = value;
             }
+            Instruction::DeleteLocal(slot) => {
+                let frame = self.frames.last_mut().expect("frame exists");
+                let local = frame.locals.get_mut(slot as usize).ok_or_else(|| {
+                    bare_error(RuntimeErrorKind::Internal, "local slot is out of bounds")
+                })?;
+                if matches!(local, Value::Null) {
+                    return Err(self.error(
+                        RuntimeErrorKind::NameError,
+                        "cannot unlet an undefined local variable",
+                    ));
+                }
+                *local = Value::Null;
+            }
             Instruction::LoadCapture(slot) => {
                 let value = self
                     .frames
@@ -396,6 +409,13 @@ impl Vm {
                 self.push(value)?;
             }
             Instruction::StoreCapture(slot) => {
+                let _ = slot;
+                return Err(self.error(
+                    RuntimeErrorKind::Internal,
+                    "mutable captures require shared upvalue cells",
+                ));
+            }
+            Instruction::DeleteCapture(slot) => {
                 let _ = slot;
                 return Err(self.error(
                     RuntimeErrorKind::Internal,
@@ -425,6 +445,15 @@ impl Vm {
                 let name = self.constant_string(&module, function_id, id)?;
                 let value = self.pop()?;
                 self.globals.insert(name, value);
+            }
+            Instruction::DeleteGlobal(id) | Instruction::DeleteScoped { name: id, .. } => {
+                let name = self.constant_string(&module, function_id, id)?;
+                if self.globals.remove(&name).is_none() {
+                    return Err(self.error(
+                        RuntimeErrorKind::NameError,
+                        format!("cannot unlet undefined variable {name}"),
+                    ));
+                }
             }
             Instruction::LoadOption { scope, name } => {
                 let name = self.constant_string(&module, function_id, name)?;
@@ -1261,6 +1290,20 @@ mod tests {
     fn executes_arithmetic_conditionals_and_loops() {
         let vm = run("let x = 1\nwhile x < 5\nlet x = x + 1\nendwhile\nif x == 5\nlet result = x * 2\nelse\nlet result = 0\nendif\n").unwrap();
         assert_eq!(vm.globals.get(":result"), Some(&Value::Integer(10)));
+    }
+
+    #[test]
+    fn unlet_removes_multiple_variables() {
+        let vm = run("let first = 1\nlet second = 2\nunlet first second\n").unwrap();
+        assert!(!vm.globals.contains_key(":first"));
+        assert!(!vm.globals.contains_key(":second"));
+    }
+
+    #[test]
+    fn unlet_reports_an_already_deleted_variable() {
+        let error = run("let value = 1\nunlet value\nunlet value\n").unwrap_err();
+        assert!(matches!(error.kind, RuntimeErrorKind::NameError));
+        assert!(error.message.contains("cannot unlet undefined variable"));
     }
 
     #[test]

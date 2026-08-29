@@ -5,13 +5,15 @@
 use crate::kernel::{
     Editor,
     command::CommandContext,
-    outcome::{Outcome, Effect, RedrawInvalidation},
     events::EditorEvent,
+    outcome::{Effect, Outcome, RedrawInvalidation},
     transaction::{self, EditDescription},
 };
-use vim_buffer::{Buffer, BufferId, PlannedEdit, TextRange, ByteOffset, EditOrigin, Edit, BufferText, TextSearch};
-use text::{Point, Anchor, Selection, Bias, SelectionGoal, ToOffset};
-use vim_regex::{Regex, CompileOptions, EditorOptions};
+use text::{Anchor, Bias, Point, Selection, SelectionGoal, ToOffset};
+use vim_buffer::{
+    Buffer, BufferId, BufferText, ByteOffset, Edit, EditOrigin, PlannedEdit, TextRange, TextSearch,
+};
+use vim_regex::{CompileOptions, EditorOptions, Regex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubstituteArgs {
@@ -140,7 +142,10 @@ pub fn execute_substitute(
     }
 
     let pattern_to_use = if args.pattern.is_empty() {
-        if let Some(reg) = editor.registers().get(crate::kernel::buffer::registers::RegisterName::Search) {
+        if let Some(reg) = editor
+            .registers()
+            .get(crate::kernel::buffer::registers::RegisterName::Search)
+        {
             reg.text.clone()
         } else {
             return Outcome::default();
@@ -235,7 +240,7 @@ pub fn prompt_next_substitute(editor: &mut Editor) -> Outcome {
     }
 
     let m = &pending.matches[pending.current_index];
-    
+
     let (start, end, new_head, new_tail, row) = {
         let buffer = match editor.buffer(pending.buffer_id) {
             Some(b) => b,
@@ -245,7 +250,8 @@ pub fn prompt_next_substitute(editor: &mut Editor) -> Outcome {
             }
         };
         let start = Point::new(m.row, m.start_col).to_offset(buffer.as_text_buffer());
-        let end = Point::new(m.row, m.start_col + m.original_text.len() as u32).to_offset(buffer.as_text_buffer());
+        let end = Point::new(m.row, m.start_col + m.original_text.len() as u32)
+            .to_offset(buffer.as_text_buffer());
         let new_head = buffer.snapshot().as_inner().anchor_at(start, Bias::Left);
         let new_tail = buffer.snapshot().as_inner().anchor_at(end, Bias::Left);
         (start, end, new_head, new_tail, m.row)
@@ -300,7 +306,8 @@ pub fn handle_substitute_confirm(editor: &mut Editor, choice: char) -> Outcome {
             // Apply single substitution
             let buffer = editor.buffer(pending.buffer_id).unwrap();
             let start = Point::new(m.row, m.start_col).to_offset(buffer.as_text_buffer());
-            let end = Point::new(m.row, m.start_col + m.original_text.len() as u32).to_offset(buffer.as_text_buffer());
+            let end = Point::new(m.row, m.start_col + m.original_text.len() as u32)
+                .to_offset(buffer.as_text_buffer());
             let edits = vec![PlannedEdit {
                 selection: None,
                 edit: Edit::replace(
@@ -336,7 +343,10 @@ pub fn handle_substitute_confirm(editor: &mut Editor, choice: char) -> Outcome {
                 pending.any_substituted = true;
                 editor.pending_substitute = Some(pending);
 
-                let win = editor.windows_mut().get_mut(window_id).expect("live window");
+                let win = editor
+                    .windows_mut()
+                    .get_mut(window_id)
+                    .expect("live window");
                 let final_selections = win.selections().clone();
                 let buffer_id = win.buffer_id();
 
@@ -361,7 +371,12 @@ pub fn handle_substitute_confirm(editor: &mut Editor, choice: char) -> Outcome {
         }
         'a' => {
             // Apply all remaining substitutions
-            let outcome = apply_batch(editor, pending.buffer_id, &pending.matches[pending.current_index..], pending.any_substituted);
+            let outcome = apply_batch(
+                editor,
+                pending.buffer_id,
+                &pending.matches[pending.current_index..],
+                pending.any_substituted,
+            );
             editor.pending_substitute = None;
             outcome
         }
@@ -369,7 +384,8 @@ pub fn handle_substitute_confirm(editor: &mut Editor, choice: char) -> Outcome {
             // Apply this one and stop
             let buffer = editor.buffer(pending.buffer_id).unwrap();
             let start = Point::new(m.row, m.start_col).to_offset(buffer.as_text_buffer());
-            let end = Point::new(m.row, m.start_col + m.original_text.len() as u32).to_offset(buffer.as_text_buffer());
+            let end = Point::new(m.row, m.start_col + m.original_text.len() as u32)
+                .to_offset(buffer.as_text_buffer());
             let edits = vec![PlannedEdit {
                 selection: None,
                 edit: Edit::replace(
@@ -396,7 +412,10 @@ pub fn handle_substitute_confirm(editor: &mut Editor, choice: char) -> Outcome {
                 transaction::apply(buffer_mut, desc)
             };
             if let Ok(mutation) = mutation_result {
-                let win = editor.windows_mut().get_mut(window_id).expect("live window");
+                let win = editor
+                    .windows_mut()
+                    .get_mut(window_id)
+                    .expect("live window");
                 let final_selections = win.selections().clone();
                 let buffer_id = win.buffer_id();
                 if let Some(tx_id) = mutation.transaction {
@@ -420,7 +439,12 @@ pub fn handle_substitute_confirm(editor: &mut Editor, choice: char) -> Outcome {
     }
 }
 
-fn apply_batch(editor: &mut Editor, buffer_id: BufferId, matches: &[PlannedMatch], join_previous: bool) -> Outcome {
+fn apply_batch(
+    editor: &mut Editor,
+    buffer_id: BufferId,
+    matches: &[PlannedMatch],
+    join_previous: bool,
+) -> Outcome {
     let mut sorted = matches.to_vec();
     sorted.sort_by(|a, b| {
         if a.row != b.row {
@@ -434,7 +458,8 @@ fn apply_batch(editor: &mut Editor, buffer_id: BufferId, matches: &[PlannedMatch
     for m in sorted {
         let buffer = editor.buffer(buffer_id).unwrap();
         let start = Point::new(m.row, m.start_col).to_offset(buffer.as_text_buffer());
-        let end = Point::new(m.row, m.start_col + m.original_text.len() as u32).to_offset(buffer.as_text_buffer());
+        let end = Point::new(m.row, m.start_col + m.original_text.len() as u32)
+            .to_offset(buffer.as_text_buffer());
         edits.push(PlannedEdit {
             selection: None,
             edit: Edit::replace(
@@ -461,7 +486,10 @@ fn apply_batch(editor: &mut Editor, buffer_id: BufferId, matches: &[PlannedMatch
         transaction::apply(buffer, desc)
     };
     if let Ok(mutation) = mutation_result {
-        let win = editor.windows_mut().get_mut(window_id).expect("live window");
+        let win = editor
+            .windows_mut()
+            .get_mut(window_id)
+            .expect("live window");
         let final_selections = win.selections().clone();
         let buffer_id = win.buffer_id();
         if let Some(tx_id) = mutation.transaction {
@@ -626,7 +654,12 @@ mod tests {
         let outcome = execute_substitute(&mut editor, ctx, 1, 1, args);
         assert!(outcome.mutated);
         assert_eq!(
-            editor.buffer(ctx.buffer).unwrap().snapshot().as_inner().text(),
+            editor
+                .buffer(ctx.buffer)
+                .unwrap()
+                .snapshot()
+                .as_inner()
+                .text(),
             "bar test bar\nother line"
         );
     }
@@ -644,7 +677,12 @@ mod tests {
         let outcome2 = editor.handle_substitute_confirm('y');
         assert!(outcome2.mutated);
         assert_eq!(
-            editor.buffer(ctx.buffer).unwrap().snapshot().as_inner().text(),
+            editor
+                .buffer(ctx.buffer)
+                .unwrap()
+                .snapshot()
+                .as_inner()
+                .text(),
             "bar test foo"
         );
         assert!(editor.has_pending_substitute());
@@ -653,7 +691,12 @@ mod tests {
         let outcome3 = editor.handle_substitute_confirm('n');
         assert!(!outcome3.mutated);
         assert_eq!(
-            editor.buffer(ctx.buffer).unwrap().snapshot().as_inner().text(),
+            editor
+                .buffer(ctx.buffer)
+                .unwrap()
+                .snapshot()
+                .as_inner()
+                .text(),
             "bar test foo"
         );
         // We reached the end of matches
@@ -671,7 +714,12 @@ mod tests {
         let outcome2 = editor.handle_substitute_confirm('a');
         assert!(outcome2.mutated);
         assert_eq!(
-            editor.buffer(ctx.buffer).unwrap().snapshot().as_inner().text(),
+            editor
+                .buffer(ctx.buffer)
+                .unwrap()
+                .snapshot()
+                .as_inner()
+                .text(),
             "bar test bar"
         );
         assert!(!editor.has_pending_substitute());

@@ -1,10 +1,10 @@
-use vim_buffer::{BufferId, Anchor};
 use crate::kernel::{
     Editor,
     ids::WindowId,
     outcome::{Outcome, RedrawInvalidation},
 };
 use text::{Selection, SelectionGoal, ToOffset};
+use vim_buffer::{Anchor, BufferId};
 
 #[derive(Clone, Debug)]
 pub struct JumpList {
@@ -127,7 +127,9 @@ pub fn jump_to_mark(
         let win = editor.window(window_id).expect("live window");
         let buffer_id = win.buffer_id();
         let buf = editor.buffer(buffer_id).expect("live buffer");
-        buf.marks().get(ch).map(|anchor| (buffer_id, anchor.clone()))
+        buf.marks()
+            .get(ch)
+            .map(|anchor| (buffer_id, anchor.clone()))
     } else if ch.is_ascii_uppercase() {
         editor.global_marks.get(&ch).cloned()
     } else {
@@ -168,7 +170,8 @@ pub fn jump_to_mark(
 
     if linewise {
         let (win, buffer) = editor.window_and_buffer_mut(window_id);
-        win.selections_mut().move_to_start_of_line_non_space(select, buffer.as_text_buffer());
+        win.selections_mut()
+            .move_to_start_of_line_non_space(select, buffer.as_text_buffer());
     }
 
     Outcome {
@@ -182,7 +185,7 @@ pub fn jump_older(editor: &mut Editor, window_id: WindowId) -> Outcome {
     let target = editor.jump_list.older(current);
     if let Some((target_buffer_id, target_anchor)) = target {
         editor.set_window_buffer(window_id, target_buffer_id);
-        
+
         let (win, _) = editor.window_and_buffer_mut(window_id);
         let primary_id = win.selections().primary().id;
         let _ = win.selections_mut().replace_primary(Selection {
@@ -192,7 +195,7 @@ pub fn jump_older(editor: &mut Editor, window_id: WindowId) -> Outcome {
             reversed: false,
             goal: SelectionGoal::None,
         });
-        
+
         Outcome {
             invalidation: RedrawInvalidation::CurrentWindow,
             ..Outcome::default()
@@ -206,7 +209,7 @@ pub fn jump_newer(editor: &mut Editor, window_id: WindowId) -> Outcome {
     let target = editor.jump_list.newer();
     if let Some((target_buffer_id, target_anchor)) = target {
         editor.set_window_buffer(window_id, target_buffer_id);
-        
+
         let (win, _) = editor.window_and_buffer_mut(window_id);
         let primary_id = win.selections().primary().id;
         let _ = win.selections_mut().replace_primary(Selection {
@@ -216,7 +219,7 @@ pub fn jump_newer(editor: &mut Editor, window_id: WindowId) -> Outcome {
             reversed: false,
             goal: SelectionGoal::None,
         });
-        
+
         Outcome {
             invalidation: RedrawInvalidation::CurrentWindow,
             ..Outcome::default()

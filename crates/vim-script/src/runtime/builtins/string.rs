@@ -76,6 +76,23 @@ pub fn string(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(Arc::from(vim_string(&args[0]))))
 }
 
+pub fn matchstr(args: &[Value]) -> RuntimeResult<Value> {
+    let Value::String(expr) = &args[0] else {
+        return Err(type_error("matchstr", "String", &args[0]));
+    };
+    let Value::String(pattern) = &args[1] else {
+        return Err(type_error("matchstr", "String pattern", &args[1]));
+    };
+
+    let regex = vim_regex::Regex::compile(pattern, vim_regex::CompileOptions::default())
+        .map_err(|_| error("E54", "invalid pattern for matchstr()"))?;
+    let matched = regex
+        .find(expr)
+        .map_err(|_| error("E54", "invalid pattern for matchstr()"))?
+        .map_or("", |matched| &expr[matched.range]);
+    Ok(Value::String(Arc::from(matched)))
+}
+
 pub fn tolower(args: &[Value]) -> RuntimeResult<Value> {
     let Value::String(value) = &args[0] else {
         return Err(type_error("tolower", "String", &args[0]));
@@ -543,6 +560,7 @@ pub fn register(registry: &mut super::BuiltinRegistry) {
     registry.register("escape", BuiltinArity::Exact(2), escape);
     registry.register("fnameescape", BuiltinArity::Exact(1), fnameescape);
     registry.register("join", BuiltinArity::Range { min: 1, max: 2 }, join);
+    registry.register("matchstr", BuiltinArity::Exact(2), matchstr);
     registry.register("nr2char", BuiltinArity::Range { min: 1, max: 2 }, nr2char);
     registry.register("printf", BuiltinArity::Variadic { min: 1 }, printf);
     registry.register("split", BuiltinArity::Range { min: 1, max: 2 }, split);
@@ -569,4 +587,43 @@ pub fn register(registry: &mut super::BuiltinRegistry) {
     registry.register("uri_decode", BuiltinArity::Exact(1), uri_decode);
     registry.register("uri_encode", BuiltinArity::Exact(1), uri_encode);
     registry.register("string", BuiltinArity::Exact(1), string);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(value: &str) -> Value {
+        Value::String(Arc::from(value))
+    }
+
+    #[test]
+    fn matchstr_returns_first_match_or_empty_string() {
+        assert_eq!(
+            matchstr(&[text("one two three"), text(r"t\w\+")]).unwrap(),
+            text("two")
+        );
+        assert_eq!(
+            matchstr(&[text("one two three"), text("missing")]).unwrap(),
+            text("")
+        );
+    }
+
+    #[test]
+    fn matchstr_obeys_vim_match_boundaries() {
+        assert_eq!(
+            matchstr(&[text("prefix-value"), text(r"prefix-\zs\w\+")]).unwrap(),
+            text("value")
+        );
+    }
+
+    #[test]
+    fn matchstr_supports_c_vim_filetype_pattern() {
+        let pattern = r"^\%([^.]\)\+";
+        assert_eq!(
+            matchstr(&[text("cpp.doxygen"), text(&pattern)]).unwrap(),
+            text("cpp")
+        );
+        assert_eq!(matchstr(&[text("c"), text(&pattern)]).unwrap(), text("c"));
+    }
 }

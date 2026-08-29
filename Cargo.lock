@@ -3712,6 +3712,7 @@ name = "vim-script"
 version = "0.1.0"
 dependencies = [
  "vim-input",
+ "vim-regex",
 ]
 
 [[package]]

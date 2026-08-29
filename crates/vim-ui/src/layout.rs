@@ -116,10 +116,7 @@ impl LayoutNode {
                 if *window_id == target_id {
                     *self = LayoutNode::Split {
                         axis,
-                        children: vec![
-                            LayoutNode::Leaf(target_id),
-                            LayoutNode::Leaf(new_id),
-                        ],
+                        children: vec![LayoutNode::Leaf(target_id), LayoutNode::Leaf(new_id)],
                     };
                     true
                 } else {

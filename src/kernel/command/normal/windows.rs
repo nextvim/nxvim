@@ -3,8 +3,8 @@
 use crate::kernel::{
     Editor,
     command::CommandContext,
-    window::tabpage::{Axis, NavigationDirection, TabPage},
     outcome::Outcome,
+    window::tabpage::{Axis, NavigationDirection, TabPage},
 };
 
 pub fn split_horizontal(editor: &mut Editor, ctx: CommandContext) -> Outcome {

@@ -237,25 +237,13 @@ fn motion_target(
             Some(from.move_to_matching_delimiter(false, text_buffer))
         }
         Action::SearchForward { count } => {
-            let (sel, _) = super::super::search::find_search_target(
-                editor,
-                "",
-                true,
-                *count,
-                None,
-                from,
-            )?;
+            let (sel, _) =
+                super::super::search::find_search_target(editor, "", true, *count, None, from)?;
             Some(sel)
         }
         Action::SearchBackward { count } => {
-            let (sel, _) = super::super::search::find_search_target(
-                editor,
-                "",
-                false,
-                *count,
-                None,
-                from,
-            )?;
+            let (sel, _) =
+                super::super::search::find_search_target(editor, "", false, *count, None, from)?;
             Some(sel)
         }
         Action::SearchWordUnderForward { count } => {
@@ -263,12 +251,7 @@ fn motion_target(
             let escaped = super::super::search::regex_escape(&word);
             let pattern = format!("\\<{}\\>", escaped);
             let (sel, _) = super::super::search::find_search_target(
-                editor,
-                &pattern,
-                true,
-                *count,
-                None,
-                from,
+                editor, &pattern, true, *count, None, from,
             )?;
             Some(sel)
         }
@@ -277,12 +260,7 @@ fn motion_target(
             let escaped = super::super::search::regex_escape(&word);
             let pattern = format!("\\<{}\\>", escaped);
             let (sel, _) = super::super::search::find_search_target(
-                editor,
-                &pattern,
-                false,
-                *count,
-                None,
-                from,
+                editor, &pattern, false, *count, None, from,
             )?;
             Some(sel)
         }
@@ -1686,7 +1664,8 @@ pub fn delete_char(editor: &mut Editor, window: WindowId, count: u32) -> Outcome
         .expect("range is valid")
         .collect();
 
-    let effect = super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
+    let effect =
+        super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
 
     let selections_before = editor.window(window).unwrap().selections().clone();
     let mutation = {
@@ -1796,7 +1775,8 @@ pub fn delete_char_before(editor: &mut Editor, window: WindowId, count: u32) -> 
         .expect("range is valid")
         .collect();
 
-    let effect = super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
+    let effect =
+        super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
 
     let selections_before = editor.window(window).unwrap().selections().clone();
     let mutation = {

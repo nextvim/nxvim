@@ -8,17 +8,17 @@ pub mod tests;
 use crate::kernel::ids::WindowId;
 use crate::kernel::outcome::RedrawInvalidation;
 use display_map::{DisplayMap, DisplayPoint};
-use text::ToOffset;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use vim_formatter::{FormatResolver, CompiledFormat, FormatDialect, RenderItem, StyleId, ExprId};
 use std::io::{self, Write};
+use text::ToOffset;
 use vim_buffer::BufferId;
+use vim_formatter::{CompiledFormat, ExprId, FormatDialect, FormatResolver, RenderItem, StyleId};
 use vim_ui::ColorScheme;
 use vim_ui::{
     Rect, Style,
     model::{
-        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplayDecoration, GutterCell,
+        CursorShape, DisplayDecoration, DisplayPosition, DisplayRow, DisplayRowKind, GutterCell,
         ScrollbarModel, TextCursor, TextSpan, TextViewModel,
     },
     renderer::{BufferedRenderer, Renderer},
@@ -226,12 +226,18 @@ pub fn render(
                 .point_to_display_point(head_point);
 
             let snapshot = cache.display_map.snapshot();
-            let (number, relativenumber, signcolumn, foldcolumn) = if let Some(win) = editor.window(projection.window) {
-                let opts = win.options();
-                (opts.number, opts.relativenumber, opts.signcolumn.clone(), opts.foldcolumn)
-            } else {
-                (false, false, "auto".to_string(), 0)
-            };
+            let (number, relativenumber, signcolumn, foldcolumn) =
+                if let Some(win) = editor.window(projection.window) {
+                    let opts = win.options();
+                    (
+                        opts.number,
+                        opts.relativenumber,
+                        opts.signcolumn.clone(),
+                        opts.foldcolumn,
+                    )
+                } else {
+                    (false, false, "auto".to_string(), 0)
+                };
             let cursor_row = head_point.row;
             let number_width = (buffer_row_count.max(1) as f64).log10().ceil().max(4.0) as usize;
 
@@ -277,18 +283,18 @@ pub fn render(
                             let cursor_line = cursor_row + 1;
                             let display_val = if relativenumber {
                                 if abs_line == cursor_line {
-                                    if number {
-                                        abs_line
-                                    } else {
-                                        0
-                                    }
+                                    if number { abs_line } else { 0 }
                                 } else {
                                     abs_line.abs_diff(cursor_line)
                                 }
                             } else {
                                 abs_line
                             };
-                            gutter_text.push_str(&format!("{:>width$} ", display_val, width = number_width));
+                            gutter_text.push_str(&format!(
+                                "{:>width$} ",
+                                display_val,
+                                width = number_width
+                            ));
                         } else {
                             gutter_text.push_str(&" ".repeat(number_width + 1));
                         }
@@ -366,7 +372,10 @@ pub fn render(
             // Search highlights
             let mut search_decorations = Vec::new();
             if editor.global_options().hlsearch {
-                if let Some(search_reg) = editor.registers().get(crate::kernel::buffer::registers::RegisterName::Search) {
+                if let Some(search_reg) = editor
+                    .registers()
+                    .get(crate::kernel::buffer::registers::RegisterName::Search)
+                {
                     let search_pattern = &search_reg.text;
                     if !search_pattern.is_empty() {
                         let compile_opts = vim_regex::CompileOptions {
@@ -378,12 +387,13 @@ pub fn render(
                             ..vim_regex::CompileOptions::default()
                         };
                         if let Ok(regex) = vim_regex::Regex::compile(search_pattern, compile_opts) {
-                            let search_style = scheme.get_style("Search").cloned().unwrap_or_else(|| {
-                                let mut style = Style::default();
-                                style.fg = Some(vim_ui::Color::Black);
-                                style.bg = Some(vim_ui::Color::Yellow);
-                                style
-                            });
+                            let search_style =
+                                scheme.get_style("Search").cloned().unwrap_or_else(|| {
+                                    let mut style = Style::default();
+                                    style.fg = Some(vim_ui::Color::Black);
+                                    style.bg = Some(vim_ui::Color::Yellow);
+                                    style
+                                });
 
                             let scroll_y = snapshot.scroll_y;
                             let visible_rows = snapshot.visible_rows.min(view_rect.height as u32);
@@ -391,7 +401,9 @@ pub fn render(
                             for i in 0..visible_rows {
                                 let display_row = scroll_y + i;
                                 if display_row < snapshot.row_count() {
-                                    if let Some(brow) = snapshot.try_buffer_row_for_display_row(display_row) {
+                                    if let Some(brow) =
+                                        snapshot.try_buffer_row_for_display_row(display_row)
+                                    {
                                         visible_buffer_rows.insert(brow);
                                     }
                                 }
@@ -401,14 +413,17 @@ pub fn render(
                             for brow in visible_buffer_rows {
                                 let line_len = buffer_snapshot.line_len(brow);
                                 let line_text: String = buffer_snapshot
-                                    .text_for_range(text::Point::new(brow, 0)..text::Point::new(brow, line_len))
+                                    .text_for_range(
+                                        text::Point::new(brow, 0)..text::Point::new(brow, line_len),
+                                    )
                                     .collect();
-                                
+
                                 use vim_buffer::TextSearch;
                                 let matches = line_text.find_pattern(&regex);
                                 for (byte_start, match_len, _) in matches {
                                     let start_pt = text::Point::new(brow, byte_start as u32);
-                                    let end_pt = text::Point::new(brow, (byte_start + match_len) as u32);
+                                    let end_pt =
+                                        text::Point::new(brow, (byte_start + match_len) as u32);
                                     if let (Some(d_start), Some(d_end)) = (
                                         snapshot.try_point_to_display_point(start_pt),
                                         snapshot.try_point_to_display_point(end_pt),
@@ -456,11 +471,12 @@ pub fn render(
                 if win.options().cursorline {
                     let cursor_row_in_viewport = display_cursor.row().saturating_sub(scroll_y);
                     if cursor_row_in_viewport < view_rect.height as u32 {
-                        let cursorline_style = scheme.get_style("CursorLine").cloned().unwrap_or_else(|| {
-                            let mut style = Style::default();
-                            style.bg = Some(vim_ui::Color::Rgb(40, 40, 40));
-                            style
-                        });
+                        let cursorline_style =
+                            scheme.get_style("CursorLine").cloned().unwrap_or_else(|| {
+                                let mut style = Style::default();
+                                style.bg = Some(vim_ui::Color::Rgb(40, 40, 40));
+                                style
+                            });
                         decorations.push(DisplayDecoration {
                             start: DisplayPosition {
                                 row: cursor_row_in_viewport,
@@ -500,28 +516,32 @@ pub fn render(
             };
 
             let scrollbar = if scrollbar_option {
-                let track_style = scheme
-                    .get_style("ScrollbarTrack")
-                    .cloned()
-                    .unwrap_or_else(|| Style {
-                        bg: Some(vim_colorscheme::Color::DarkGrey),
-                        ..Default::default()
-                    });
+                let track_style =
+                    scheme
+                        .get_style("ScrollbarTrack")
+                        .cloned()
+                        .unwrap_or_else(|| Style {
+                            bg: Some(vim_colorscheme::Color::DarkGrey),
+                            ..Default::default()
+                        });
 
-                let thumb_style = scheme
-                    .get_style("ScrollbarThumb")
-                    .cloned()
-                    .unwrap_or_else(|| Style {
-                        bg: Some(vim_colorscheme::Color::Grey),
-                        ..Default::default()
-                    });
+                let thumb_style =
+                    scheme
+                        .get_style("ScrollbarThumb")
+                        .cloned()
+                        .unwrap_or_else(|| Style {
+                            bg: Some(vim_colorscheme::Color::Grey),
+                            ..Default::default()
+                        });
 
                 let cursor_style = scheme.get_style("ScrollbarCursor").cloned();
 
                 let total_rows = snapshot.row_count();
                 let visible_rows_clamped = (visible_rows as u32).min(total_rows);
-                let first_visible_row_clamped = (scroll_y as u32).min(total_rows.saturating_sub(visible_rows_clamped));
-                let cursor_row_clamped = Some((display_cursor.row() as u32).min(total_rows.saturating_sub(1)));
+                let first_visible_row_clamped =
+                    (scroll_y as u32).min(total_rows.saturating_sub(visible_rows_clamped));
+                let cursor_row_clamped =
+                    Some((display_cursor.row() as u32).min(total_rows.saturating_sub(1)));
 
                 Some(ScrollbarModel {
                     total_rows,
@@ -599,25 +619,28 @@ pub fn render(
                     ((scroll_x as f32 / scrollable as f32) * travel as f32).round() as u32
                 };
 
-                let track_style = scheme
-                    .get_style("ScrollbarTrack")
-                    .cloned()
-                    .unwrap_or_else(|| Style {
-                        bg: Some(vim_colorscheme::Color::DarkGrey),
-                        ..Default::default()
-                    });
+                let track_style =
+                    scheme
+                        .get_style("ScrollbarTrack")
+                        .cloned()
+                        .unwrap_or_else(|| Style {
+                            bg: Some(vim_colorscheme::Color::DarkGrey),
+                            ..Default::default()
+                        });
 
-                let thumb_style = scheme
-                    .get_style("ScrollbarThumb")
-                    .cloned()
-                    .unwrap_or_else(|| Style {
-                        bg: Some(vim_colorscheme::Color::Grey),
-                        ..Default::default()
-                    });
+                let thumb_style =
+                    scheme
+                        .get_style("ScrollbarThumb")
+                        .cloned()
+                        .unwrap_or_else(|| Style {
+                            bg: Some(vim_colorscheme::Color::Grey),
+                            ..Default::default()
+                        });
 
                 let y = view_rect.y + view_rect.height.saturating_sub(1);
                 for col in 0..view_rect.width {
-                    let is_thumb = col as u32 >= thumb_start && (col as u32) < thumb_start + thumb_width;
+                    let is_thumb =
+                        col as u32 >= thumb_start && (col as u32) < thumb_start + thumb_width;
                     let style = if is_thumb { thumb_style } else { track_style };
                     let x = view_rect.x + col;
                     if let Some(mut cell) = renderer.get_cell(x, y) {
@@ -660,8 +683,12 @@ pub fn render(
 
     if let Some(prompt_text) = prompt {
         let prefix = match editor.mode() {
-            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward) => "/",
-            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchBackward) => "?",
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward) => {
+                "/"
+            }
+            crate::kernel::mode::Mode::Command(
+                crate::kernel::mode::CommandKind::SearchBackward,
+            ) => "?",
             _ => ":",
         };
         let display = format!("{}{}", prefix, prompt_text);
@@ -681,9 +708,14 @@ pub fn render(
         } else if laststatus == 3 {
             if let Some(proj) = projections.iter().find(|p| p.is_current) {
                 let primary_sel = proj.selections.primary();
-                let head_point = proj.snapshot.offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
+                let head_point = proj
+                    .snapshot
+                    .offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
                 let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window) {
-                    cache.display_map.snapshot().point_to_display_point(head_point)
+                    cache
+                        .display_map
+                        .snapshot()
+                        .point_to_display_point(head_point)
                 } else {
                     DisplayPoint::new(head_point.row, head_point.column)
                 };
@@ -715,22 +747,38 @@ pub fn render(
         } else {
             let mode_str = match editor.mode() {
                 crate::kernel::mode::Mode::Insert => "-- INSERT --",
-                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => "-- VISUAL --",
-                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => "-- VISUAL LINE --",
-                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => "-- VISUAL BLOCK --",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => {
+                    "-- VISUAL --"
+                }
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => {
+                    "-- VISUAL LINE --"
+                }
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => {
+                    "-- VISUAL BLOCK --"
+                }
                 _ => "",
             };
             let left = mode_str.to_string();
             let right = if ruler {
                 if let Some(proj) = projections.iter().find(|p| p.is_current) {
                     let primary_sel = proj.selections.primary();
-                    let head_point = proj.snapshot.offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
-                    let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window) {
-                        cache.display_map.snapshot().point_to_display_point(head_point)
+                    let head_point = proj
+                        .snapshot
+                        .offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
+                    let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window)
+                    {
+                        cache
+                            .display_map
+                            .snapshot()
+                            .point_to_display_point(head_point)
                     } else {
                         DisplayPoint::new(head_point.row, head_point.column)
                     };
-                    format!("{},{} ", display_cursor.row() + 1, display_cursor.column() + 1)
+                    format!(
+                        "{},{} ",
+                        display_cursor.row() + 1,
+                        display_cursor.column() + 1
+                    )
                 } else {
                     String::new()
                 }
@@ -793,7 +841,10 @@ impl<'a> FormatResolver for WindowResolver<'a> {
         } else {
             use text::ToOffset;
             let primary_sel = self.projection.selections.primary();
-            let head_point = self.projection.snapshot.offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
+            let head_point = self
+                .projection
+                .snapshot
+                .offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
             head_point.row as usize + 1
         }
     }
@@ -804,7 +855,10 @@ impl<'a> FormatResolver for WindowResolver<'a> {
         } else {
             use text::ToOffset;
             let primary_sel = self.projection.selections.primary();
-            let head_point = self.projection.snapshot.offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
+            let head_point = self
+                .projection
+                .snapshot
+                .offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
             head_point.column as usize + 1
         }
     }
@@ -833,9 +887,15 @@ impl<'a> FormatResolver for WindowResolver<'a> {
             let mode_str = match self.mode {
                 crate::kernel::mode::Mode::Normal => "NORMAL",
                 crate::kernel::mode::Mode::Insert => "INSERT",
-                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => "VISUAL",
-                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => "V-LINE",
-                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => "V-BLOCK",
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => {
+                    "VISUAL"
+                }
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => {
+                    "V-LINE"
+                }
+                crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => {
+                    "V-BLOCK"
+                }
                 crate::kernel::mode::Mode::Command(_) => "COMMAND",
                 _ => "NORMAL",
             };

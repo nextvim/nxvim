@@ -1,9 +1,9 @@
 use crate::kernel::Editor;
+use crate::kernel::buffer::registers::{RegisterKind, RegisterName};
 use crate::kernel::ids::WindowId;
-use crate::kernel::buffer::registers::{RegisterName, RegisterKind};
-use crate::kernel::outcome::{Outcome, Effect};
-use vim_buffer::{ByteOffset, Edit, EditOrigin, PlannedEdit, Motions};
-use text::{Selection, SelectionGoal, ToOffset, ToPoint, Point};
+use crate::kernel::outcome::{Effect, Outcome};
+use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
+use vim_buffer::{ByteOffset, Edit, EditOrigin, Motions, PlannedEdit};
 
 pub fn write_register(
     editor: &mut Editor,
@@ -21,9 +21,7 @@ pub fn write_register(
         .and_then(RegisterName::from_char)
         .unwrap_or(RegisterName::Unnamed);
 
-    let selected = pending.map(|c| {
-        RegisterName::from_char(c).unwrap_or(RegisterName::Unnamed)
-    });
+    let selected = pending.map(|c| RegisterName::from_char(c).unwrap_or(RegisterName::Unnamed));
 
     if is_delete {
         editor.registers_mut().record_delete(selected, text, kind);
@@ -90,14 +88,18 @@ fn put_impl(
         .primary()
         .clone();
 
-    let text_buffer = editor.buffer(buffer_id).expect("live buffer").as_text_buffer();
+    let text_buffer = editor
+        .buffer(buffer_id)
+        .expect("live buffer")
+        .as_text_buffer();
     let cursor_offset = primary.head().to_offset(text_buffer);
 
     let linewise = kind == RegisterKind::Line;
 
     let insert_offset = if linewise {
         let current_row = if let Some(l) = ex_line {
-            l.saturating_sub(1).min(text_buffer.row_count().saturating_sub(1))
+            l.saturating_sub(1)
+                .min(text_buffer.row_count().saturating_sub(1))
         } else {
             primary.head().to_point(text_buffer).row
         };
@@ -136,7 +138,10 @@ fn put_impl(
 
     let selections_before = editor.window(window).unwrap().selections().clone();
     let mutation = {
-        let buffer = editor.buffers_mut().get_mut(buffer_id).expect("live buffer");
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
         crate::kernel::transaction::apply(
             buffer,
             crate::kernel::transaction::EditDescription {
@@ -153,7 +158,10 @@ fn put_impl(
     };
 
     // Recalculate landing selection
-    let text_buffer = editor.buffer(buffer_id).expect("live buffer").as_text_buffer();
+    let text_buffer = editor
+        .buffer(buffer_id)
+        .expect("live buffer")
+        .as_text_buffer();
     let landing = if linewise {
         let row = insert_offset
             .to_point(text_buffer)
@@ -189,7 +197,10 @@ fn put_impl(
     };
 
     if let Some(tx_id) = mutation.transaction {
-        let buffer = editor.buffers_mut().get_mut(buffer_id).expect("live buffer");
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
         buffer.record_selections(tx_id, final_selections);
     }
 

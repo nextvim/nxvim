@@ -1,5 +1,5 @@
 use crate::id::WindowId;
-use crate::types::{FloatingConfig, NavigationDirection, Axis};
+use crate::types::{Axis, FloatingConfig, NavigationDirection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {

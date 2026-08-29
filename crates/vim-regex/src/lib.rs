@@ -68,6 +68,15 @@ impl Regex {
         self.inner.find(context)
     }
 
+    /// Finds the first match at or after a buffer-relative UTF-8 byte offset.
+    pub fn find_from_in_context(
+        &self,
+        context: &dyn MatchContext,
+        start: usize,
+    ) -> Result<Option<Match>, CompileError> {
+        self.inner.find_from(context, start)
+    }
+
     /// Returns the emitted Oniguruma pattern for diagnostics and golden tests.
     pub fn backend_pattern(&self) -> &str {
         self.inner.pattern()
@@ -110,6 +119,16 @@ mod public_api_tests {
 
         let regex = Regex::compile(r"a\_.b", CompileOptions::default()).unwrap();
         assert_eq!(regex.find("a\nb").unwrap().unwrap().range, 0..3);
+    }
+
+    #[test]
+    fn find_from_keeps_buffer_relative_anchor_semantics() {
+        let regex = Regex::compile(r"^foo$", CompileOptions::default()).unwrap();
+        let context = BufferContext::new("foo\nfoo\nfoo");
+        let found = regex.find_from_in_context(&context, 4).unwrap().unwrap();
+        assert_eq!(found.range, 4..7);
+        let found = regex.find_from_in_context(&context, 5).unwrap().unwrap();
+        assert_eq!(found.range, 8..11);
     }
 
     #[test]

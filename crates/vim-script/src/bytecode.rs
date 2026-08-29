@@ -31,15 +31,22 @@ pub enum Instruction {
     LoadNull,
     LoadLocal(u32),
     StoreLocal(u32),
+    DeleteLocal(u32),
     LoadCapture(u32),
     StoreCapture(u32),
+    DeleteCapture(u32),
     LoadGlobal(ConstantId),
     StoreGlobal(ConstantId),
+    DeleteGlobal(ConstantId),
     LoadScoped {
         scope: u8,
         name: ConstantId,
     },
     StoreScoped {
+        scope: u8,
+        name: ConstantId,
+    },
+    DeleteScoped {
         scope: u8,
         name: ConstantId,
     },

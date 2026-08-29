@@ -1,11 +1,11 @@
 //! Pure functional layout projection for windows.
 
-use std::collections::HashMap;
-use vim_ui::Rect;
 use crate::kernel::{
     ids::WindowId,
     window::tabpage::{Axis, Layout, TabPage},
 };
+use std::collections::HashMap;
+use vim_ui::Rect;
 
 /// Projects the active tab page's window tree into terminal rectangles.
 pub fn layout(tab: &TabPage, screen: Rect) -> HashMap<WindowId, Rect> {

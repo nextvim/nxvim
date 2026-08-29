@@ -1,5 +1,5 @@
 use crate::kernel::Editor;
-use crate::kernel::ids::{WindowId};
+use crate::kernel::ids::WindowId;
 use vim_buffer::{BufferId, SelectionSet};
 
 /// A plain, kernel-read-only projection of a single window's state.

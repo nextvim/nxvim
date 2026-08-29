@@ -1,5 +1,5 @@
 use crate::Style;
-use crate::model::{DisplayPosition, DisplayDecoration, ScrollbarModel, TextViewModel};
+use crate::model::{DisplayDecoration, DisplayPosition, ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::window::View;
@@ -144,19 +144,17 @@ impl View for TextView {
         let model = self.model.as_ref()?;
         let cursor = model.cursor.filter(|cursor| cursor.visible)?;
         let row_idx = cursor.position.row as usize;
-        let gutter_width = model.rows.get(row_idx)
+        let gutter_width = model
+            .rows
+            .get(row_idx)
             .and_then(|row| row.gutter.as_ref())
             .map(|g| g.text.chars().count())
             .unwrap_or(0);
         let col = cursor.position.column as u16 + gutter_width as u16;
-        if cursor.position.row >= area.height as u32 || col as u32 >= area.width as u32
-        {
+        if cursor.position.row >= area.height as u32 || col as u32 >= area.width as u32 {
             return None;
         }
-        Some((
-            area.x + col,
-            area.y + cursor.position.row as u16,
-        ))
+        Some((area.x + col, area.y + cursor.position.row as u16))
     }
 
     fn cursor_shape(&self) -> crate::model::CursorShape {

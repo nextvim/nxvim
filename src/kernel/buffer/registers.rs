@@ -14,12 +14,12 @@ pub struct Register {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RegisterName {
-    Unnamed,       // "
-    SmallDelete,   // -
-    BlackHole,     // _
-    Numbered(u8),  // 0-9
-    Named(char),   // a-z or A-Z
-    Search,        // /
+    Unnamed,      // "
+    SmallDelete,  // -
+    BlackHole,    // _
+    Numbered(u8), // 0-9
+    Named(char),  // a-z or A-Z
+    Search,       // /
 }
 
 impl RegisterName {
@@ -148,8 +148,16 @@ impl Registers {
         self.numbered[1] = reg;
     }
 
-    pub fn record_yank(&mut self, selected: Option<RegisterName>, text: String, kind: RegisterKind) {
-        let reg = Register { text: text.clone(), kind };
+    pub fn record_yank(
+        &mut self,
+        selected: Option<RegisterName>,
+        text: String,
+        kind: RegisterKind,
+    ) {
+        let reg = Register {
+            text: text.clone(),
+            kind,
+        };
         if let Some(name) = selected {
             if name == RegisterName::BlackHole {
                 return;
@@ -161,8 +169,16 @@ impl Registers {
         self.set(RegisterName::Unnamed, reg);
     }
 
-    pub fn record_delete(&mut self, selected: Option<RegisterName>, text: String, kind: RegisterKind) {
-        let reg = Register { text: text.clone(), kind };
+    pub fn record_delete(
+        &mut self,
+        selected: Option<RegisterName>,
+        text: String,
+        kind: RegisterKind,
+    ) {
+        let reg = Register {
+            text: text.clone(),
+            kind,
+        };
         if let Some(name) = selected {
             if name == RegisterName::BlackHole {
                 return;

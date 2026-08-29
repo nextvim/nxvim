@@ -35,7 +35,8 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
             replace_backspace(editor, ctx.window)
         }
         Action::InsertRegister => {
-            let (text, _kind) = crate::kernel::command::normal::registers_ops::read_register(editor);
+            let (text, _kind) =
+                crate::kernel::command::normal::registers_ops::read_register(editor);
             if text.is_empty() {
                 Outcome::default()
             } else {
@@ -129,7 +130,10 @@ fn insert_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
                 origin: EditOrigin::InsertMode,
                 edits: vec![vim_buffer::PlannedEdit {
                     selection: None,
-                    edit: vim_buffer::Edit::insert(vim_buffer::ByteOffset(offset), text.to_string()),
+                    edit: vim_buffer::Edit::insert(
+                        vim_buffer::ByteOffset(offset),
+                        text.to_string(),
+                    ),
                 }],
                 selections: Some(selections_before),
                 join_previous: false,

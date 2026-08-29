@@ -122,7 +122,11 @@ impl<'a> Compiler<'a> {
                     self.store_target(&assignment.target, stmt.span, Some(stmt.id));
                 }
             }
-            StmtKind::Unlet(_) => {}
+            StmtKind::Unlet(targets) => {
+                for target in targets {
+                    self.compile_unlet_target(target);
+                }
+            }
             StmtKind::Expression(expr) => {
                 self.compile_expr(expr);
                 self.emit(Instruction::Pop, stmt.span);
@@ -549,6 +553,18 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn compile_unlet_target(&mut self, target: &Expr) {
+        let ExprKind::Variable(_) = &target.kind else {
+            self.error("C010", "unlet target must be a variable", target.span);
+            return;
+        };
+        let Some(symbol) = self.program.bindings.get(&target.id).copied() else {
+            self.error("C002", "unresolved variable", target.span);
+            return;
+        };
+        self.delete_symbol(symbol, target.span);
+    }
+
     fn store_target(
         &mut self,
         target: &AssignmentTarget,
@@ -667,6 +683,18 @@ impl<'a> Compiler<'a> {
         } else {
             let name = self.constant(Constant::String(self.symbol_runtime_name(symbol)));
             Instruction::StoreGlobal(name)
+        };
+        self.emit(instruction, span);
+    }
+    fn delete_symbol(&mut self, id: SymbolId, span: Span) {
+        let symbol = &self.program.symbols[id.0 as usize];
+        let instruction = if let Some(slot) = self.capture_slot(id) {
+            Instruction::DeleteCapture(slot)
+        } else if self.is_current_local(symbol) {
+            Instruction::DeleteLocal(symbol.slot)
+        } else {
+            let name = self.constant(Constant::String(self.symbol_runtime_name(symbol)));
+            Instruction::DeleteGlobal(name)
         };
         self.emit(instruction, span);
     }

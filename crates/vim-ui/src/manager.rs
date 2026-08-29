@@ -6,7 +6,7 @@ use crate::layout::{ComputedLayout, LayoutEngine, LayoutNode};
 use crate::overlay::OverlayManager;
 use crate::rect::Rect;
 use crate::renderer::Renderer;
-use crate::types::{FloatingConfig, NavigationDirection, Axis};
+use crate::types::{Axis, FloatingConfig, NavigationDirection};
 use crate::window::Window;
 use crate::window_store::WindowStore;
 use std::collections::HashSet;
@@ -507,10 +507,7 @@ mod tests {
     fn split_layout(left: WindowId, right: WindowId) -> LayoutNode {
         LayoutNode::Split {
             axis: Axis::Vertical,
-            children: vec![
-                LayoutNode::Leaf(left),
-                LayoutNode::Leaf(right),
-            ],
+            children: vec![LayoutNode::Leaf(left), LayoutNode::Leaf(right)],
         }
     }
 
@@ -579,8 +576,7 @@ mod tests {
         assert!(ui.window(first).is_some());
         assert!(!ui.layout().contains_leaf(first));
 
-        ui.activate_layout(LayoutNode::Leaf(first), first)
-            .unwrap();
+        ui.activate_layout(LayoutNode::Leaf(first), first).unwrap();
         assert_eq!(ui.focused_window_id(), first);
         assert!(ui.window(second).is_some());
     }

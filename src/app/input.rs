@@ -10,7 +10,10 @@
 
 use crossterm::event::{Event, KeyCode as CKey, KeyEvent, KeyEventKind, KeyModifiers as CMod};
 use std::collections::VecDeque;
-use vim_input::{Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, ResolvedAction, Resolver, SharedMappingStore};
+use vim_input::{
+    Key, KeyCode, Keymap, Mode, Modifiers, ResolveOutcome, ResolvedAction, Resolver,
+    SharedMappingStore,
+};
 
 pub struct InputTranslator {
     resolver: Resolver,
@@ -47,7 +50,11 @@ impl InputTranslator {
         self.translate_with_buffer(event, None)
     }
 
-    pub fn translate_with_buffer(&mut self, event: Event, current_buffer: Option<u64>) -> Option<ResolvedAction> {
+    pub fn translate_with_buffer(
+        &mut self,
+        event: Event,
+        current_buffer: Option<u64>,
+    ) -> Option<ResolvedAction> {
         match event {
             Event::Key(key_event) if key_event.kind != KeyEventKind::Release => {
                 let key = translate_key(key_event)?;
@@ -56,7 +63,12 @@ impl InputTranslator {
                     if let Some((k, allow)) = self.mapped_keys.pop_front() {
                         let outcome = if allow {
                             match &self.mappings {
-                                Some(m) => self.resolver.feed_with_mappings(k, &self.keymap, m.clone(), current_buffer),
+                                Some(m) => self.resolver.feed_with_mappings(
+                                    k,
+                                    &self.keymap,
+                                    m.clone(),
+                                    current_buffer,
+                                ),
                                 None => self.resolver.feed(k, &self.keymap),
                             }
                         } else {
@@ -73,47 +85,45 @@ impl InputTranslator {
 
     fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<ResolvedAction> {
         let outcome = match &self.mappings {
-            Some(mappings) => self.resolver.feed_with_mappings(
-                key,
-                &self.keymap,
-                mappings.clone(),
-                buffer,
-            ),
+            Some(mappings) => {
+                self.resolver
+                    .feed_with_mappings(key, &self.keymap, mappings.clone(), buffer)
+            }
             None => self.resolver.feed(key, &self.keymap),
         };
         self.handle_outcome(outcome, buffer)
     }
 
-
-    fn handle_outcome(&mut self, outcome: ResolveOutcome, _buffer: Option<u64>) -> Option<ResolvedAction> {
+    fn handle_outcome(
+        &mut self,
+        outcome: ResolveOutcome,
+        _buffer: Option<u64>,
+    ) -> Option<ResolvedAction> {
         match outcome {
             ResolveOutcome::Resolved(resolved) => Some(resolved),
-            ResolveOutcome::Mapping(mapping) => {
-                match mapping.expansion {
-                    vim_input::MappingExpansion::NoOp => {
-                        Some(ResolvedAction {
-                            action: vim_input::Action::NoOp,
-                            register: None,
-                        })
-                    }
-                    vim_input::MappingExpansion::Keys(keys) => {
-                        if let Ok(sequence) = vim_input::KeySequence::parse(&keys) {
-                            let mut exact = VecDeque::new();
-                            for pattern in sequence.items {
-                                if let vim_input::KeyPattern::Exact(k) = pattern {
-                                    exact.push_back(k);
-                                } else {
-                                    return None;
-                                }
+            ResolveOutcome::Mapping(mapping) => match mapping.expansion {
+                vim_input::MappingExpansion::NoOp => Some(ResolvedAction {
+                    action: vim_input::Action::NoOp,
+                    register: None,
+                }),
+                vim_input::MappingExpansion::Keys(keys) => {
+                    if let Ok(sequence) = vim_input::KeySequence::parse(&keys) {
+                        let mut exact = VecDeque::new();
+                        for pattern in sequence.items {
+                            if let vim_input::KeyPattern::Exact(k) = pattern {
+                                exact.push_back(k);
+                            } else {
+                                return None;
                             }
-                            let allow_mappings = !mapping.flags.non_recursive;
-                            self.mapped_keys.extend(exact.into_iter().map(|k| (k, allow_mappings)));
                         }
-                        None
+                        let allow_mappings = !mapping.flags.non_recursive;
+                        self.mapped_keys
+                            .extend(exact.into_iter().map(|k| (k, allow_mappings)));
                     }
-                    _ => None,
+                    None
                 }
-            }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -130,15 +140,13 @@ pub enum RawKey {
 /// Helper for raw-key bypass in Command mode.
 pub fn translate_raw(event: &Event) -> Option<RawKey> {
     match event {
-        Event::Key(key_event) if key_event.kind != KeyEventKind::Release => {
-            match key_event.code {
-                CKey::Char(ch) => Some(RawKey::Char(ch)),
-                CKey::Backspace => Some(RawKey::Backspace),
-                CKey::Enter => Some(RawKey::Enter),
-                CKey::Esc => Some(RawKey::Escape),
-                _ => None,
-            }
-        }
+        Event::Key(key_event) if key_event.kind != KeyEventKind::Release => match key_event.code {
+            CKey::Char(ch) => Some(RawKey::Char(ch)),
+            CKey::Backspace => Some(RawKey::Backspace),
+            CKey::Enter => Some(RawKey::Enter),
+            CKey::Esc => Some(RawKey::Escape),
+            _ => None,
+        },
         _ => None,
     }
 }

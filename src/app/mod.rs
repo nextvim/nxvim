@@ -166,9 +166,7 @@ impl App {
                         Outcome::default()
                     }
                 }
-                input::RawKey::Escape => {
-                    self.editor.handle_substitute_confirm('q')
-                }
+                input::RawKey::Escape => self.editor.handle_substitute_confirm('q'),
                 _ => Outcome::default(),
             };
             for effect in &outcome.effects {
@@ -212,7 +210,9 @@ impl App {
         if matches!(
             mode,
             crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward)
-                | crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchBackward)
+                | crate::kernel::mode::Mode::Command(
+                    crate::kernel::mode::CommandKind::SearchBackward
+                )
         ) {
             let delimiter = if matches!(
                 mode,
@@ -222,7 +222,8 @@ impl App {
             } else {
                 '?'
             };
-            let (pattern, _) = crate::kernel::command::search::parse_search_query(self.prompt.text(), delimiter);
+            let (pattern, _) =
+                crate::kernel::command::search::parse_search_query(self.prompt.text(), delimiter);
             self.editor.registers_mut().set(
                 crate::kernel::buffer::registers::RegisterName::Search,
                 crate::kernel::buffer::registers::Register {
@@ -237,7 +238,9 @@ impl App {
         ) {
             if let Some(cmd) = crate::kernel::command::ex::parse(self.prompt.text()) {
                 if cmd.name == "s" || cmd.name == "substitute" {
-                    if let Ok(args) = crate::kernel::command::substitute::parse_substitute(&cmd.arguments) {
+                    if let Ok(args) =
+                        crate::kernel::command::substitute::parse_substitute(&cmd.arguments)
+                    {
                         self.editor.registers_mut().set(
                             crate::kernel::buffer::registers::RegisterName::Search,
                             crate::kernel::buffer::registers::Register {
@@ -245,7 +248,8 @@ impl App {
                                 kind: crate::kernel::buffer::registers::RegisterKind::Character,
                             },
                         );
-                        outcome.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+                        outcome.invalidation =
+                            crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
                     }
                 }
             }
@@ -257,11 +261,15 @@ impl App {
         let mode = self.editor.mode();
         match mode {
             crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward) => {
-                let (pattern, offset) = crate::kernel::command::search::parse_search_query(line, '/');
+                let (pattern, offset) =
+                    crate::kernel::command::search::parse_search_query(line, '/');
                 crate::kernel::command::search::search(&mut self.editor, &pattern, true, 1, offset)
             }
-            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchBackward) => {
-                let (pattern, offset) = crate::kernel::command::search::parse_search_query(line, '?');
+            crate::kernel::mode::Mode::Command(
+                crate::kernel::mode::CommandKind::SearchBackward,
+            ) => {
+                let (pattern, offset) =
+                    crate::kernel::command::search::parse_search_query(line, '?');
                 crate::kernel::command::search::search(&mut self.editor, &pattern, false, 1, offset)
             }
             _ => {

@@ -42,31 +42,31 @@ This checklist implements [`DESIGN.md`](DESIGN.md). Compatibility decisions must
 ## Syntax command parser
 
 - [ ] Define source-located `SyntaxCommand` variants.
-- [ ] Parse `:syntax case match|ignore`.
-- [ ] Parse `:syntax keyword` and keyword-specific options.
-- [ ] Parse `:syntax match` without altering Vim regex escapes.
-- [ ] Parse `:syntax region` with repeated `start=`, `skip=`, and `end=` arguments.
-- [ ] Parse `:syntax cluster` with `contains=`, `add=`, and `remove=`.
+- [x] Parse `:syntax case match|ignore`.
+- [x] Parse `:syntax keyword` and keyword-specific options.
+- [x] Parse `:syntax match` without altering Vim regex escapes.
+- [x] Parse `:syntax region` with repeated `start=`, `skip=`, and `end=` arguments.
+- [x] Parse `:syntax cluster` with `contains=`, `add=`, and `remove=`.
 - [ ] Parse `:syntax include`, `clear`, `reset`, `list`, `on`, `off`, `enable`, and `manual` as applicable to the crate boundary.
-- [ ] Parse `:syntax sync` forms, including `fromstart`, `clear`, `minlines`, `maxlines`, `linebreaks`, `match`, and `ccomment`.
+- [x] Parse `:syntax sync` forms, including `fromstart`, `clear`, `minlines`, `maxlines`, `linebreaks`, `match`, and `ccomment`.
 - [ ] Parse `:syntax spell` forms.
-- [ ] Parse arbitrary legal pattern delimiters and escaped delimiters.
-- [ ] Parse group lists and clusters, including escaped commas and `@cluster` references.
-- [ ] Parse `contains=`, `contained`, `containedin=`, and `nextgroup=`.
-- [ ] Parse `skipwhite`, `skipnl`, and `skipempty`.
-- [ ] Parse `transparent`, `display`, `extend`, `keepend`, `oneline`, and `excludenl`.
-- [ ] Parse `matchgroup=`, `conceal`, `concealends`, `cchar=`, `fold`, and spell flags.
-- [ ] Parse `hs`, `he`, `ms`, `me`, `rs`, `re`, and `lc` offsets with Vim validation.
+- [x] Parse arbitrary legal pattern delimiters and escaped delimiters.
+- [x] Parse group lists and clusters, including escaped commas and `@cluster` references.
+- [x] Parse `contains=`, `contained`, `containedin=`, and `nextgroup=`.
+- [x] Parse `skipwhite`, `skipnl`, and `skipempty`.
+- [x] Parse `transparent`, `display`, `extend`, `keepend`, `oneline`, and `excludenl`.
+- [x] Parse `matchgroup=`, `conceal`, `concealends`, `cchar=`, `fold`, and spell flags.
+- [x] Parse `hs`, `he`, `ms`, `me`, `rs`, `re`, and `lc` offsets with Vim validation.
 - [ ] Aggregate recoverable diagnostics instead of aborting the entire syntax file.
 
 ## Program model and compilation
 
 - [ ] Add typed `GroupId`, `PatternId`, and `ClusterId` identifiers.
-- [ ] Intern syntax group names using Vim's identity/case rules.
+- [x] Intern syntax group names using Vim's ASCII-insensitive identity rules.
 - [ ] Represent keyword, match, region, cluster, sync, and highlight-link definitions.
-- [ ] Preserve command order for precedence and `:syntax clear` behavior.
-- [ ] Compile all patterns with `vim-regex` and pass relevant editor options.
-- [ ] Add cursor/offset matching to `vim-regex` without slicing buffer text.
+- [x] Preserve command order for implemented precedence and `:syntax clear` behavior.
+- [x] Compile implemented patterns with `vim-regex` and pass case/`iskeyword` options.
+- [x] Add cursor/offset matching to `vim-regex` without slicing buffer text.
 - [ ] Carry `\z(...)` start captures into region end patterns with `compile_with_external_captures`.
 - [ ] Cache dynamic end regexes by pattern and bounded capture tuple.
 - [ ] Expand clusters and selectors (`ALL`, `ALLBUT`, `TOP`, `CONTAINED`) with cycle detection.
@@ -78,17 +78,17 @@ This checklist implements [`DESIGN.md`](DESIGN.md). Compatibility decisions must
 
 - [ ] Implement deterministic left-to-right candidate discovery.
 - [ ] Reproduce Vim's same-position precedence using oracle fixtures.
-- [ ] Implement syntax keyword boundaries using `'iskeyword'`.
+- [x] Implement syntax keyword boundaries using `'iskeyword'`.
 - [ ] Implement top-level versus contained eligibility.
 - [ ] Implement `contains`, `containedin`, clusters, and special selectors.
 - [ ] Implement region start/skip/end selection and nesting.
-- [ ] Implement multiple start/end patterns in command order.
-- [ ] Implement `matchgroup` boundary highlighting.
+- [x] Implement multiple start/end patterns for simple top-level regions.
+- [x] Implement `matchgroup` boundary highlighting for simple regions.
 - [ ] Implement `nextgroup` with all skip flags.
 - [ ] Implement `transparent` group inheritance.
 - [ ] Implement `keepend`, `extend`, `oneline`, and `excludenl` exactly.
 - [ ] Implement all match/region offsets and clipping behavior.
-- [ ] Implement zero-width match progress with Vim-equivalent outcomes and termination limits.
+- [x] Guarantee UTF-8-safe progress and termination limits for zero-width matches (oracle equivalence remains to be verified).
 - [ ] Normalize winning spans into ordered, non-overlapping UTF-8 byte ranges.
 - [ ] Verify behavior at newline, end-of-line, end-of-buffer, and invalid/incomplete regions.
 
@@ -106,12 +106,12 @@ This checklist implements [`DESIGN.md`](DESIGN.md). Compatibility decisions must
 
 ## Highlight and colorscheme resolution
 
-- [ ] Store syntax group names independently of concrete colors.
+- [x] Store syntax group names independently of concrete colors.
 - [ ] Implement `:highlight link`, `default link`, replacement, and clear semantics.
-- [ ] Resolve link chains with cycle detection and Vim-compatible fallback.
-- [ ] Resolve final groups through `vim_colorscheme::ColorScheme` to `Style`.
+- [x] Resolve link chains with cycle detection and safe fallback.
+- [x] Resolve final groups through `vim_colorscheme::ColorScheme` to `Style`.
 - [ ] Deduplicate diagnostics for missing style groups.
-- [ ] Re-resolve styles without re-running syntax when the colorscheme changes.
+- [x] Re-resolve styles without re-running syntax when the colorscheme changes.
 - [ ] Verify `synID()` versus `synIDtrans()` concepts are represented at the correct layer.
 
 ## Incremental evaluation and synchronization
@@ -144,8 +144,8 @@ This checklist implements [`DESIGN.md`](DESIGN.md). Compatibility decisions must
 
 ## Tests, oracle, and quality gates
 
-- [ ] Add parser tests for every accepted and rejected option.
-- [ ] Add engine tests for precedence, containment, regions, captures, offsets, and links.
+- [ ] Add exhaustive parser tests for every accepted and rejected option (core command coverage exists).
+- [ ] Add exhaustive engine tests for precedence, containment, regions, captures, offsets, and links (keywords, matches, simple regions, precedence, clear, and links are covered).
 - [ ] Add malformed-input and resource-limit tests.
 - [ ] Add a pinned headless-Vim oracle harness based on `synID()`/`synIDattr()`.
 - [ ] Record fixture schema and Vim version similarly to `vim-regex`.

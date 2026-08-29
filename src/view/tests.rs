@@ -467,8 +467,8 @@ fn a_terminal_resize_forces_every_window_to_rebuild() {
 
 #[test]
 fn test_render_selection_styles() {
-    use vim_ui::model::DisplaySelection;
     use vim_ui::Style;
+    use vim_ui::model::DisplaySelection;
 
     let mut selection_style = Style::default();
     selection_style.bg = Some(vim_ui::Color::Yellow);
@@ -550,7 +550,10 @@ fn test_gutter_rendering() {
 
     // 3. Set relativenumber on, move cursor to second line (row 1)
     editor.submit_command_line("set relativenumber");
-    editor.execute(Action::MoveDown { count: 1, select: false });
+    editor.execute(Action::MoveDown {
+        count: 1,
+        select: false,
+    });
     render_frame(&mut editor, &mut render_state, screen, &[], true);
     let cache = render_state.windows.get(&win_id).unwrap();
     let model = cache.last_model.as_ref().unwrap();
@@ -596,22 +599,62 @@ fn test_statusline_rendering() {
 
     // Default statusline (laststatus=1, ruler=false): 1 window -> no statusline
     let mut out = Vec::new();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     // Enable laststatus=2: window must show statusline (height - 1 statusline, screen.height - 1 bottom)
     editor.submit_command_line("set laststatus=2");
     out.clear();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     // Enable ruler: statusline must format and include cursor coordinates
     editor.submit_command_line("set ruler");
     out.clear();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     // Enable laststatus=3: global statusline at bottom row
     editor.submit_command_line("set laststatus=3");
     out.clear();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -622,12 +665,32 @@ fn test_tabline_rendering() {
 
     // Default showtabline=1 (no tabline with only 1 tab page)
     let mut out = Vec::new();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     // Set showtabline=2 (always show tabline)
     editor.submit_command_line("set showtabline=2");
     out.clear();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -638,12 +701,32 @@ fn test_scrollbar_rendering() {
 
     // Default scrollbar=false
     let mut out = Vec::new();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     // Enable scrollbar option
     editor.submit_command_line("set scrollbar");
     out.clear();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     let win_id = editor.current_context().window;
     let cache = render_state.windows.get(&win_id).unwrap();
@@ -661,10 +744,30 @@ fn test_hscrollbar_rendering() {
 
     // Default hscrollbar=false
     let mut out = Vec::new();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 
     // Enable hscrollbar option
     editor.submit_command_line("set hscrollbar");
     out.clear();
-    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+    render(
+        &mut out,
+        &mut editor,
+        &mut render_state,
+        "",
+        None,
+        screen,
+        &[],
+        true,
+    )
+    .unwrap();
 }

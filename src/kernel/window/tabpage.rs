@@ -24,17 +24,16 @@ pub enum NavigationDirection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Layout {
     Leaf(WindowId),
-    Split {
-        axis: Axis,
-        children: Vec<Layout>,
-    },
+    Split { axis: Axis, children: Vec<Layout> },
 }
 
 impl Layout {
     pub fn contains_window(&self, id: WindowId) -> bool {
         match self {
             Layout::Leaf(win_id) => *win_id == id,
-            Layout::Split { children, .. } => children.iter().any(|child| child.contains_window(id)),
+            Layout::Split { children, .. } => {
+                children.iter().any(|child| child.contains_window(id))
+            }
         }
     }
 
@@ -65,18 +64,20 @@ impl Layout {
     pub fn leftmost_leaf(&self) -> WindowId {
         match self {
             Layout::Leaf(win_id) => *win_id,
-            Layout::Split { children, .. } => {
-                children.first().expect("split must not be empty").leftmost_leaf()
-            }
+            Layout::Split { children, .. } => children
+                .first()
+                .expect("split must not be empty")
+                .leftmost_leaf(),
         }
     }
 
     pub fn rightmost_leaf(&self) -> WindowId {
         match self {
             Layout::Leaf(win_id) => *win_id,
-            Layout::Split { children, .. } => {
-                children.last().expect("split must not be empty").rightmost_leaf()
-            }
+            Layout::Split { children, .. } => children
+                .last()
+                .expect("split must not be empty")
+                .rightmost_leaf(),
         }
     }
 
@@ -169,7 +170,11 @@ impl Layout {
                     let (removed, sibling) = child.remove_window(target);
                     if removed {
                         if child.is_empty_or_single() {
-                            if let Layout::Split { children: mut sub_c, .. } = children.remove(i) {
+                            if let Layout::Split {
+                                children: mut sub_c,
+                                ..
+                            } = children.remove(i)
+                            {
                                 if !sub_c.is_empty() {
                                     children.insert(i, sub_c.remove(0));
                                 }
@@ -314,7 +319,9 @@ impl TabStore {
     }
 
     pub fn active_mut(&mut self) -> &mut TabPage {
-        self.pages.get_mut(&self.active).expect("active tab must exist")
+        self.pages
+            .get_mut(&self.active)
+            .expect("active tab must exist")
     }
 
     pub fn set_active(&mut self, id: TabPageId) {
@@ -322,7 +329,6 @@ impl TabStore {
             self.active = id;
         }
     }
-
 
     pub fn next_tab(&mut self, count: usize) -> TabPageId {
         let index = self

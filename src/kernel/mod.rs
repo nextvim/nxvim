@@ -15,7 +15,7 @@ pub mod transaction;
 pub mod window;
 
 use std::collections::HashMap;
-use vim_buffer::{Buffer, BufferId, Anchor};
+use vim_buffer::{Anchor, Buffer, BufferId};
 use vim_input::Action;
 
 use buffer::BufferStore;
@@ -634,7 +634,10 @@ mod tests {
         assert_eq!(text_of(&editor), "def\n");
         assert_eq!(cursor(&editor), Point::new(0, 0));
 
-        editor.execute(Action::MoveToEndOfLine { count: 1, select: false });
+        editor.execute(Action::MoveToEndOfLine {
+            count: 1,
+            select: false,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 3));
         editor.execute(Action::DeleteChar { count: 1 });
         assert_eq!(text_of(&editor), "de\n");
@@ -648,7 +651,10 @@ mod tests {
     #[test]
     fn delete_char_before_deletes_char_before_cursor() {
         let mut editor = Editor::new("abcdef\n");
-        editor.execute(Action::MoveRight { count: 2, select: false });
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: false,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 2));
 
         let outcome = editor.execute(Action::DeleteCharBefore { count: 1 });
@@ -905,7 +911,10 @@ mod tests {
     #[test]
     fn undo_restores_cursor_position() {
         let mut editor = Editor::new("foo bar baz");
-        editor.execute(Action::MoveToWord { count: 1, select: false });
+        editor.execute(Action::MoveToWord {
+            count: 1,
+            select: false,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 4));
 
         editor.execute(dw());
@@ -928,7 +937,10 @@ mod tests {
         editor.execute(Action::InsertText("bar ".to_string()));
         assert_eq!(text_of(&editor), "bar foo baz");
 
-        editor.execute(Action::MoveLeft { count: 4, select: false });
+        editor.execute(Action::MoveLeft {
+            count: 4,
+            select: false,
+        });
         editor.execute(Action::InsertText("mid ".to_string()));
         assert_eq!(text_of(&editor), "mid bar foo baz");
     }
@@ -1051,7 +1063,10 @@ mod tests {
         assert_eq!(editor.mode(), Mode::Normal);
 
         let outcome = editor.execute(Action::SetToCommand);
-        assert_eq!(editor.mode(), Mode::Command(crate::kernel::mode::CommandKind::Ex));
+        assert_eq!(
+            editor.mode(),
+            Mode::Command(crate::kernel::mode::CommandKind::Ex)
+        );
         assert!(outcome.mode_changed);
 
         let outcome = editor.execute(Action::Clear);
@@ -1447,13 +1462,24 @@ mod tests {
 
         editor.execute(Action::MarkSet { ch: 'a' });
 
-        editor.execute(Action::MoveToStartOfLine { count: 1, select: false });
+        editor.execute(Action::MoveToStartOfLine {
+            count: 1,
+            select: false,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 0));
 
-        editor.execute(Action::MarkJump { ch: 'a', select: false, linewise: false });
+        editor.execute(Action::MarkJump {
+            ch: 'a',
+            select: false,
+            linewise: false,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 3));
 
-        editor.execute(Action::MarkJump { ch: 'a', select: false, linewise: true });
+        editor.execute(Action::MarkJump {
+            ch: 'a',
+            select: false,
+            linewise: true,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 2));
     }
 
@@ -1461,7 +1487,7 @@ mod tests {
     fn test_global_marks() {
         let mut editor = Editor::new("first buffer\n");
         let buf1 = editor.current_context().buffer;
-        
+
         editor.execute(Action::MoveToColumn { count: 4 });
         editor.execute(Action::MarkSet { ch: 'A' });
 
@@ -1470,7 +1496,11 @@ mod tests {
         assert_ne!(buf1, buf2);
         editor.set_window_buffer(editor.current_context().window, buf2);
 
-        editor.execute(Action::MarkJump { ch: 'A', select: false, linewise: false });
+        editor.execute(Action::MarkJump {
+            ch: 'A',
+            select: false,
+            linewise: false,
+        });
         assert_eq!(editor.current_context().buffer, buf1);
         assert_eq!(cursor(&editor), Point::new(0, 3));
     }
@@ -1478,15 +1508,22 @@ mod tests {
     #[test]
     fn test_unset_mark_no_op() {
         let mut editor = Editor::new("hello\n");
-        editor.execute(Action::MarkJump { ch: 'z', select: false, linewise: false });
+        editor.execute(Action::MarkJump {
+            ch: 'z',
+            select: false,
+            linewise: false,
+        });
         assert_eq!(cursor(&editor), Point::new(0, 0));
     }
 
     #[test]
     fn test_jumplist_navigation() {
         let mut editor = Editor::new("0\n1\n2\n3\n4\n5");
-        
-        editor.execute(Action::MoveToLine { line: 6, select: false });
+
+        editor.execute(Action::MoveToLine {
+            line: 6,
+            select: false,
+        });
         assert_eq!(cursor(&editor), Point::new(5, 0));
 
         editor.execute(Action::JumpToOlderPosition);
@@ -1500,7 +1537,10 @@ mod tests {
     fn test_visual_exit_sets_marks() {
         let mut editor = Editor::new("hello\n");
         editor.execute(Action::SetToVisual);
-        editor.execute(Action::MoveRight { count: 1, select: true });
+        editor.execute(Action::MoveRight {
+            count: 1,
+            select: true,
+        });
         editor.execute(Action::SetToNormal);
 
         let buf = editor.current_buffer();
@@ -1511,12 +1551,21 @@ mod tests {
     #[test]
     fn test_named_register_roundtrip() {
         let mut editor = Editor::new("hello world\n");
-        editor.execute_with_register(Action::YankMotion {
+        editor.execute_with_register(
+            Action::YankMotion {
+                count: 1,
+                motion: Box::new(Action::MoveToWord {
+                    count: 1,
+                    select: false,
+                }),
+            },
+            Some('a'),
+        );
+
+        editor.execute(Action::MoveToEndOfLine {
             count: 1,
-            motion: Box::new(Action::MoveToWord { count: 1, select: false }),
-        }, Some('a'));
-        
-        editor.execute(Action::MoveToEndOfLine { count: 1, select: false });
+            select: false,
+        });
         editor.execute_with_register(Action::Put { count: 1 }, Some('a'));
         assert_eq!(text_of(&editor), "hello worldhello \n");
     }
@@ -1526,19 +1575,27 @@ mod tests {
         let mut editor = Editor::new("hello world\n");
         editor.execute(Action::YankMotion {
             count: 1,
-            motion: Box::new(Action::MoveToWord { count: 1, select: false }),
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
         });
         let (text, _) = command::normal::registers_ops::read_register(&editor);
         assert_eq!(text, "hello ");
 
         editor.execute(Action::DeleteMotion {
             count: 1,
-            motion: Box::new(Action::MoveToWord { count: 1, select: false }),
+            motion: Box::new(Action::MoveToWord {
+                count: 1,
+                select: false,
+            }),
         });
         let (text, _) = command::normal::registers_ops::read_register(&editor);
         assert_eq!(text, "hello ");
-        
-        let (text_small, _) = editor.registers.get(crate::kernel::buffer::registers::RegisterName::SmallDelete)
+
+        let (text_small, _) = editor
+            .registers
+            .get(crate::kernel::buffer::registers::RegisterName::SmallDelete)
             .map(|r| (r.text.clone(), r.kind))
             .unwrap();
         assert_eq!(text_small, "hello ");
@@ -1578,7 +1635,7 @@ mod tests {
     fn test_linewise_yank_paste_above_below() {
         let mut editor = Editor::new("line 1\nline 2\n");
         editor.execute(Action::YankLine { count: 1 });
-        
+
         editor.execute(Action::Put { count: 1 });
         assert_eq!(text_of(&editor), "line 1\nline 1\nline 2\n");
 
@@ -1591,18 +1648,24 @@ mod tests {
         let mut editor = Editor::new("hello\n");
         editor.execute(Action::YankMotion {
             count: 2,
-            motion: Box::new(Action::MoveRight { count: 1, select: false }),
+            motion: Box::new(Action::MoveRight {
+                count: 1,
+                select: false,
+            }),
         });
-        
+
         editor.execute(Action::Put { count: 1 });
         assert_eq!(text_of(&editor), "hheello\n");
 
         let mut editor = Editor::new("hello\n");
         editor.execute(Action::YankMotion {
             count: 2,
-            motion: Box::new(Action::MoveRight { count: 1, select: false }),
+            motion: Box::new(Action::MoveRight {
+                count: 1,
+                select: false,
+            }),
         });
-        
+
         editor.execute(Action::PutBefore { count: 1 });
         assert_eq!(text_of(&editor), "hehello\n");
     }
@@ -1611,12 +1674,18 @@ mod tests {
     fn test_visual_mode_yank() {
         let mut editor = Editor::new("hello world\n");
         editor.execute(Action::SetToVisual);
-        editor.execute(Action::MoveRight { count: 4, select: true });
+        editor.execute(Action::MoveRight {
+            count: 4,
+            select: true,
+        });
         editor.execute(Action::YankMotion {
             count: 0,
-            motion: Box::new(Action::MoveRight { count: 0, select: true }),
+            motion: Box::new(Action::MoveRight {
+                count: 0,
+                select: true,
+            }),
         });
-        
+
         let (text, _) = command::normal::registers_ops::read_register(&editor);
         assert_eq!(text, "hello");
     }
@@ -1626,7 +1695,10 @@ mod tests {
         let mut editor = Editor::new("world\n");
         editor.execute(Action::YankMotion {
             count: 5,
-            motion: Box::new(Action::MoveRight { count: 1, select: false }),
+            motion: Box::new(Action::MoveRight {
+                count: 1,
+                select: false,
+            }),
         });
 
         editor.execute(Action::SetToInsert);
@@ -1639,17 +1711,23 @@ mod tests {
         use text::ToPoint;
         let (pattern, offset) = command::search::parse_search_query("pattern/e+2", '/');
         assert_eq!(pattern, "pattern");
-        assert_eq!(offset, Some(command::search::SearchOffset {
-            line_offset: None,
-            char_offset: Some((true, 2)),
-        }));
+        assert_eq!(
+            offset,
+            Some(command::search::SearchOffset {
+                line_offset: None,
+                char_offset: Some((true, 2)),
+            })
+        );
 
         let (pattern, offset) = command::search::parse_search_query("pattern/+3", '/');
         assert_eq!(pattern, "pattern");
-        assert_eq!(offset, Some(command::search::SearchOffset {
-            line_offset: Some(3),
-            char_offset: None,
-        }));
+        assert_eq!(
+            offset,
+            Some(command::search::SearchOffset {
+                line_offset: Some(3),
+                char_offset: None,
+            })
+        );
 
         let (pattern, offset) = command::search::parse_search_query("pat\\/tern", '/');
         assert_eq!(pattern, "pat/tern");
@@ -1657,34 +1735,82 @@ mod tests {
 
         let mut editor = Editor::new("first line\nsecond line\nthird line");
         let _outcome = command::search::search(&mut editor, "line", true, 1, None);
-        assert_eq!(editor.registers().get(buffer::registers::RegisterName::Search).unwrap().text, "line");
-        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
-        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        assert_eq!(
+            editor
+                .registers()
+                .get(buffer::registers::RegisterName::Search)
+                .unwrap()
+                .text,
+            "line"
+        );
+        let primary = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .selections()
+            .primary();
+        let point = primary.head().to_point(
+            editor
+                .buffer(editor.current_context().buffer)
+                .unwrap()
+                .as_text_buffer(),
+        );
         assert_eq!(point.row, 0);
         assert_eq!(point.column, 6);
 
         let _outcome = command::search::search(&mut editor, "", true, 1, None);
-        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
-        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        let primary = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .selections()
+            .primary();
+        let point = primary.head().to_point(
+            editor
+                .buffer(editor.current_context().buffer)
+                .unwrap()
+                .as_text_buffer(),
+        );
         assert_eq!(point.row, 1);
         assert_eq!(point.column, 7);
 
         let mut editor = Editor::new("line 1\nline 2\nline 3");
-        let _outcome = command::search::search(&mut editor, "line", true, 1, Some(command::search::SearchOffset {
-            line_offset: Some(1),
-            char_offset: None,
-        }));
-        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
-        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        let _outcome = command::search::search(
+            &mut editor,
+            "line",
+            true,
+            1,
+            Some(command::search::SearchOffset {
+                line_offset: Some(1),
+                char_offset: None,
+            }),
+        );
+        let primary = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .selections()
+            .primary();
+        let point = primary.head().to_point(
+            editor
+                .buffer(editor.current_context().buffer)
+                .unwrap()
+                .as_text_buffer(),
+        );
         assert_eq!(point.row, 2);
         assert_eq!(point.column, 0);
 
         let mut editor = Editor::new("hello hello hello");
         let _outcome = command::search::search_word_under(&mut editor, true, 1);
-        let primary = editor.window(editor.current_context().window).unwrap().selections().primary();
-        let point = primary.head().to_point(editor.buffer(editor.current_context().buffer).unwrap().as_text_buffer());
+        let primary = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .selections()
+            .primary();
+        let point = primary.head().to_point(
+            editor
+                .buffer(editor.current_context().buffer)
+                .unwrap()
+                .as_text_buffer(),
+        );
         assert_eq!(point.row, 0);
         assert_eq!(point.column, 6);
     }
 }
-
