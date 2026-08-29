@@ -16,6 +16,7 @@ fn main() -> io::Result<()> {
     let args = app::args::Args::parse();
     let mut session = terminal::TerminalSession::enter()?;
     let mut app = app::App::open(&args.paths);
+    app.init(&args.pre_config_cmds, &args.post_config_cmds, &args.scripts);
     let result = runtime::run(&mut app, &session, &mut io::stdout());
     session.restore()?;
     result

@@ -40,7 +40,7 @@ impl Default for GlobalOptions {
     fn default() -> Self {
         Self {
             ignorecase: false,
-            hlsearch: false,
+            hlsearch: true,
             incsearch: false,
             laststatus: 1,
             ruler: false,
@@ -58,6 +58,7 @@ pub struct WindowOptions {
     pub foldcolumn: i64,
     pub scrollbar: bool,
     pub hscrollbar: bool,
+    pub cursorline: bool,
 }
 
 impl Default for WindowOptions {
@@ -70,6 +71,7 @@ impl Default for WindowOptions {
             foldcolumn: 0,
             scrollbar: false,
             hscrollbar: false,
+            cursorline: false,
         }
     }
 }
@@ -158,6 +160,11 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
         }),
         "hscrollbar" | "hsb" => Some(OptionSpec {
             canonical_name: "hscrollbar",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Bool,
+        }),
+        "cursorline" | "cul" => Some(OptionSpec {
+            canonical_name: "cursorline",
             scope: OptionScope::Window,
             kind: OptionValueKind::Bool,
         }),

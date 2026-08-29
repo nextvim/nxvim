@@ -18,7 +18,7 @@ use vim_ui::ColorScheme;
 use vim_ui::{
     Rect, Style,
     model::{
-        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, GutterCell,
+        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplayDecoration, GutterCell,
         ScrollbarModel, TextCursor, TextSpan, TextViewModel,
     },
     renderer::{BufferedRenderer, Renderer},
@@ -316,8 +316,8 @@ pub fn render(
                 });
             }
 
-            // Selections
-            let mut selections = Vec::new();
+            // Decorations (formerly Selections)
+            let mut decorations = Vec::new();
             for sel in &projection.selections.selections {
                 let start_pt = projection
                     .snapshot
@@ -354,11 +354,126 @@ pub fn render(
                         )
                     };
 
-                    selections.push(DisplaySelection {
+                    decorations.push(DisplayDecoration {
                         start: start_pos,
                         end: end_pos,
                         style: selected_style,
+                        priority: 100,
                     });
+                }
+            }
+
+            // Search highlights
+            let mut search_decorations = Vec::new();
+            if editor.global_options().hlsearch {
+                if let Some(search_reg) = editor.registers().get(crate::kernel::buffer::registers::RegisterName::Search) {
+                    let search_pattern = &search_reg.text;
+                    if !search_pattern.is_empty() {
+                        let compile_opts = vim_regex::CompileOptions {
+                            editor: vim_regex::EditorOptions {
+                                ignore_case: editor.global_options().ignorecase,
+                                smart_case: false,
+                                ..vim_regex::EditorOptions::default()
+                            },
+                            ..vim_regex::CompileOptions::default()
+                        };
+                        if let Ok(regex) = vim_regex::Regex::compile(search_pattern, compile_opts) {
+                            let search_style = scheme.get_style("Search").cloned().unwrap_or_else(|| {
+                                let mut style = Style::default();
+                                style.fg = Some(vim_ui::Color::Black);
+                                style.bg = Some(vim_ui::Color::Yellow);
+                                style
+                            });
+
+                            let scroll_y = snapshot.scroll_y;
+                            let visible_rows = snapshot.visible_rows.min(view_rect.height as u32);
+                            let mut visible_buffer_rows = std::collections::BTreeSet::new();
+                            for i in 0..visible_rows {
+                                let display_row = scroll_y + i;
+                                if display_row < snapshot.row_count() {
+                                    if let Some(brow) = snapshot.try_buffer_row_for_display_row(display_row) {
+                                        visible_buffer_rows.insert(brow);
+                                    }
+                                }
+                            }
+
+                            let buffer_snapshot = snapshot.buffer_snapshot();
+                            for brow in visible_buffer_rows {
+                                let line_len = buffer_snapshot.line_len(brow);
+                                let line_text: String = buffer_snapshot
+                                    .text_for_range(text::Point::new(brow, 0)..text::Point::new(brow, line_len))
+                                    .collect();
+                                
+                                use vim_buffer::TextSearch;
+                                let matches = line_text.find_pattern(&regex);
+                                for (byte_start, match_len, _) in matches {
+                                    let start_pt = text::Point::new(brow, byte_start as u32);
+                                    let end_pt = text::Point::new(brow, (byte_start + match_len) as u32);
+                                    if let (Some(d_start), Some(d_end)) = (
+                                        snapshot.try_point_to_display_point(start_pt),
+                                        snapshot.try_point_to_display_point(end_pt),
+                                    ) {
+                                        let (start_pos, end_pos) = if d_end >= d_start {
+                                            (
+                                                DisplayPosition {
+                                                    row: d_start.row().saturating_sub(scroll_y),
+                                                    column: d_start.column(),
+                                                },
+                                                DisplayPosition {
+                                                    row: d_end.row().saturating_sub(scroll_y),
+                                                    column: d_end.column(),
+                                                },
+                                            )
+                                        } else {
+                                            (
+                                                DisplayPosition {
+                                                    row: d_end.row().saturating_sub(scroll_y),
+                                                    column: d_end.column(),
+                                                },
+                                                DisplayPosition {
+                                                    row: d_start.row().saturating_sub(scroll_y),
+                                                    column: d_start.column(),
+                                                },
+                                            )
+                                        };
+                                        search_decorations.push(DisplayDecoration {
+                                            start: start_pos,
+                                            end: end_pos,
+                                            style: search_style,
+                                            priority: 50,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            decorations.extend(search_decorations);
+
+            // Cursorline decoration
+            if let Some(win) = editor.window(projection.window) {
+                if win.options().cursorline {
+                    let cursor_row_in_viewport = display_cursor.row().saturating_sub(scroll_y);
+                    if cursor_row_in_viewport < view_rect.height as u32 {
+                        let cursorline_style = scheme.get_style("CursorLine").cloned().unwrap_or_else(|| {
+                            let mut style = Style::default();
+                            style.bg = Some(vim_ui::Color::Rgb(40, 40, 40));
+                            style
+                        });
+                        decorations.push(DisplayDecoration {
+                            start: DisplayPosition {
+                                row: cursor_row_in_viewport,
+                                column: 0,
+                            },
+                            end: DisplayPosition {
+                                row: cursor_row_in_viewport,
+                                column: view_rect.width as u32,
+                            },
+                            style: cursorline_style,
+                            priority: 10,
+                        });
+                    }
                 }
             }
 
@@ -425,7 +540,7 @@ pub fn render(
                 viewport_width: view_rect.width,
                 viewport_height: view_rect.height,
                 rows,
-                selections,
+                decorations,
                 cursor,
                 scrollbar,
                 default_style: Style::default(),

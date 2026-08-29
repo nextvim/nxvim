@@ -23,7 +23,7 @@ pub use id::{BufferId, TabPageId, WindowId};
 pub use layout::{ComputedLayout, LayoutEngine, LayoutNode};
 pub use manager::Ui;
 pub use model::{
-    CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, GutterCell,
+    CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplayDecoration, DisplaySelection, GutterCell,
     ScrollbarModel, TextCursor, TextModelError, TextSpan, TextViewModel,
 };
 pub use overlay::OverlayManager;

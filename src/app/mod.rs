@@ -56,6 +56,66 @@ impl App {
         self.script.shared_keymaps()
     }
 
+    pub fn init(
+        &mut self,
+        pre_config_cmds: &[String],
+        post_config_cmds: &[String],
+        scripts: &[std::path::PathBuf],
+    ) {
+        if cfg!(test) {
+            return;
+        }
+
+        for cmd in pre_config_cmds {
+            self.execute_line(cmd);
+        }
+
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        if let Some(home) = home {
+            let paths = [
+                home.join(".config/nxvim/init.vim"),
+                home.join(".nxvimrc"),
+                home.join(".nxvim/nxvimrc"),
+                home.join(".config/nxvim/nxvimrc"),
+            ];
+
+            for path in &paths {
+                if path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        self.execute_script(&content);
+                    }
+                    break;
+                }
+            }
+        }
+
+        for cmd in post_config_cmds {
+            self.execute_line(cmd);
+        }
+
+        for path in scripts {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                self.execute_script(&content);
+            }
+        }
+    }
+
+    pub fn execute_line(&mut self, line: &str) {
+        if let Some(command) = crate::kernel::command::ex::parse(line) {
+            self.execute_ex_command(command);
+        }
+    }
+
+    pub fn execute_script(&mut self, content: &str) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('"') {
+                continue;
+            }
+            self.execute_line(trimmed);
+        }
+    }
+
     pub fn editor(&self) -> &Editor {
         &self.editor
     }
@@ -119,7 +179,7 @@ impl App {
             return outcome;
         }
 
-        let outcome = match raw_key {
+        let mut outcome = match raw_key {
             input::RawKey::Char(ch) => {
                 self.prompt.push(ch);
                 Outcome::default()
@@ -146,6 +206,50 @@ impl App {
                 self.editor.execute(Action::Clear)
             }
         };
+
+        // Command peeking: update search highlights in real-time as the user types
+        let mode = self.editor.mode();
+        if matches!(
+            mode,
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward)
+                | crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchBackward)
+        ) {
+            let delimiter = if matches!(
+                mode,
+                crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward)
+            ) {
+                '/'
+            } else {
+                '?'
+            };
+            let (pattern, _) = crate::kernel::command::search::parse_search_query(self.prompt.text(), delimiter);
+            self.editor.registers_mut().set(
+                crate::kernel::buffer::registers::RegisterName::Search,
+                crate::kernel::buffer::registers::Register {
+                    text: pattern,
+                    kind: crate::kernel::buffer::registers::RegisterKind::Character,
+                },
+            );
+            outcome.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+        } else if matches!(
+            mode,
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::Ex)
+        ) {
+            if let Some(cmd) = crate::kernel::command::ex::parse(self.prompt.text()) {
+                if cmd.name == "s" || cmd.name == "substitute" {
+                    if let Ok(args) = crate::kernel::command::substitute::parse_substitute(&cmd.arguments) {
+                        self.editor.registers_mut().set(
+                            crate::kernel::buffer::registers::RegisterName::Search,
+                            crate::kernel::buffer::registers::Register {
+                                text: args.pattern,
+                                kind: crate::kernel::buffer::registers::RegisterKind::Character,
+                            },
+                        );
+                        outcome.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+                    }
+                }
+            }
+        }
         outcome
     }
 

@@ -1,5 +1,5 @@
 use crate::Style;
-use crate::model::{DisplayPosition, DisplaySelection, ScrollbarModel, TextViewModel};
+use crate::model::{DisplayPosition, DisplayDecoration, ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::window::View;
@@ -34,6 +34,9 @@ impl View for TextView {
         let Some(model) = &self.model else {
             return Ok(());
         };
+
+        let mut decorations = model.decorations.clone();
+        decorations.sort_by_key(|d| d.priority);
 
         let height = area.height.min(model.viewport_height);
         let width = area.width.min(model.viewport_width);
@@ -76,10 +79,9 @@ impl View for TextView {
                         column: text_col as u32,
                     };
                     let mut char_style = span.style;
-                    for selection in &model.selections {
-                        if pos >= selection.start && pos < selection.end {
-                            char_style = char_style.apply(selection.style);
-                            break;
+                    for decoration in &decorations {
+                        if pos >= decoration.start && pos < decoration.end {
+                            char_style = char_style.apply(decoration.style);
                         }
                     }
 
@@ -102,10 +104,9 @@ impl View for TextView {
                     column: text_col as u32,
                 };
                 let mut fill_style = row.fill_style;
-                for selection in &model.selections {
-                    if pos >= selection.start && pos < selection.end {
-                        fill_style = fill_style.apply(selection.style);
-                        break;
+                for decoration in &decorations {
+                    if pos >= decoration.start && pos < decoration.end {
+                        fill_style = fill_style.apply(decoration.style);
                     }
                 }
                 cells[cell_idx] = (' ', fill_style);

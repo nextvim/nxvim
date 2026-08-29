@@ -52,13 +52,16 @@ pub struct DisplayRow {
     pub fill_style: Style,
 }
 
-/// A selection in display coordinates. Ranges are half-open and may cross rows.
+/// A visual decoration range in display coordinates. Ranges are half-open and may cross rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DisplaySelection {
+pub struct DisplayDecoration {
     pub start: DisplayPosition,
     pub end: DisplayPosition,
     pub style: Style,
+    pub priority: u32,
 }
+
+pub type DisplaySelection = DisplayDecoration;
 
 /// Cursor shape requested by a text view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -101,7 +104,7 @@ pub struct TextViewModel {
     pub viewport_width: u16,
     pub viewport_height: u16,
     pub rows: Vec<DisplayRow>,
-    pub selections: Vec<DisplaySelection>,
+    pub decorations: Vec<DisplayDecoration>,
     pub cursor: Option<TextCursor>,
     pub scrollbar: Option<ScrollbarModel>,
     pub default_style: Style,
@@ -115,9 +118,9 @@ impl TextViewModel {
                 viewport_height: self.viewport_height,
             });
         }
-        for (index, selection) in self.selections.iter().enumerate() {
-            if selection.end < selection.start {
-                return Err(TextModelError::ReversedSelection { index });
+        for (index, decoration) in self.decorations.iter().enumerate() {
+            if decoration.end < decoration.start {
+                return Err(TextModelError::ReversedDecoration { index });
             }
         }
         if let Some(cursor) = self.cursor {
@@ -141,11 +144,10 @@ impl TextViewModel {
             {
                 return Err(TextModelError::InvalidScrollbarRange);
             }
-            if scrollbar
-                .cursor_row
-                .is_some_and(|row| row >= scrollbar.total_rows)
-            {
-                return Err(TextModelError::InvalidScrollbarCursor);
+            if let Some(cursor_row) = scrollbar.cursor_row {
+                if cursor_row >= scrollbar.total_rows {
+                    return Err(TextModelError::InvalidScrollbarCursor);
+                }
             }
         }
         Ok(())
@@ -158,7 +160,7 @@ pub enum TextModelError {
         rows: usize,
         viewport_height: u16,
     },
-    ReversedSelection {
+    ReversedDecoration {
         index: usize,
     },
     CursorOutsideViewport {
@@ -180,8 +182,8 @@ impl std::fmt::Display for TextModelError {
                 formatter,
                 "text model has {rows} rows for a viewport of height {viewport_height}"
             ),
-            Self::ReversedSelection { index } => {
-                write!(formatter, "selection {index} has its end before its start")
+            Self::ReversedDecoration { index } => {
+                write!(formatter, "decoration {index} has its end before its start")
             }
             Self::CursorOutsideViewport {
                 position,
@@ -231,10 +233,11 @@ mod text_model_tests {
                     fill_style: Style::default(),
                 },
             ],
-            selections: vec![DisplaySelection {
+            decorations: vec![DisplayDecoration {
                 start: DisplayPosition { row: 0, column: 3 },
                 end: DisplayPosition { row: 1, column: 1 },
                 style: Style::default(),
+                priority: 100,
             }],
             cursor: Some(TextCursor {
                 position: DisplayPosition { row: 1, column: 1 },

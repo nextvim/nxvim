@@ -437,6 +437,7 @@ fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::Option
                     "foldcolumn" => win.options().foldcolumn.to_string(),
                     "scrollbar" => win.options().scrollbar.to_string(),
                     "hscrollbar" => win.options().hscrollbar.to_string(),
+                    "cursorline" => win.options().cursorline.to_string(),
                     _ => String::new(),
                 }
             } else {
@@ -474,6 +475,7 @@ fn get_option_bool(editor: &Editor, ctx: CommandContext, spec: options::OptionSp
                     "wrap" => win.options().wrap,
                     "number" => win.options().number,
                     "relativenumber" => win.options().relativenumber,
+                    "cursorline" => win.options().cursorline,
                     _ => false,
                 }
             } else {
@@ -574,6 +576,11 @@ fn set_option_val(
                     "hscrollbar" => {
                         if let OptionValue::Bool(b) = val {
                             opts.hscrollbar = b;
+                        }
+                    }
+                    "cursorline" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.cursorline = b;
                         }
                     }
                     _ => {}

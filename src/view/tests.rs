@@ -183,7 +183,7 @@ fn test_view_model_validation_and_caching() {
             spans: vec![TextSpan::new(first_line, Style::default())],
             fill_style: Style::default(),
         }],
-        selections: vec![],
+        decorations: vec![],
         cursor: None,
         scrollbar: None,
         default_style: Style::default(),
@@ -239,7 +239,7 @@ fn one_row_model(text: &str, width: u16) -> TextViewModel {
             spans: vec![TextSpan::new(text, Style::default())],
             fill_style: Style::default(),
         }],
-        selections: vec![],
+        decorations: vec![],
         cursor: None,
         scrollbar: None,
         default_style: Style::default(),
@@ -327,7 +327,7 @@ fn format_cells_snapshots_a_multi_line_model_with_the_cursor_mid_line() {
                 fill_style: Style::default(),
             },
         ],
-        selections: vec![],
+        decorations: vec![],
         // `TextView::draw` never writes the cursor into the cell grid itself
         // (the terminal cursor is positioned separately, via
         // `TextView::cursor_screen_pos`) -- the cell snapshot is unaffected
@@ -492,10 +492,11 @@ fn test_render_selection_styles() {
                 fill_style: Style::default(),
             },
         ],
-        selections: vec![DisplaySelection {
+        decorations: vec![DisplaySelection {
             start: DisplayPosition { row: 0, column: 2 },
             end: DisplayPosition { row: 1, column: 2 },
             style: selection_style,
+            priority: 100,
         }],
         cursor: None,
         scrollbar: None,
