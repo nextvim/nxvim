@@ -705,7 +705,7 @@ one compiles and the kernel-purity grep above is clean.
         `DisplaySelection`/`TextViewModel` plumbing already existing, and
         on 6.5 for `VisualKind` to distinguish the three shapes.
 
-   8.9. **Wrap / `scroll_x` / scrollbar** — wires `display_map::WrapMap`'s
+   8.9. [x] **Wrap / `scroll_x` / scrollbar** — wires `display_map::WrapMap`'s
         already-implemented wrap-width/tab-size machinery
         (`crates/display_map/src/wrap_map.rs`, currently entirely unused)
         into `DisplayMap`, gated by a new `wrap` window-local option

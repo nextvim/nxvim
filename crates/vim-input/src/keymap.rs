@@ -706,6 +706,18 @@ impl Keymap {
         normal_actions
             .bind("zb", Action::CursorLineBottom)
             .expect("Valid binding");
+        normal_actions
+            .bind("zh", Action::ScrollColumnLeft { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("zl", Action::ScrollColumnRight { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("zH", Action::ScrollHalfPageLeft { count: 1 })
+            .expect("Valid binding");
+        normal_actions
+            .bind("zL", Action::ScrollHalfPageRight { count: 1 })
+            .expect("Valid binding");
 
         normal_actions
             .bind("gt", Action::NextTab { count: 1 })

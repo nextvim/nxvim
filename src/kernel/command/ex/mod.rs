@@ -111,6 +111,249 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
             effects: vec![Effect::Quit],
             ..Outcome::default()
         },
+        "wq" | "x" => {
+            let force = command.bang;
+            let trimmed = command.arguments.trim();
+            let res = if !trimmed.is_empty() {
+                editor.buffers_mut().write_to(ctx.buffer, trimmed, force)
+            } else {
+                editor.buffers_mut().save(ctx.buffer, force)
+            };
+
+            match res {
+                Ok(_) => Outcome {
+                    effects: vec![Effect::Quit],
+                    ..Outcome::default()
+                },
+                Err(err) => Outcome {
+                    effects: vec![Effect::FileSaveFailed {
+                        message: err.to_string(),
+                    }],
+                    ..Outcome::default()
+                },
+            }
+        }
+        "sp" | "split" => {
+            super::normal::windows::split_horizontal(editor, ctx)
+        }
+        "vs" | "vsplit" => {
+            super::normal::windows::split_vertical(editor, ctx)
+        }
+        "new" => {
+            let mut outcome = super::normal::windows::split_horizontal(editor, ctx);
+            let new_buf = editor.buffers_mut().insert("");
+            let current_win = editor.current_context().window;
+            editor.set_window_buffer(current_win, new_buf);
+            outcome.invalidation = RedrawInvalidation::All;
+            outcome
+        }
+        "vnew" => {
+            let mut outcome = super::normal::windows::split_vertical(editor, ctx);
+            let new_buf = editor.buffers_mut().insert("");
+            let current_win = editor.current_context().window;
+            editor.set_window_buffer(current_win, new_buf);
+            outcome.invalidation = RedrawInvalidation::All;
+            outcome
+        }
+        "enew" => {
+            let new_buf = editor.buffers_mut().insert("");
+            editor.set_window_buffer(ctx.window, new_buf);
+            Outcome {
+                invalidation: RedrawInvalidation::CurrentWindow,
+                ..Outcome::default()
+            }
+        }
+        "bn" | "bnext" => {
+            let list = editor.buffers_mut().list();
+            if list.len() <= 1 {
+                return Outcome::default();
+            }
+            if let Some(pos) = list.iter().position(|&id| id == ctx.buffer) {
+                let next_idx = (pos + 1) % list.len();
+                let next_buf = list[next_idx];
+                let _ = editor.buffers_mut().set_current(next_buf);
+                editor.set_window_buffer(ctx.window, next_buf);
+                Outcome {
+                    invalidation: RedrawInvalidation::CurrentWindow,
+                    ..Outcome::default()
+                }
+            } else {
+                Outcome::default()
+            }
+        }
+        "bp" | "bprevious" => {
+            let list = editor.buffers_mut().list();
+            if list.len() <= 1 {
+                return Outcome::default();
+            }
+            if let Some(pos) = list.iter().position(|&id| id == ctx.buffer) {
+                let prev_idx = if pos == 0 { list.len() - 1 } else { pos - 1 };
+                let prev_buf = list[prev_idx];
+                let _ = editor.buffers_mut().set_current(prev_buf);
+                editor.set_window_buffer(ctx.window, prev_buf);
+                Outcome {
+                    invalidation: RedrawInvalidation::CurrentWindow,
+                    ..Outcome::default()
+                }
+            } else {
+                Outcome::default()
+            }
+        }
+        "b" | "buffer" => {
+            let arg = command.arguments.trim();
+            if arg.is_empty() {
+                return Outcome::default();
+            }
+            let target_buf = if let Ok(num) = arg.parse::<u64>() {
+                vim_buffer::BufferId::new(num)
+            } else {
+                editor.buffers_mut().list().into_iter().find(|&id| {
+                    if let Some(buf) = editor.buffer(id) {
+                        if let Some(path) = buf.path() {
+                            if path.to_string_lossy().contains(arg) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                })
+            };
+
+            if let Some(id) = target_buf {
+                if editor.buffer(id).is_some() {
+                    let _ = editor.buffers_mut().set_current(id);
+                    editor.set_window_buffer(ctx.window, id);
+                    Outcome {
+                        invalidation: RedrawInvalidation::CurrentWindow,
+                        ..Outcome::default()
+                    }
+                } else {
+                    Outcome {
+                        effects: vec![Effect::OptionMessage {
+                            message: format!("E86: Buffer {} does not exist", arg),
+                        }],
+                        ..Outcome::default()
+                    }
+                }
+            } else {
+                Outcome {
+                    effects: vec![Effect::OptionMessage {
+                        message: format!("E94: No matching buffer for {}", arg),
+                    }],
+                    ..Outcome::default()
+                }
+            }
+        }
+        "bd" | "bdelete" => {
+            let force = command.bang;
+            let arg = command.arguments.trim();
+            let target_id = if arg.is_empty() {
+                Some(ctx.buffer)
+            } else if let Ok(num) = arg.parse::<u64>() {
+                vim_buffer::BufferId::new(num)
+            } else {
+                editor.buffers_mut().list().into_iter().find(|&id| {
+                    if let Some(buf) = editor.buffer(id) {
+                        if let Some(path) = buf.path() {
+                            if path.to_string_lossy().contains(arg) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                })
+            };
+
+            if let Some(id) = target_id {
+                if let Some(buf) = editor.buffer(id) {
+                    if buf.is_modified() && !force {
+                        return Outcome {
+                            effects: vec![Effect::OptionMessage {
+                                message: format!("E89: No write since last change for buffer {} (add ! to override)", id.get()),
+                            }],
+                            ..Outcome::default()
+                        };
+                    }
+                }
+
+                let list = editor.buffers_mut().list();
+                let replacement = list.iter().copied().find(|&x| x != id).unwrap_or_else(|| {
+                    editor.buffers_mut().insert("")
+                });
+
+                editor.handle_buffer_deleted(id, replacement);
+
+                match editor.buffers_mut().delete(id, force) {
+                    Ok(_) => Outcome {
+                        invalidation: RedrawInvalidation::All,
+                        ..Outcome::default()
+                    },
+                    Err(err) => Outcome {
+                        effects: vec![Effect::OptionMessage {
+                            message: format!("E515: Buffer delete failed: {}", err),
+                        }],
+                        ..Outcome::default()
+                    },
+                }
+            } else {
+                Outcome {
+                    effects: vec![Effect::OptionMessage {
+                        message: format!("E94: No matching buffer for {}", arg),
+                    }],
+                    ..Outcome::default()
+                }
+            }
+        }
+        "e" | "edit" => {
+            let trimmed = command.arguments.trim();
+            let force = command.bang;
+            if trimmed.is_empty() {
+                match editor.buffers_mut().reload(ctx.buffer, force) {
+                    Ok(_) => Outcome {
+                        invalidation: RedrawInvalidation::CurrentWindow,
+                        ..Outcome::default()
+                    },
+                    Err(err) => Outcome {
+                        effects: vec![Effect::OptionMessage {
+                            message: err.to_string(),
+                        }],
+                        ..Outcome::default()
+                    },
+                }
+            } else {
+                let path = std::path::PathBuf::from(trimmed);
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    if buf.is_modified() && !force {
+                        return Outcome {
+                            effects: vec![Effect::OptionMessage {
+                                message: "E37: No write since last change (add ! to override)".to_string(),
+                            }],
+                            ..Outcome::default()
+                        };
+                    }
+                }
+
+                let opened = editor.buffers_mut().load(&path)
+                    .or_else(|_| editor.buffers_mut().create_named(&path, ""));
+
+                match opened {
+                    Ok((id, _)) => {
+                        let _ = editor.buffers_mut().set_current(id);
+                        editor.set_window_buffer(ctx.window, id);
+                        Outcome {
+                            invalidation: RedrawInvalidation::CurrentWindow,
+                            ..Outcome::default()
+                        }
+                    }
+                    Err(err) => Outcome {
+                        effects: vec![Effect::OptionMessage {
+                            message: format!("E297: Cannot open file: {}", err),
+                        }],
+                        ..Outcome::default()
+                    },
+                }
+            }
+        }
         "s" | "substitute" => {
             let current_row = if let Some(win) = editor.window(ctx.window) {
                 let head = win.selections().primary().head();

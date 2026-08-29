@@ -31,6 +31,10 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
                 insert_text(editor, ctx.window, &text)
             }
         }
+        Action::InsertNewLine { count } => {
+            let text = "\n".repeat(count as usize);
+            insert_text(editor, ctx.window, &text)
+        }
         Action::DeleteCharBefore { .. } if editor.mode().is_replace() => {
             replace_backspace(editor, ctx.window)
         }

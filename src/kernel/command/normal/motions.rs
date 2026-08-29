@@ -19,6 +19,7 @@ pub fn moved(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
     let primary_sel = win.selections().primary();
     let head_point = primary_sel.head().to_point(buffer.as_text_buffer());
     win.scroll_to_line(head_point.row);
+    win.scroll_to_column(head_point.column);
 
     let _ = select;
     Outcome {
@@ -538,5 +539,79 @@ pub fn cursor_line_bottom(editor: &mut Editor, window: WindowId) -> Outcome {
         .row;
     let height = win.viewport_height().max(1);
     win.set_scroll_top(head_row.saturating_add(1).saturating_sub(height));
+    window_redraw()
+}
+
+pub fn scroll_column_left(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let new_leftcol = win.leftcol().saturating_sub(count);
+    win.set_leftcol(new_leftcol);
+
+    let head_point = win
+        .selections()
+        .primary()
+        .head()
+        .to_point(buffer.as_text_buffer());
+    let width = win.viewport_width().max(1);
+    let right_visible = new_leftcol + width - 1;
+    if head_point.column > right_visible {
+        win.selections_mut()
+            .move_to_column(false, right_visible, buffer.as_text_buffer());
+    }
+    window_redraw()
+}
+
+pub fn scroll_column_right(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let new_leftcol = win.leftcol().saturating_add(count);
+    win.set_leftcol(new_leftcol);
+
+    let head_point = win
+        .selections()
+        .primary()
+        .head()
+        .to_point(buffer.as_text_buffer());
+    if head_point.column < new_leftcol {
+        win.selections_mut()
+            .move_to_column(false, new_leftcol, buffer.as_text_buffer());
+    }
+    window_redraw()
+}
+
+pub fn scroll_half_page_left(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let step = (win.viewport_width().max(1) / 2) * count;
+    let new_leftcol = win.leftcol().saturating_sub(step);
+    win.set_leftcol(new_leftcol);
+
+    let head_point = win
+        .selections()
+        .primary()
+        .head()
+        .to_point(buffer.as_text_buffer());
+    let width = win.viewport_width().max(1);
+    let right_visible = new_leftcol + width - 1;
+    if head_point.column > right_visible {
+        win.selections_mut()
+            .move_to_column(false, right_visible, buffer.as_text_buffer());
+    }
+    window_redraw()
+}
+
+pub fn scroll_half_page_right(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let step = (win.viewport_width().max(1) / 2) * count;
+    let new_leftcol = win.leftcol().saturating_add(step);
+    win.set_leftcol(new_leftcol);
+
+    let head_point = win
+        .selections()
+        .primary()
+        .head()
+        .to_point(buffer.as_text_buffer());
+    if head_point.column < new_leftcol {
+        win.selections_mut()
+            .move_to_column(false, new_leftcol, buffer.as_text_buffer());
+    }
     window_redraw()
 }

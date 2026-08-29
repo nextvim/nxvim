@@ -137,6 +137,26 @@ impl BufferStore {
         }
         Ok(outcome)
     }
+
+    pub fn list(&self) -> Vec<BufferId> {
+        self.manager.list()
+    }
+
+    pub fn set_current(&mut self, id: BufferId) -> Result<vim_buffer::ManagerOutcome, BufferError> {
+        self.manager.set_current(id)
+    }
+
+    pub fn delete(&mut self, id: BufferId, force: bool) -> Result<vim_buffer::ManagerOutcome, BufferError> {
+        let res = self.manager.delete(id, force);
+        if res.is_ok() {
+            self.analysis.remove(&id);
+        }
+        res
+    }
+
+    pub fn reload(&mut self, id: BufferId, force: bool) -> Result<vim_buffer::MutationOutcome, BufferError> {
+        self.manager.reload(id, force)
+    }
 }
 
 #[cfg(test)]

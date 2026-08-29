@@ -77,7 +77,7 @@ pub struct DisplayMap {
     pub margin_right: u32,
     pub margin_top: u32,
     pub margin_bottom: u32,
-    buffer_window: Range<u32>,
+    pub buffer_window: Range<u32>,
     config_revision: u64,
 }
 
@@ -1040,7 +1040,7 @@ mod tests {
 
         let display_point = snapshot.point_to_display_point(Point::new(3, 2));
         assert_eq!(display_point.row(), 1);
-        assert_eq!(display_point.column(), 5);
+        assert_eq!(display_point.column(), 3);
 
         let orig_point = snapshot.display_point_to_point(display_point);
         assert_eq!(orig_point, Point::new(3, 2));

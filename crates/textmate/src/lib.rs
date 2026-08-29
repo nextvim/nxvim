@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const CHECKPOINT_INTERVAL: u32 = 64;
 const MAX_LOOKBACK: u32 = 128;
@@ -414,12 +414,13 @@ pub fn parse_scopes_cancellable(
     file_path: Option<&str>,
     start_row: u32,
     end_row: u32,
+    visible_range: Option<std::ops::RangeInclusive<u32>>,
     resume_checkpoint: Option<ParseStateCheckpoint>,
     existing_checkpoints: &[ParseStateCheckpoint],
     highlighter: Option<&Highlighter>,
     colorscheme: &vim_colorscheme::ColorScheme,
     mut is_cancelled: impl FnMut() -> bool,
-) -> Option<(Vec<HighlightedRow>, Vec<ParseStateCheckpoint>)> {
+) -> Option<(Vec<HighlightedRow>, Vec<ParseStateCheckpoint>, BTreeSet<u32>)> {
     let map_differently = true;
     let syntax_set = syntax_set();
     let syntax = file_path
@@ -449,6 +450,7 @@ pub fn parse_scopes_cancellable(
 
     let mut rows = Vec::new();
     let mut checkpoints = Vec::new();
+    let mut unresolved_rows = BTreeSet::new();
     let fallback_highlighter;
     let highlighter = match highlighter {
         Some(h) => h,
@@ -507,50 +509,60 @@ pub fn parse_scopes_cancellable(
         let parsed = parser.parse_line(&text, &syntax_set).ok()?;
 
         if row >= start_row {
-            let mut spans = Vec::new();
-            for (range, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
-                if stack.apply(&operation).is_err() {
-                    return None;
-                }
-                if range.start == range.end {
-                    continue;
-                }
-                let start_column = range.start.min(snapshot.line_len(row) as usize) as u32;
-                let end_column = range.end.min(snapshot.line_len(row) as usize) as u32;
-                if start_column == end_column {
-                    continue;
-                }
-                let foreground = if let Some(cached) = style_cache.get(stack.as_slice()) {
-                    *cached
-                } else {
-                    let mut foreground_color = None;
-                    if map_differently {
-                        let style = map_scope_to_style(stack.as_slice(), colorscheme);
-                        if let Some(col) = style.fg {
-                            foreground_color = Some(color_to_rgb_array(col));
-                        }
+            let is_visible = visible_range.as_ref().map_or(true, |r| r.contains(&row));
+            if is_visible {
+                let mut spans = Vec::new();
+                for (range, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
+                    if stack.apply(&operation).is_err() {
+                        return None;
                     }
-                    let foreground = if let Some(fg) = foreground_color {
-                        fg
+                    if range.start == range.end {
+                        continue;
+                    }
+                    let start_column = range.start.min(snapshot.line_len(row) as usize) as u32;
+                    let end_column = range.end.min(snapshot.line_len(row) as usize) as u32;
+                    if start_column == end_column {
+                        continue;
+                    }
+                    let foreground = if let Some(cached) = style_cache.get(stack.as_slice()) {
+                        *cached
                     } else {
-                        let scope_style = highlighter.style_for_stack(stack.as_slice());
-                        [
-                            scope_style.foreground.r,
-                            scope_style.foreground.g,
-                            scope_style.foreground.b,
-                        ]
+                        let mut foreground_color = None;
+                        if map_differently {
+                            let style = map_scope_to_style(stack.as_slice(), colorscheme);
+                            if let Some(col) = style.fg {
+                                foreground_color = Some(color_to_rgb_array(col));
+                            }
+                        }
+                        let foreground = if let Some(fg) = foreground_color {
+                            fg
+                        } else {
+                            let scope_style = highlighter.style_for_stack(stack.as_slice());
+                            [
+                                scope_style.foreground.r,
+                                scope_style.foreground.g,
+                                scope_style.foreground.b,
+                            ]
+                        };
+                        style_cache.insert(stack.as_slice().to_vec(), foreground);
+                        foreground
                     };
-                    style_cache.insert(stack.as_slice().to_vec(), foreground);
-                    foreground
-                };
-                spans.push(HighlightSpan {
-                    start_column,
-                    end_column,
-                    foreground,
-                });
+                    spans.push(HighlightSpan {
+                        start_column,
+                        end_column,
+                        foreground,
+                    });
+                }
+                rows.push(HighlightedRow { row, spans });
+            } else {
+                for (_, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
+                    if stack.apply(&operation).is_err() {
+                        return None;
+                    }
+                }
+                rows.push(HighlightedRow { row, spans: Vec::new() });
+                unresolved_rows.insert(row);
             }
-
-            rows.push(HighlightedRow { row, spans });
         } else {
             for (_, operation) in ScopeRangeIterator::new(&parsed.ops, &text) {
                 if stack.apply(&operation).is_err() {
@@ -560,16 +572,14 @@ pub fn parse_scopes_cancellable(
         }
     }
 
-    Some((rows, checkpoints))
+    Some((rows, checkpoints, unresolved_rows))
 }
 
-/// Per-buffer highlighting cache and incremental-parse bookkeeping. Owned by
-/// the buffer's own state (see `BufferState` in the `nxvim` binary crate) so it
-/// lives and dies with the buffer instead of in a separately-keyed service map.
 pub struct BufferHighlightState {
     pub checkpoints: BTreeMap<u32, ParseStateCheckpoint>,
     pub rows: BTreeMap<u32, Vec<HighlightSpan>>,
     pub published_snapshot: Option<BufferSnapshot>,
+    pub unresolved_rows: BTreeSet<u32>,
 }
 
 impl BufferHighlightState {
@@ -578,17 +588,23 @@ impl BufferHighlightState {
             checkpoints: BTreeMap::new(),
             rows: BTreeMap::new(),
             published_snapshot: None,
+            unresolved_rows: BTreeSet::new(),
         }
     }
 
     pub fn highlight_row(&self, row: u32) -> Option<&[HighlightSpan]> {
-        self.rows.get(&row).map(|spans| spans.as_slice())
+        if self.unresolved_rows.contains(&row) {
+            None
+        } else {
+            self.rows.get(&row).map(|spans| spans.as_slice())
+        }
     }
 
     pub fn invalidate(&mut self) {
         self.checkpoints.clear();
         self.rows.clear();
         self.published_snapshot = None;
+        self.unresolved_rows.clear();
     }
 
     fn nearest_checkpoint(&self, target_row: u32) -> Option<ParseStateCheckpoint> {
@@ -693,6 +709,8 @@ pub fn highlight_run(
     highlighter: Option<&Highlighter>,
     colorscheme: &vim_colorscheme::ColorScheme,
 ) {
+    let visible_start = row_start;
+    let visible_end = row_end;
     let row_start = row_start.saturating_sub(expand_before);
     let row_end = row_end.saturating_add(expand_after);
 
@@ -715,20 +733,29 @@ pub fn highlight_run(
     if let Some(lowest) = lowest_affected_row {
         state.rows.split_off(&lowest);
         state.checkpoints.split_off(&lowest);
+        state.unresolved_rows.split_off(&lowest);
     }
 
-    if (row_start..=row_end).all(|row| state.rows.contains_key(&row)) {
+    let visible_all_resolved = (visible_start..=visible_end).all(|row| {
+        state.rows.contains_key(&row) && !state.unresolved_rows.contains(&row)
+    });
+    let expanded_all_parsed = (row_start..=row_end).all(|row| {
+        state.rows.contains_key(&row)
+    });
+
+    if visible_all_resolved && expanded_all_parsed {
         state.published_snapshot = Some(snapshot.clone());
         return;
     }
 
     let checkpoint = state.nearest_checkpoint(row_start);
 
-    if let Some((rows, checkpoints)) = parse_scopes_cancellable(
+    if let Some((rows, checkpoints, unresolved)) = parse_scopes_cancellable(
         snapshot,
         file_path,
         row_start,
         row_end,
+        Some(visible_start..=visible_end),
         checkpoint,
         &existing_checkpoints,
         highlighter,
@@ -738,10 +765,14 @@ pub fn highlight_run(
         state
             .rows
             .retain(|row, _| *row < row_start || *row > row_end);
+        state
+            .unresolved_rows
+            .retain(|row| *row < row_start || *row > row_end);
 
         state
             .rows
             .extend(rows.into_iter().map(|row| (row.row, row.spans)));
+        state.unresolved_rows.extend(unresolved);
         state.published_snapshot = Some(snapshot.clone());
         state
             .checkpoints
@@ -830,10 +861,12 @@ mod tests {
             &colorscheme,
         );
 
-        assert!(state.highlight_row(100).is_some());
+        assert!(state.highlight_row(100).is_none());
         assert!(state.highlight_row(1100).is_some());
-        assert!(state.highlight_row(1700).is_some());
+        assert!(state.highlight_row(1700).is_none());
 
+        assert!(state.rows.contains_key(&100));
+        assert!(state.rows.contains_key(&1700));
         assert!(state.highlight_row(50).is_none());
         assert!(state.highlight_row(1800).is_none());
     }
@@ -961,11 +994,12 @@ mod tests {
         assert_eq!(resume.row, 128);
         let existing = state.checkpoints.values().cloned().collect::<Vec<_>>();
         let mut visited = 0;
-        let (rows, _) = parse_scopes_cancellable(
+        let (rows, _, _) = parse_scopes_cancellable(
             &snapshot,
             Some("main.rs"),
             130,
             130,
+            None,
             Some(resume),
             &existing,
             None,
@@ -1021,8 +1055,9 @@ mod tests {
             &colorscheme,
         );
 
-        assert!(state.highlight_row(63).is_some());
-        assert!(state.highlight_row(64).is_none());
+        assert!(state.rows.contains_key(&63));
+        assert!(state.highlight_row(63).is_none());
+        assert!(!state.rows.contains_key(&64));
         assert!(state.checkpoints.contains_key(&64));
     }
 }

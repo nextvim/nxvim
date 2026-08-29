@@ -12,7 +12,9 @@ lives in the two files below.
 2. `src/IMPLEMENT.md` — the live checklist. This is the authority for
    *what's next*. It tracks exactly one milestone "in progress" at a time,
    broken into ordered, checkable steps.
-3. As needed, when a rule or behavior is unclear: `docs/VIM.md` (Vim's actual
+3. `docs/MVP.md` — the checklist of target MVP features. We will go through
+   and check each one to verify implementation.
+4. As needed, when a rule or behavior is unclear: `docs/VIM.md` (Vim's actual
    architecture — the behavioral authority), `DESIGN.md` (target ownership
    model), `RESET.md` (working rules this whole effort inherited: compile
    gates, stable IDs, no anti-patterns).

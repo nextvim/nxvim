@@ -218,42 +218,6 @@ pub fn render_with_scheme(
             continue;
         };
 
-        // Get or create cache entry
-        let cache = render_state
-            .windows
-            .entry(projection.window)
-            .or_insert_with(|| WindowRenderCache {
-                display_map: DisplayMap::new_windowed(
-                    projection.snapshot.clone(),
-                    None,
-                    0..projection.snapshot.row_count(),
-                ),
-                buffer: projection.buffer,
-                retained: HashMap::new(),
-                last_model: None,
-                built_count: 0,
-            });
-
-        // If buffer changed, swap with retained or build fresh
-        if cache.buffer != projection.buffer {
-            let old_map = std::mem::replace(
-                &mut cache.display_map,
-                DisplayMap::new_windowed(
-                    projection.snapshot.clone(),
-                    None,
-                    0..projection.snapshot.row_count(),
-                ),
-            );
-            cache.retained.insert(cache.buffer, old_map);
-            cache.buffer = projection.buffer;
-
-            if let Some(reused_map) = cache.retained.remove(&projection.buffer) {
-                cache.display_map = reused_map;
-            }
-            // A buffer swap always invalidates the cached model.
-            cache.last_model = None;
-        }
-
         let has_statusline = match laststatus {
             0 => false,
             1 => projections.len() >= 2,
@@ -268,8 +232,57 @@ pub fn render_with_scheme(
             rect
         };
 
+        let wrap_width = if projection.wrap { Some(view_rect.width as u32) } else { None };
+
+        let scroll_top = projection.scroll_top;
+        let viewport_height = view_rect.height as u32;
+        let margin = 128;
+        let start_row = scroll_top.saturating_sub(margin);
+        let end_row = scroll_top.saturating_add(viewport_height).saturating_add(margin);
+        let row_count = projection.snapshot.row_count();
+        let initial_window = (start_row.min(row_count))..(end_row.min(row_count));
+
+        // Get or create cache entry
+        let cache = render_state
+            .windows
+            .entry(projection.window)
+            .or_insert_with(|| WindowRenderCache {
+                display_map: DisplayMap::new_windowed(
+                    projection.snapshot.clone(),
+                    wrap_width,
+                    initial_window.clone(),
+                ),
+                buffer: projection.buffer,
+                retained: HashMap::new(),
+                last_model: None,
+                built_count: 0,
+            });
+
+        // If buffer changed, swap with retained or build fresh
+        if cache.buffer != projection.buffer {
+            let old_map = std::mem::replace(
+                &mut cache.display_map,
+                DisplayMap::new_windowed(
+                    projection.snapshot.clone(),
+                    wrap_width,
+                    initial_window.clone(),
+                ),
+            );
+            cache.retained.insert(cache.buffer, old_map);
+            cache.buffer = projection.buffer;
+
+            if let Some(reused_map) = cache.retained.remove(&projection.buffer) {
+                cache.display_map = reused_map;
+            }
+            // A buffer swap always invalidates the cached model.
+            cache.last_model = None;
+        }
+
+        cache.display_map.set_wrap_width(wrap_width);
+
         if let Some(win) = editor.windows_mut().get_mut(projection.window) {
             win.set_viewport_height(view_rect.height as u32);
+            win.set_viewport_width(view_rect.width as u32);
         }
 
         let rebuild = should_rebuild(
@@ -281,6 +294,33 @@ pub fn render_with_scheme(
         );
 
         if !rebuild && idle_expansion > 0 {
+            let scroll_top_display_row = projection.scroll_top;
+            let start_buffer_row = cache
+                .display_map
+                .snapshot()
+                .try_buffer_row_for_display_row(scroll_top_display_row)
+                .unwrap_or(scroll_top_display_row);
+
+            let viewport_height = view_rect.height as u32;
+            let end_buffer_row = cache
+                .display_map
+                .snapshot()
+                .try_buffer_row_for_display_row(scroll_top_display_row + viewport_height)
+                .unwrap_or(scroll_top_display_row + viewport_height);
+
+            let total_margin = 128 + idle_expansion;
+            let expanded_start = start_buffer_row.saturating_sub(total_margin);
+            let expanded_end = end_buffer_row.saturating_add(total_margin);
+            let buffer_row_count = projection.snapshot.row_count();
+            let expanded_window = (expanded_start.min(buffer_row_count))..(expanded_end.min(buffer_row_count));
+
+            let current_window = cache.display_map.buffer_window.clone();
+            if expanded_window != current_window {
+                cache
+                    .display_map
+                    .sync_hot_window(projection.snapshot.clone(), expanded_window);
+            }
+
             let snapshot = cache.display_map.snapshot();
             if let Some(visible_rows) = visible_buffer_rows(&snapshot, view_rect.height as u32) {
                 if let Some(analysis) = editor.buffers_mut().analysis_mut(projection.buffer) {
@@ -301,13 +341,33 @@ pub fn render_with_scheme(
 
         let model = if rebuild {
             // Sync display map with projection snapshot and viewport rows
+            let scroll_top_display_row = projection.scroll_top;
+            let start_buffer_row = cache
+                .display_map
+                .snapshot()
+                .try_buffer_row_for_display_row(scroll_top_display_row)
+                .unwrap_or(scroll_top_display_row);
+
+            let viewport_height = view_rect.height as u32;
+            let end_buffer_row = cache
+                .display_map
+                .snapshot()
+                .try_buffer_row_for_display_row(scroll_top_display_row + viewport_height)
+                .unwrap_or(scroll_top_display_row + viewport_height);
+
+            let margin = 128;
+            let start_row = start_buffer_row.saturating_sub(margin);
+            let end_row = end_buffer_row.saturating_add(margin);
             let buffer_row_count = projection.snapshot.row_count();
+            let hot_window = (start_row.min(buffer_row_count))..(end_row.min(buffer_row_count));
+
             cache
                 .display_map
-                .sync_hot_window(projection.snapshot.clone(), 0..buffer_row_count);
+                .sync_hot_window(projection.snapshot.clone(), hot_window);
 
-            // Update display map's scroll from the window's authoritative scroll top
+            // Update display map's scroll from the window's authoritative scroll top/leftcol
             cache.display_map.scroll_y = projection.scroll_top;
+            cache.display_map.scroll_x = projection.leftcol;
 
             // Convert selections
             use text::ToOffset;
@@ -376,7 +436,16 @@ pub fn render_with_scheme(
                     break;
                 }
 
-                let line_text = snapshot.line_text(display_row);
+                let mut line_text = snapshot.line_text(display_row);
+                let leftcol_offset = if projection.wrap { 0 } else { projection.leftcol as usize };
+                if leftcol_offset > 0 {
+                    let chars: Vec<char> = line_text.chars().collect();
+                    if leftcol_offset < chars.len() {
+                        line_text = chars[leftcol_offset..].iter().collect();
+                    } else {
+                        line_text = String::new();
+                    }
+                }
                 let buffer_row = snapshot.try_buffer_row_for_display_row(display_row);
 
                 // Determine display row kind (Vim fold mapping or wrap maps)
@@ -461,6 +530,13 @@ pub fn render_with_scheme(
                     else {
                         continue;
                     };
+                    let leftcol_offset = if projection.wrap { 0 } else { projection.leftcol };
+                    if !projection.wrap && end.column() <= leftcol_offset {
+                        continue;
+                    }
+                    let start_col = start.column().saturating_sub(leftcol_offset);
+                    let end_col = end.column().saturating_sub(leftcol_offset);
+
                     let mut style = Style::default();
                     style.fg = Some(vim_ui::Color::Rgb(
                         span.foreground[0],
@@ -470,11 +546,11 @@ pub fn render_with_scheme(
                     decorations.push(DisplayDecoration {
                         start: DisplayPosition {
                             row: start.row().saturating_sub(scroll_y),
-                            column: start.column(),
+                            column: start_col,
                         },
                         end: DisplayPosition {
                             row: end.row().saturating_sub(scroll_y),
-                            column: end.column(),
+                            column: end_col,
                         },
                         style,
                         priority: 0,
@@ -535,27 +611,28 @@ pub fn render_with_scheme(
                         snapshot.try_point_to_display_point(s_pt),
                         snapshot.try_point_to_display_point(e_pt),
                     ) {
+                        let leftcol_offset = if projection.wrap { 0 } else { projection.leftcol };
                         // Ensure proper orientation for DisplaySelection (validate checks end >= start)
                         let (start_pos, end_pos) = if d_end >= d_start {
                             (
                                 DisplayPosition {
                                     row: d_start.row().saturating_sub(scroll_y),
-                                    column: d_start.column(),
+                                    column: d_start.column().saturating_sub(leftcol_offset),
                                 },
                                 DisplayPosition {
                                     row: d_end.row().saturating_sub(scroll_y),
-                                    column: d_end.column(),
+                                    column: d_end.column().saturating_sub(leftcol_offset),
                                 },
                             )
                         } else {
                             (
                                 DisplayPosition {
                                     row: d_end.row().saturating_sub(scroll_y),
-                                    column: d_end.column(),
+                                    column: d_end.column().saturating_sub(leftcol_offset),
                                 },
                                 DisplayPosition {
                                     row: d_start.row().saturating_sub(scroll_y),
-                                    column: d_start.column(),
+                                    column: d_start.column().saturating_sub(leftcol_offset),
                                 },
                             )
                         };
@@ -710,10 +787,10 @@ pub fn render_with_scheme(
                 visible: cursor_visible,
             });
 
-            let scrollbar_option = if let Some(win) = editor.window(projection.window) {
-                win.options().scrollbar
+            let (scrollbar_option, hscrollbar_option) = if let Some(win) = editor.window(projection.window) {
+                (win.options().scrollbar, win.options().hscrollbar)
             } else {
-                false
+                (false, false)
             };
 
             let scrollbar = if scrollbar_option {
@@ -757,6 +834,56 @@ pub fn render_with_scheme(
                 None
             };
 
+            let hscrollbar = if hscrollbar_option && !projection.wrap {
+                let mut max_width = 0;
+                for r in 0..snapshot.row_count() {
+                    let len = snapshot.line_len(r);
+                    if len > max_width {
+                        max_width = len;
+                    }
+                }
+                if max_width > view_rect.width as u32 {
+                    let track_style = scheme
+                        .get_style("ScrollbarTrack")
+                        .cloned()
+                        .unwrap_or_else(|| Style {
+                            bg: Some(vim_colorscheme::Color::DarkGrey),
+                            ..Default::default()
+                        });
+
+                    let thumb_style = scheme
+                        .get_style("ScrollbarThumb")
+                        .cloned()
+                        .unwrap_or_else(|| Style {
+                            bg: Some(vim_colorscheme::Color::Grey),
+                            ..Default::default()
+                        });
+
+                    let cursor_style = scheme.get_style("ScrollbarCursor").cloned();
+
+                    let total_cols = max_width;
+                    let visible_cols_clamped = (view_rect.width as u32).min(total_cols);
+                    let first_visible_col_clamped =
+                        (projection.leftcol).min(total_cols.saturating_sub(visible_cols_clamped));
+                    let cursor_col_clamped =
+                        Some((display_cursor.column() as u32).min(total_cols.saturating_sub(1)));
+
+                    Some(ScrollbarModel {
+                        total_rows: total_cols,
+                        first_visible_row: first_visible_col_clamped,
+                        visible_rows: visible_cols_clamped,
+                        cursor_row: cursor_col_clamped,
+                        track_style,
+                        thumb_style,
+                        cursor_style,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let model = TextViewModel {
                 viewport_width: view_rect.width,
                 viewport_height: view_rect.height,
@@ -764,6 +891,7 @@ pub fn render_with_scheme(
                 decorations,
                 cursor,
                 scrollbar,
+                hscrollbar,
                 default_style: Style::default(),
             };
 

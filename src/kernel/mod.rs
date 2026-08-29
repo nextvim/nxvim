@@ -1188,6 +1188,52 @@ mod tests {
         let _ = fs::remove_file(&ro_file_path);
     }
 
+    #[test]
+    fn ex_commands_breadth_smoke_test() {
+        // 1. Setup Editor
+        let mut editor = Editor::new("hello world");
+        let initial_win = editor.current_context().window;
+
+        // 2. test :split and :vsplit
+        let outcome = editor.submit_command_line("split");
+        let split_win = editor.current_context().window;
+        assert_ne!(initial_win, split_win, "split should create and focus new window");
+
+        let outcome = editor.submit_command_line("vsplit");
+        let vsplit_win = editor.current_context().window;
+        assert_ne!(split_win, vsplit_win, "vsplit should create and focus new window");
+
+        // 3. test :new and :vnew
+        let outcome = editor.submit_command_line("new");
+        let new_win = editor.current_context().window;
+        assert_ne!(vsplit_win, new_win);
+        assert_eq!(editor.buffer(editor.window(new_win).unwrap().buffer_id()).unwrap().snapshot().as_inner().text().as_str(), "");
+
+        // 4. test :enew
+        editor.submit_command_line("enew");
+        let current_buf = editor.window(editor.current_context().window).unwrap().buffer_id();
+        assert_eq!(editor.buffer(current_buf).unwrap().snapshot().as_inner().text().as_str(), "");
+
+        // 5. test :bnext / :bprevious / :buffer
+        let list_before = editor.buffers_mut().list();
+        assert!(list_before.len() >= 2);
+        
+        let initial_buf = list_before[0];
+        editor.submit_command_line("b 1");
+        assert_eq!(editor.window(editor.current_context().window).unwrap().buffer_id(), initial_buf);
+
+        editor.submit_command_line("bnext");
+        assert_ne!(editor.window(editor.current_context().window).unwrap().buffer_id(), initial_buf);
+
+        editor.submit_command_line("bprevious");
+        assert_eq!(editor.window(editor.current_context().window).unwrap().buffer_id(), initial_buf);
+
+        // 6. test :bdelete
+        let current_win_buf = editor.window(editor.current_context().window).unwrap().buffer_id();
+        editor.submit_command_line("bdelete");
+        assert_ne!(editor.window(editor.current_context().window).unwrap().buffer_id(), current_win_buf);
+    }
+
     fn visual_sentinel_motion() -> Action {
         Action::MoveRight {
             count: 0,
@@ -1452,6 +1498,32 @@ mod tests {
 
         editor.execute(Action::DeleteCharBefore { count: 1 });
         assert_eq!(text_of(&editor), "abX\n");
+    }
+
+    #[test]
+    fn test_insert_newline_in_insert_mode() {
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: false,
+        });
+        editor.execute(Action::SetToInsert);
+        editor.execute(Action::InsertNewLine { count: 1 });
+        assert_eq!(text_of(&editor), "he\nllo\n");
+        assert_eq!(cursor(&editor), Point::new(1, 0));
+    }
+
+    #[test]
+    fn test_insert_newline_in_replace_mode() {
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: false,
+        });
+        editor.execute(Action::SetToReplace);
+        editor.execute(Action::InsertNewLine { count: 1 });
+        assert_eq!(text_of(&editor), "he\nllo\n");
+        assert_eq!(cursor(&editor), Point::new(1, 0));
     }
 
     #[test]

@@ -23,7 +23,9 @@ pub struct Window {
     selections: SelectionSet,
     options: WindowOptions,
     viewport_height: u32,
+    viewport_width: u32,
     scroll_top: u32,
+    leftcol: u32,
     /// Which kind of Visual selection is active, if any -- the per-window
     /// "how do I interpret the current selection" fact (`RESCUE.md` Rule 4
     /// item 2). Set on entering Visual, cleared on leaving it.
@@ -58,7 +60,9 @@ impl Window {
             selections,
             options: WindowOptions::default(),
             viewport_height: 1,
+            viewport_width: 1,
             scroll_top: 0,
+            leftcol: 0,
             visual_kind: None,
             last_visual: None,
             replace_overtype: Vec::new(),
@@ -97,6 +101,14 @@ impl Window {
         self.viewport_height = height;
     }
 
+    pub fn viewport_width(&self) -> u32 {
+        self.viewport_width
+    }
+
+    pub fn set_viewport_width(&mut self, width: u32) {
+        self.viewport_width = width;
+    }
+
     pub fn scroll_top(&self) -> u32 {
         self.scroll_top
     }
@@ -105,11 +117,30 @@ impl Window {
         self.scroll_top = scroll_top;
     }
 
+    pub fn leftcol(&self) -> u32 {
+        self.leftcol
+    }
+
+    pub fn set_leftcol(&mut self, leftcol: u32) {
+        self.leftcol = leftcol;
+    }
+
     pub fn scroll_to_line(&mut self, line: u32) {
         let height = self.viewport_height.max(1);
         let min_scroll = line.saturating_add(1).saturating_sub(height);
         let max_scroll = line;
         self.scroll_top = self.scroll_top.clamp(min_scroll, max_scroll);
+    }
+
+    pub fn scroll_to_column(&mut self, col: u32) {
+        if self.options.wrap {
+            self.leftcol = 0;
+            return;
+        }
+        let width = self.viewport_width.max(1);
+        let min_scroll = col.saturating_add(1).saturating_sub(width);
+        let max_scroll = col;
+        self.leftcol = self.leftcol.clamp(min_scroll, max_scroll);
     }
 
     pub fn visual_kind(&self) -> Option<VisualKind> {

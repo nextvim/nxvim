@@ -351,6 +351,19 @@ pub enum Action {
     CursorLineTop,
     CursorLineBottom,
 
+    ScrollColumnLeft {
+        count: u32,
+    },
+    ScrollColumnRight {
+        count: u32,
+    },
+    ScrollHalfPageLeft {
+        count: u32,
+    },
+    ScrollHalfPageRight {
+        count: u32,
+    },
+
     MoveToColumn {
         count: u32,
     },
@@ -638,6 +651,10 @@ impl std::fmt::Display for Action {
             Action::ScrollHalfPageUp { count } => write!(f, "ScrollHalfPageUp({})", count),
             Action::ScrollLineDown { count } => write!(f, "ScrollLineDown({})", count),
             Action::ScrollLineUp { count } => write!(f, "ScrollLineUp({})", count),
+            Action::ScrollColumnLeft { count } => write!(f, "ScrollColumnLeft({})", count),
+            Action::ScrollColumnRight { count } => write!(f, "ScrollColumnRight({})", count),
+            Action::ScrollHalfPageLeft { count } => write!(f, "ScrollHalfPageLeft({})", count),
+            Action::ScrollHalfPageRight { count } => write!(f, "ScrollHalfPageRight({})", count),
             Action::CenterCursorLine => write!(f, "CenterCursorLine"),
             Action::CursorLineTop => write!(f, "CursorLineTop"),
             Action::CursorLineBottom => write!(f, "CursorLineBottom"),
@@ -1123,6 +1140,10 @@ impl Action {
             Action::ScrollHalfPageUp { .. } => Action::ScrollHalfPageUp { count },
             Action::ScrollLineDown { .. } => Action::ScrollLineDown { count },
             Action::ScrollLineUp { .. } => Action::ScrollLineUp { count },
+            Action::ScrollColumnLeft { .. } => Action::ScrollColumnLeft { count },
+            Action::ScrollColumnRight { .. } => Action::ScrollColumnRight { count },
+            Action::ScrollHalfPageLeft { .. } => Action::ScrollHalfPageLeft { count },
+            Action::ScrollHalfPageRight { .. } => Action::ScrollHalfPageRight { count },
             Action::CenterCursorLine => Action::CenterCursorLine,
             Action::CursorLineTop => Action::CursorLineTop,
             Action::CursorLineBottom => Action::CursorLineBottom,
@@ -1338,6 +1359,10 @@ impl Action {
             Action::ScrollHalfPageUp { count } => *count,
             Action::ScrollLineDown { count } => *count,
             Action::ScrollLineUp { count } => *count,
+            Action::ScrollColumnLeft { count } => *count,
+            Action::ScrollColumnRight { count } => *count,
+            Action::ScrollHalfPageLeft { count } => *count,
+            Action::ScrollHalfPageRight { count } => *count,
             Action::MoveToColumn { count } => *count,
             Action::SearchForward { count } => *count,
             Action::SearchBackward { count } => *count,

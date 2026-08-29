@@ -136,6 +136,7 @@ impl View for TextView {
 
             draw_scrollbar(renderer, area, model.scrollbar, viewport_row, height)?;
         }
+        draw_hscrollbar(renderer, area, model.hscrollbar, width, height)?;
         renderer.reset_colors()?;
         Ok(())
     }
@@ -228,4 +229,54 @@ fn draw_scrollbar(
     let mut cell = renderer.get_cell(x, y).unwrap_or_default();
     cell.bg = style.bg.unwrap_or(crate::types::Color::Reset);
     renderer.set_cell(x, y, cell)
+}
+
+fn draw_hscrollbar(
+    renderer: &mut dyn Renderer,
+    area: Rect,
+    hscrollbar: Option<ScrollbarModel>,
+    viewport_width: u16,
+    viewport_height: u16,
+) -> std::io::Result<()> {
+    let Some(scrollbar) = hscrollbar else {
+        return Ok(());
+    };
+    if viewport_width == 0 || viewport_height == 0 || scrollbar.total_rows == 0 {
+        return Ok(());
+    }
+
+    let width = viewport_width as u32;
+    let thumb_width = ((scrollbar.visible_rows as f32 / scrollbar.total_rows as f32)
+        * width as f32)
+        .round()
+        .max(1.0) as u32;
+    let travel = width.saturating_sub(thumb_width);
+    let scrollable = scrollbar.total_rows.saturating_sub(scrollbar.visible_rows);
+    let thumb_start = if scrollable == 0 {
+        0
+    } else {
+        ((scrollbar.first_visible_row as f32 / scrollable as f32) * travel as f32).round() as u32
+    };
+
+    let y = area.y + viewport_height - 1;
+    for col in 0..viewport_width {
+        let col_u32 = col as u32;
+        let style = if col_u32 >= thumb_start && col_u32 < thumb_start + thumb_width {
+            scrollbar.thumb_style
+        } else if scrollbar.cursor_style.is_some()
+            && scrollbar.cursor_row.is_some_and(|cursor_col| {
+                ((cursor_col as f32 / scrollbar.total_rows as f32) * width as f32).floor() as u32
+                    == col_u32
+            })
+        {
+            scrollbar.cursor_style.unwrap()
+        } else {
+            scrollbar.track_style
+        };
+        let x = area.x + col;
+        let mut cell = renderer.get_cell(x, y).unwrap_or_default();
+        cell.bg = style.bg.unwrap_or(crate::types::Color::Reset);
+        renderer.set_cell(x, y, cell)?;
+    }
+    Ok(())
 }

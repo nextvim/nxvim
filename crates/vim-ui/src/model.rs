@@ -107,6 +107,7 @@ pub struct TextViewModel {
     pub decorations: Vec<DisplayDecoration>,
     pub cursor: Option<TextCursor>,
     pub scrollbar: Option<ScrollbarModel>,
+    pub hscrollbar: Option<ScrollbarModel>,
     pub default_style: Style,
 }
 
@@ -136,6 +137,21 @@ impl TextViewModel {
             }
         }
         if let Some(scrollbar) = self.scrollbar {
+            if scrollbar.visible_rows > scrollbar.total_rows
+                || scrollbar
+                    .first_visible_row
+                    .saturating_add(scrollbar.visible_rows)
+                    > scrollbar.total_rows
+            {
+                return Err(TextModelError::InvalidScrollbarRange);
+            }
+            if let Some(cursor_row) = scrollbar.cursor_row {
+                if cursor_row >= scrollbar.total_rows {
+                    return Err(TextModelError::InvalidScrollbarCursor);
+                }
+            }
+        }
+        if let Some(scrollbar) = self.hscrollbar {
             if scrollbar.visible_rows > scrollbar.total_rows
                 || scrollbar
                     .first_visible_row
@@ -253,6 +269,7 @@ mod text_model_tests {
                 thumb_style: Style::default(),
                 cursor_style: None,
             }),
+            hscrollbar: None,
             default_style: Style::default(),
         }
     }

@@ -2140,6 +2140,32 @@ in under this one just because they share the `"{c}` syntax.
 - [x] Selections are mapped correctly to `DisplaySelection` objects for char, line, and block visual modes.
 - [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
 
+# Wrap / `scroll_x` / scrollbar (Build Order 8.9) — [x] COMPLETE
+
+> Wires `display_map::WrapMap`'s wrap-width/tab-size machinery into `DisplayMap`, gated by a new `wrap` window-local option, with horizontal scrolling (`leftcol` / `zh` / `zl` / `zH` / `zL`) and horizontal scrollbars when `nowrap`.
+
+## Checklist
+
+1. - [x] `kernel/options.rs`: Register new window-local option `wrap` (bool) following the 7.1 option registry recipe, defaulting to `true` (Vim's default).
+2. - [x] `kernel/window/mod.rs`: Add `leftcol: u32` field (default `0`) to `Window`, plus getters/setters.
+3. - [x] `kernel/command/normal/motions.rs`: Implement horizontal scroll motions `zh`/`zl`/`zH`/`zL` that mutate `window.leftcol` directly.
+4. - [x] `view/mod.rs` & `app/view_sync.rs`: Toggle `DisplayMap`'s wrap width between `None` (when `wrap` is disabled) and the window's viewport width (when `wrap` is enabled).
+5. - [x] `view/mod.rs`: Apply `leftcol` offsets to clip/scroll text horizontally when rendering a `nowrap` window.
+6. - [x] `view/mod.rs`: Construct and render a horizontal `ScrollbarModel` counterpart overlaying the bottom row(s) when `scrollbar` is enabled, `wrap` is disabled, and content width exceeds viewport width.
+7. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+8. - [x] Unit tests: Verify `leftcol` scrolling, `wrap` toggling effects on `DisplayMap`, and horizontal scrollbar model construction under overflow conditions.
+9. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] Window-local option `wrap` is successfully registered.
+- [x] Viewport wrapping toggles correctly, and horizontal scrolling via `leftcol` correctly clips/shifts layout when wrapping is off.
+- [x] Horizontal scrollbar renders overlaying the viewport bottom when appropriate without shrinking the layout viewport height.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
 ---
 
 # TextMate syntax highlighting (Build Order 8.10) — [x] COMPLETE

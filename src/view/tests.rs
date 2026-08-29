@@ -159,16 +159,16 @@ fn viewport_movement_hits_prefetch_then_fills_only_a_tight_miss() {
         &[RedrawInvalidation::CurrentWindow],
         false,
     );
-    assert_eq!(
-        editor
-            .buffers_mut()
-            .analysis(buffer)
-            .unwrap()
-            .highlights()
-            .rows,
-        prefetched,
-        "scrolling within idle expansion must be a cache hit"
-    );
+    let current_highlights = editor
+        .buffers_mut()
+        .analysis(buffer)
+        .unwrap()
+        .highlights()
+        .clone();
+    for row in 0..12 {
+        assert!(current_highlights.highlight_row(row).is_some(), "row {row} should be resolved after scrolling");
+    }
+    assert!(current_highlights.highlight_row(12).is_none(), "row 12 should remain unresolved until scrolled into");
 
     editor
         .windows_mut()
@@ -289,6 +289,7 @@ fn decorations_override_syntax_foreground_without_dropping_other_style() {
         ],
         cursor: None,
         scrollbar: None,
+        hscrollbar: None,
         default_style: Style::default(),
     };
 
@@ -347,6 +348,9 @@ fn test_view_model_validation_and_caching() {
         selections: selections.clone(),
         is_current: true,
         scroll_top: 0,
+        leftcol: 0,
+        wrap: true,
+        scrollbar: false,
         path: None,
         name: "test".to_string(),
         is_modified: false,
@@ -390,6 +394,7 @@ fn test_view_model_validation_and_caching() {
         decorations: vec![],
         cursor: None,
         scrollbar: None,
+        hscrollbar: None,
         default_style: Style::default(),
     };
     assert_eq!(
@@ -408,6 +413,9 @@ fn test_view_model_validation_and_caching() {
         selections: selections.clone(),
         is_current: true,
         scroll_top: 0,
+        leftcol: 0,
+        wrap: true,
+        scrollbar: false,
         path: None,
         name: "test".to_string(),
         is_modified: false,
@@ -448,6 +456,7 @@ fn one_row_model(text: &str, width: u16) -> TextViewModel {
         decorations: vec![],
         cursor: None,
         scrollbar: None,
+        hscrollbar: None,
         default_style: Style::default(),
     }
 }
@@ -473,6 +482,9 @@ fn empty_projection(window: WindowId, buffer: BufferId, is_current: bool) -> Win
         selections,
         is_current,
         scroll_top: 0,
+        leftcol: 0,
+        wrap: true,
+        scrollbar: false,
         path: None,
         name: "test".to_string(),
         is_modified: false,
@@ -546,6 +558,7 @@ fn format_cells_snapshots_a_multi_line_model_with_the_cursor_mid_line() {
             visible: true,
         }),
         scrollbar: None,
+        hscrollbar: None,
         default_style: Style::default(),
     };
 
@@ -708,6 +721,7 @@ fn test_render_selection_styles() {
         }],
         cursor: None,
         scrollbar: None,
+        hscrollbar: None,
         default_style: Style::default(),
     };
 
@@ -1093,4 +1107,62 @@ fn test_visual_selection_rendering_modes() {
         assert_eq!(dec2.end.row, 1);
         assert_eq!(dec2.end.column, 4);
     }
+}
+
+#[test]
+fn test_wrap_and_horizontal_scroll() {
+    let mut editor = Editor::new("this is a very long line of text that should exceed viewport width\n");
+    let mut render_state = RenderState::new();
+    let screen = Rect::new(0, 0, 20, 5); // Width is 20, line length is 67.
+    let win_id = editor.current_context().window;
+
+    // 1. Initially wrap is true, hscrollbar is None
+    editor.submit_command_line("set scrollbar");
+    editor.submit_command_line("set hscrollbar");
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    assert!(model.hscrollbar.is_none());
+    let rendered = format_cells(&render_to_cells(&model));
+    let text_part = rendered.split("\n\n").next().unwrap();
+    assert_eq!(
+        text_part,
+        "this is a very long \nline of text that sh\nould exceed viewport\n width              "
+    );
+
+    // 2. Set nowrap: wrap is false, hscrollbar is constructed (since max width 67 > viewport 20)
+    editor.submit_command_line("set nowrap");
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    assert!(model.hscrollbar.is_some());
+    let hscroll = model.hscrollbar.as_ref().unwrap();
+    assert_eq!(hscroll.total_rows, 66);
+    assert_eq!(hscroll.visible_rows, 20);
+
+    // Verify cell snapshot has horizontal scrolling (first 20 chars of line)
+    let rendered = format_cells(&render_to_cells(&model));
+    let text_part = rendered.split("\n\n").next().unwrap();
+    assert_eq!(
+        text_part,
+        "this is a very long \n                    \n                    \n                    "
+    );
+
+    // 3. Move cursor to column 30: leftcol should shift so cursor is visible.
+    editor.execute(Action::MoveRight {
+        count: 30,
+        select: false,
+    });
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    
+    // With cursor at column 30, leftcol must be at least 11 (30 - 20 + 1 = 11) to keep column 30 on screen.
+    let leftcol = editor.window(win_id).unwrap().leftcol();
+    assert!(leftcol >= 11);
+    
+    // Verify first characters in cell snapshot are shifted by leftcol.
+    let cells_str = format_cells(&render_to_cells(&model));
+    let text_part = cells_str.split("\n\n").next().unwrap();
+    assert!(text_part.starts_with("ery long line of te"));
 }

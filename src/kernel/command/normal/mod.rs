@@ -206,6 +206,18 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::CenterCursorLine => motions::center_cursor_line(editor, ctx.window),
         Action::CursorLineTop => motions::cursor_line_top(editor, ctx.window),
         Action::CursorLineBottom => motions::cursor_line_bottom(editor, ctx.window),
+        Action::ScrollColumnLeft { count } => {
+            motions::scroll_column_left(editor, ctx.window, count)
+        }
+        Action::ScrollColumnRight { count } => {
+            motions::scroll_column_right(editor, ctx.window, count)
+        }
+        Action::ScrollHalfPageLeft { count } => {
+            motions::scroll_half_page_left(editor, ctx.window, count)
+        }
+        Action::ScrollHalfPageRight { count } => {
+            motions::scroll_half_page_right(editor, ctx.window, count)
+        }
         Action::MoveToNextCharacter {
             count,
             ch,
