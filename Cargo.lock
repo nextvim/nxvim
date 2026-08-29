@@ -3715,6 +3715,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vim-syntax"
+version = "0.1.0"
+dependencies = [
+ "vim-colorscheme",
+ "vim-regex",
+ "vim-script",
+]
+
+[[package]]
 name = "vim-treesitter"
 version = "0.1.0"
 dependencies = [

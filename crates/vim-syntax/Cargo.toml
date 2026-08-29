@@ -1,0 +1,11 @@
+[package]
+name = "vim-syntax"
+version = "0.1.0"
+edition = "2024"
+license = "Vim"
+publish = false
+
+[dependencies]
+vim-colorscheme = { path = "../vim-colorscheme" }
+vim-regex = { path = "../vim-regex" }
+vim-script = { path = "../vim-script" }
