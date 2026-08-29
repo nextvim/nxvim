@@ -628,3 +628,42 @@ fn test_tabline_rendering() {
     out.clear();
     render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
 }
+
+#[test]
+fn test_scrollbar_rendering() {
+    let mut editor = Editor::new("line1\nline2\nline3\nline4\nline5\n");
+    let mut render_state = RenderState::new();
+    let screen = Rect::new(0, 0, 40, 10);
+
+    // Default scrollbar=false
+    let mut out = Vec::new();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    // Enable scrollbar option
+    editor.submit_command_line("set scrollbar");
+    out.clear();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    let win_id = editor.current_context().window;
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+    assert!(model.scrollbar.is_some());
+    let sb = model.scrollbar.unwrap();
+    assert_eq!(sb.total_rows, 6);
+}
+
+#[test]
+fn test_hscrollbar_rendering() {
+    let mut editor = Editor::new("line1_with_very_long_content_to_trigger_horizontal_scrollbar\n");
+    let mut render_state = RenderState::new();
+    let screen = Rect::new(0, 0, 40, 10);
+
+    // Default hscrollbar=false
+    let mut out = Vec::new();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+
+    // Enable hscrollbar option
+    editor.submit_command_line("set hscrollbar");
+    out.clear();
+    render(&mut out, &mut editor, &mut render_state, "", None, screen, &[], true).unwrap();
+}

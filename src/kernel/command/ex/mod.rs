@@ -436,6 +436,7 @@ fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::Option
                     "signcolumn" => win.options().signcolumn.clone(),
                     "foldcolumn" => win.options().foldcolumn.to_string(),
                     "scrollbar" => win.options().scrollbar.to_string(),
+                    "hscrollbar" => win.options().hscrollbar.to_string(),
                     _ => String::new(),
                 }
             } else {
@@ -568,6 +569,11 @@ fn set_option_val(
                     "scrollbar" => {
                         if let OptionValue::Bool(b) = val {
                             opts.scrollbar = b;
+                        }
+                    }
+                    "hscrollbar" => {
+                        if let OptionValue::Bool(b) = val {
+                            opts.hscrollbar = b;
                         }
                     }
                     _ => {}

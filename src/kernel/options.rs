@@ -57,6 +57,7 @@ pub struct WindowOptions {
     pub signcolumn: String,
     pub foldcolumn: i64,
     pub scrollbar: bool,
+    pub hscrollbar: bool,
 }
 
 impl Default for WindowOptions {
@@ -68,6 +69,7 @@ impl Default for WindowOptions {
             signcolumn: "auto".to_string(),
             foldcolumn: 0,
             scrollbar: false,
+            hscrollbar: false,
         }
     }
 }
@@ -151,6 +153,11 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
         }),
         "scrollbar" | "sb" => Some(OptionSpec {
             canonical_name: "scrollbar",
+            scope: OptionScope::Window,
+            kind: OptionValueKind::Bool,
+        }),
+        "hscrollbar" | "hsb" => Some(OptionSpec {
+            canonical_name: "hscrollbar",
             scope: OptionScope::Window,
             kind: OptionValueKind::Bool,
         }),

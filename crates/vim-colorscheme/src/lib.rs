@@ -414,6 +414,42 @@ impl ColorScheme {
             );
         }
 
+        let pmenu_sbar = parsed.ui.get("pmenu_sbar").and_then(|v| resolve(v));
+        if let Some(bg) = pmenu_sbar {
+            styles.insert(
+                "ScrollbarTrack".to_string(),
+                Style {
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
+            styles.insert(
+                "PmenuSbar".to_string(),
+                Style {
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
+        }
+
+        let pmenu_thumb = parsed.ui.get("pmenu_thumb").and_then(|v| resolve(v));
+        if let Some(bg) = pmenu_thumb {
+            styles.insert(
+                "ScrollbarThumb".to_string(),
+                Style {
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
+            styles.insert(
+                "PmenuThumb".to_string(),
+                Style {
+                    bg: Some(bg),
+                    ..Default::default()
+                },
+            );
+        }
+
         Ok(Self {
             metadata: parsed.metadata,
             foreground,

@@ -18,8 +18,8 @@ use vim_ui::ColorScheme;
 use vim_ui::{
     Rect, Style,
     model::{
-        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, GutterCell, TextCursor,
-        TextSpan, TextViewModel,
+        CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, GutterCell,
+        ScrollbarModel, TextCursor, TextSpan, TextViewModel,
     },
     renderer::{BufferedRenderer, Renderer},
     views::text::TextView,
@@ -378,13 +378,56 @@ pub fn render(
                 visible: cursor_visible,
             });
 
+            let scrollbar_option = if let Some(win) = editor.window(projection.window) {
+                win.options().scrollbar
+            } else {
+                false
+            };
+
+            let scrollbar = if scrollbar_option {
+                let track_style = scheme
+                    .get_style("ScrollbarTrack")
+                    .cloned()
+                    .unwrap_or_else(|| Style {
+                        bg: Some(vim_colorscheme::Color::DarkGrey),
+                        ..Default::default()
+                    });
+
+                let thumb_style = scheme
+                    .get_style("ScrollbarThumb")
+                    .cloned()
+                    .unwrap_or_else(|| Style {
+                        bg: Some(vim_colorscheme::Color::Grey),
+                        ..Default::default()
+                    });
+
+                let cursor_style = scheme.get_style("ScrollbarCursor").cloned();
+
+                let total_rows = snapshot.row_count();
+                let visible_rows_clamped = (visible_rows as u32).min(total_rows);
+                let first_visible_row_clamped = (scroll_y as u32).min(total_rows.saturating_sub(visible_rows_clamped));
+                let cursor_row_clamped = Some((display_cursor.row() as u32).min(total_rows.saturating_sub(1)));
+
+                Some(ScrollbarModel {
+                    total_rows,
+                    first_visible_row: first_visible_row_clamped,
+                    visible_rows: visible_rows_clamped,
+                    cursor_row: cursor_row_clamped,
+                    track_style,
+                    thumb_style,
+                    cursor_style,
+                })
+            } else {
+                None
+            };
+
             let model = TextViewModel {
                 viewport_width: view_rect.width,
                 viewport_height: view_rect.height,
                 rows,
                 selections,
                 cursor,
-                scrollbar: None,
+                scrollbar,
                 default_style: Style::default(),
             };
 
@@ -410,6 +453,65 @@ pub fn render(
         // Draw the window. Always drawn (even when the model was reused)
         // so the `BufferedRenderer`'s cell diff, not this loop, decides
         text_view.draw(view_rect, &mut renderer)?;
+
+        let hscrollbar = if let Some(win) = editor.window(projection.window) {
+            win.options().hscrollbar
+        } else {
+            false
+        };
+        if hscrollbar {
+            let snapshot = cache.display_map.snapshot();
+            let mut max_len = 0;
+            for r in 0..snapshot.row_count() {
+                let len = snapshot.line_text(r).chars().count();
+                if len > max_len {
+                    max_len = len;
+                }
+            }
+            let total_cols = max_len as u32;
+            let visible_cols = view_rect.width as u32;
+            let scroll_x = snapshot.scroll_x as u32;
+
+            if total_cols > visible_cols && visible_cols > 0 {
+                let thumb_width = ((visible_cols as f32 / total_cols as f32) * visible_cols as f32)
+                    .round()
+                    .max(1.0) as u32;
+                let travel = visible_cols.saturating_sub(thumb_width);
+                let scrollable = total_cols.saturating_sub(visible_cols);
+                let thumb_start = if scrollable == 0 {
+                    0
+                } else {
+                    ((scroll_x as f32 / scrollable as f32) * travel as f32).round() as u32
+                };
+
+                let track_style = scheme
+                    .get_style("ScrollbarTrack")
+                    .cloned()
+                    .unwrap_or_else(|| Style {
+                        bg: Some(vim_colorscheme::Color::DarkGrey),
+                        ..Default::default()
+                    });
+
+                let thumb_style = scheme
+                    .get_style("ScrollbarThumb")
+                    .cloned()
+                    .unwrap_or_else(|| Style {
+                        bg: Some(vim_colorscheme::Color::Grey),
+                        ..Default::default()
+                    });
+
+                let y = view_rect.y + view_rect.height.saturating_sub(1);
+                for col in 0..view_rect.width {
+                    let is_thumb = col as u32 >= thumb_start && (col as u32) < thumb_start + thumb_width;
+                    let style = if is_thumb { thumb_style } else { track_style };
+                    let x = view_rect.x + col;
+                    if let Some(mut cell) = renderer.get_cell(x, y) {
+                        cell.bg = style.bg.unwrap_or(vim_colorscheme::Color::Reset);
+                        let _ = renderer.set_cell(x, y, cell);
+                    }
+                }
+            }
+        }
 
         if has_statusline {
             let status_y = rect.y + rect.height.saturating_sub(1);

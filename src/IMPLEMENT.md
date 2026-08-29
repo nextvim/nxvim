@@ -2095,25 +2095,47 @@ in under this one just because they share the `"{c}` syntax.
 
 ---
 
-# Scrollbar (Build Order 8.7)
+# Scrollbar (Build Order 8.7) — [x] COMPLETE
 
 > wire `vim_ui::model::ScrollbarModel` and `TextView`'s existing `draw_scrollbar` from the display map's total/visible row counts. Off by default; a new `scrollbar` window-local option (7.1's recipe) turns it on.
 
 ## Checklist
 
-1. - [ ] `kernel/options.rs`: Register new window-local option `scrollbar` (bool) following the 7.1 option registry recipe.
-2. - [ ] `view/mod.rs`: Update window projection and rendering cache update steps to construct a `ScrollbarModel` based on `DisplayMap` total and visible row counts.
-3. - [ ] `view/mod.rs`: Wire the scrollbar model into `TextView` rendering, invoking its `draw_scrollbar` method when the `scrollbar` option is enabled.
-4. - [ ] `view/layout.rs`: Ensure layout computation remains unaffected by the scrollbar state, keeping scrollbar drawing as an overlay inside the window's existing rect.
-5. - [ ] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
-6. - [ ] Unit tests: Verify scrollbar rendering doesn't modify layout width/height, and `ScrollbarModel` values are computed correctly.
-7. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+1. - [x] `kernel/options.rs`: Register new window-local option `scrollbar` (bool) following the 7.1 option registry recipe.
+2. - [x] `view/mod.rs`: Update window projection and rendering cache update steps to construct a `ScrollbarModel` based on `DisplayMap` total and visible row counts.
+3. - [x] `view/mod.rs`: Wire the scrollbar model into `TextView` rendering, invoking its `draw_scrollbar` method when the `scrollbar` option is enabled.
+4. - [x] `view/layout.rs`: Ensure layout computation remains unaffected by the scrollbar state, keeping scrollbar drawing as an overlay inside the window's existing rect.
+5. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+6. - [x] Unit tests: Verify scrollbar rendering doesn't modify layout width/height, and `ScrollbarModel` values are computed correctly.
+7. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] The window-local option `scrollbar` is successfully registered.
+- [x] Scrollbar matches the vertical text offset and visible row counts, rendered overlaying the text area's rightmost column without shrinking the computed viewport rect.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# Selections rendering (Build Order 8.8)
+
+> Visual/Select mode's selection highlight, actually painted into `TextViewModel.selections: Vec<DisplaySelection>` (the field already exists per 8.1's `DisplaySnapshot` plumbing, but nothing populates it beyond the single cursor position today).
+
+## Checklist
+
+1. - [ ] `view/mod.rs`: Update selections translation logic in `view/mod.rs` to compute char-wise, line-wise, and block-wise visual selections based on the current mode and visual selection ranges.
+2. - [ ] `view/mod.rs`: Clip and format these selections to fit correctly in `DisplaySelection` coordinate offsets relative to `scroll_y`.
+3. - [ ] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+4. - [ ] Unit tests: Add unit tests in `src/view/tests.rs` verifying selection highlight ranges under char, line, and block selection modes.
+5. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
 
 ## Criteria for Completion
 
 - [ ] `cargo check -p nxvim` passes.
 - [ ] `cargo check --workspace` passes.
 - [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
-- [ ] The window-local option `scrollbar` is successfully registered.
-- [ ] Scrollbar matches the vertical text offset and visible row counts, rendered overlaying the text area's rightmost column without shrinking the computed viewport rect.
+- [ ] Selections are mapped correctly to `DisplaySelection` objects for char, line, and block visual modes.
 - [ ] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
