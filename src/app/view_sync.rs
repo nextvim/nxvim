@@ -12,6 +12,7 @@ pub struct WindowProjection {
     pub selections: SelectionSet,
     pub is_current: bool,
     pub scroll_top: u32,
+    pub path: Option<String>,
     pub name: String,
     pub is_modified: bool,
     pub visual_kind: Option<VisualKind>,
@@ -28,10 +29,8 @@ pub fn project(editor: &Editor) -> Vec<WindowProjection> {
         if let Some(win) = editor.window(id) {
             let buffer_id = win.buffer_id();
             if let Some(buf) = editor.buffer(buffer_id) {
-                let name = buf
-                    .path()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "[No Name]".to_string());
+                let path = buf.path().map(|p| p.to_string_lossy().into_owned());
+                let name = path.clone().unwrap_or_else(|| "[No Name]".to_string());
                 projections.push(WindowProjection {
                     window: id,
                     buffer: buffer_id,
@@ -39,6 +38,7 @@ pub fn project(editor: &Editor) -> Vec<WindowProjection> {
                     selections: win.selections().clone(),
                     is_current: id == current_ctx.window,
                     scroll_top: win.scroll_top(),
+                    path,
                     name,
                     is_modified: buf.is_modified(),
                     visual_kind: win.visual_kind(),

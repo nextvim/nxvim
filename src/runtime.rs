@@ -11,7 +11,7 @@ use crossterm::event::{self, Event};
 
 use crate::app::{App, input::InputTranslator};
 use crate::kernel::outcome::RedrawInvalidation;
-use crate::view;
+use crate::view::RenderState;
 
 pub fn run(
     app: &mut App,
@@ -20,7 +20,7 @@ pub fn run(
 ) -> io::Result<()> {
     let mut screen = session.size().unwrap_or(vim_ui::Rect::new(0, 0, 80, 24));
     let mut input = InputTranslator::with_mappings(app.shared_keymaps());
-    let mut render_state = view::RenderState::new();
+    let mut render_state = RenderState::new();
     // Temporary debug status (mode + last resolved action), see `view::render`.
     let mut status = String::new();
     // Invalidations accumulated since the last frame was flushed, and
@@ -34,9 +34,8 @@ pub fn run(
     } else {
         None
     };
-    view::render(
+    app.render(
         out,
-        app.editor_mut(),
         &mut render_state,
         &status,
         prompt_opt.as_deref(),
@@ -49,8 +48,25 @@ pub fn run(
 
     loop {
         if !event::poll(Duration::from_millis(50))? {
+            if render_state.advance_idle() {
+                let prompt_opt = if app.editor().mode().is_command() {
+                    Some(app.prompt().text().to_string())
+                } else {
+                    None
+                };
+                app.render(
+                    out,
+                    &mut render_state,
+                    &status,
+                    prompt_opt.as_deref(),
+                    screen,
+                    &[],
+                    false,
+                )?;
+            }
             continue;
         }
+        render_state.note_interaction();
         let ev = event::read()?;
         status = String::new();
 
@@ -62,9 +78,8 @@ pub fn run(
             } else {
                 None
             };
-            view::render(
+            app.render(
                 out,
-                app.editor_mut(),
                 &mut render_state,
                 &status,
                 prompt_opt.as_deref(),
@@ -109,9 +124,8 @@ pub fn run(
         } else {
             None
         };
-        view::render(
+        app.render(
             out,
-            app.editor_mut(),
             &mut render_state,
             &status,
             prompt_opt.as_deref(),

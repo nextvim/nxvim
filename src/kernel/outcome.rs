@@ -15,6 +15,8 @@ use crate::kernel::events::EditorEvent;
 pub enum RedrawInvalidation {
     #[default]
     None,
+    /// App-owned presentation state changed for every window.
+    All,
     /// Only the cursor moved; the window's content is unchanged.
     CurrentWindow,
     /// Text changed within `range` of `buffer`; a real redraw only needs to

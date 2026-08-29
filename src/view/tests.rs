@@ -118,6 +118,208 @@ fn format_cells(buffer: &ScreenBuffer) -> String {
 }
 
 #[test]
+fn viewport_movement_hits_prefetch_then_fills_only_a_tight_miss() {
+    let text = (0..160)
+        .map(|row| format!("let value_{row} = {row};\n"))
+        .collect::<String>();
+    let path = std::env::temp_dir().join(format!(
+        "nxvim-textmate-scroll-{}.rs",
+        rand::random::<u64>()
+    ));
+    std::fs::write(&path, text).unwrap();
+    let mut editor = Editor::open(std::slice::from_ref(&path));
+    let buffer = editor.current_context().buffer;
+    let window = editor.current_context().window;
+    let mut state = RenderState::new();
+    let screen = Rect::new(0, 0, 60, 8);
+
+    render_frame(&mut editor, &mut state, screen, &[], true);
+    for _ in 0..IDLE_POLLS_PER_STEP {
+        state.advance_idle();
+    }
+    render_frame(&mut editor, &mut state, screen, &[], false);
+    let prefetched = editor
+        .buffers_mut()
+        .analysis(buffer)
+        .unwrap()
+        .highlights()
+        .rows
+        .clone();
+
+    state.note_interaction();
+    editor
+        .windows_mut()
+        .get_mut(window)
+        .unwrap()
+        .set_scroll_top(5);
+    render_frame(
+        &mut editor,
+        &mut state,
+        screen,
+        &[RedrawInvalidation::CurrentWindow],
+        false,
+    );
+    assert_eq!(
+        editor
+            .buffers_mut()
+            .analysis(buffer)
+            .unwrap()
+            .highlights()
+            .rows,
+        prefetched,
+        "scrolling within idle expansion must be a cache hit"
+    );
+
+    editor
+        .windows_mut()
+        .get_mut(window)
+        .unwrap()
+        .set_scroll_top(100);
+    render_frame(
+        &mut editor,
+        &mut state,
+        screen,
+        &[RedrawInvalidation::CurrentWindow],
+        false,
+    );
+    let highlights = editor.buffers_mut().analysis(buffer).unwrap().highlights();
+    assert!(highlights.highlight_row(100).is_some());
+    assert!(highlights.highlight_row(99).is_none());
+    assert!(highlights.highlight_row(110).is_none());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn split_windows_share_one_highlight_cache_for_disjoint_viewports() {
+    let text = (0..160)
+        .map(|row| format!("let value_{row} = {row};\n"))
+        .collect::<String>();
+    let path = std::env::temp_dir().join(format!(
+        "nxvim-textmate-shared-{}.rs",
+        rand::random::<u64>()
+    ));
+    std::fs::write(&path, text).unwrap();
+    let mut editor = Editor::open(std::slice::from_ref(&path));
+    let buffer = editor.current_context().buffer;
+    let first = editor.current_context().window;
+    editor.execute(Action::SplitVertical { file_path: None });
+    let second = editor.current_context().window;
+    editor
+        .windows_mut()
+        .get_mut(first)
+        .unwrap()
+        .set_scroll_top(0);
+    editor
+        .windows_mut()
+        .get_mut(second)
+        .unwrap()
+        .set_scroll_top(100);
+
+    let mut state = RenderState::new();
+    render_frame(&mut editor, &mut state, Rect::new(0, 0, 80, 10), &[], true);
+
+    let highlights = editor.buffers_mut().analysis(buffer).unwrap().highlights();
+    assert!(highlights.highlight_row(0).is_some());
+    assert!(highlights.highlight_row(100).is_some());
+    assert_eq!(state.windows.len(), 2);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn rust_syntax_reaches_the_cell_grid_for_a_real_viewport() {
+    let path =
+        std::env::temp_dir().join(format!("nxvim-textmate-view-{}.rs", rand::random::<u64>()));
+    std::fs::write(&path, "fn main() {\n    let value = 1;\n}\n").unwrap();
+    let mut editor = Editor::open(std::slice::from_ref(&path));
+    let mut state = RenderState::new();
+    let window = editor.current_context().window;
+
+    render_frame(&mut editor, &mut state, Rect::new(0, 0, 40, 8), &[], true);
+
+    let model = state.windows[&window].last_model.as_ref().unwrap();
+    assert!(
+        model
+            .decorations
+            .iter()
+            .any(|decoration| decoration.priority == 0)
+    );
+    let cells = render_to_cells(model);
+    assert_ne!(cells.cells[0].fg, Color::Reset);
+    assert_ne!(cells.cells[1].fg, Color::Reset);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn decorations_override_syntax_foreground_without_dropping_other_style() {
+    let mut syntax = Style::default();
+    syntax.fg = Some(Color::Red);
+    let mut foreground_overlay = Style::default();
+    foreground_overlay.fg = Some(Color::Blue);
+    let mut background_overlay = Style::default();
+    background_overlay.bg = Some(Color::Yellow);
+    let model = TextViewModel {
+        viewport_width: 2,
+        viewport_height: 1,
+        rows: vec![DisplayRow {
+            buffer_row: Some(0),
+            kind: DisplayRowKind::Buffer,
+            gutter: None,
+            spans: vec![TextSpan::new("xx", Style::default())],
+            fill_style: Style::default(),
+        }],
+        decorations: vec![
+            DisplayDecoration {
+                start: DisplayPosition { row: 0, column: 0 },
+                end: DisplayPosition { row: 0, column: 2 },
+                style: syntax,
+                priority: 0,
+            },
+            DisplayDecoration {
+                start: DisplayPosition { row: 0, column: 0 },
+                end: DisplayPosition { row: 0, column: 1 },
+                style: foreground_overlay,
+                priority: 10,
+            },
+            DisplayDecoration {
+                start: DisplayPosition { row: 0, column: 1 },
+                end: DisplayPosition { row: 0, column: 2 },
+                style: background_overlay,
+                priority: 10,
+            },
+        ],
+        cursor: None,
+        scrollbar: None,
+        default_style: Style::default(),
+    };
+
+    let cells = render_to_cells(&model);
+    assert_eq!(cells.cells[0].fg, Color::Blue);
+    assert_eq!(cells.cells[1].fg, Color::Red);
+    assert_eq!(cells.cells[1].bg, Color::Yellow);
+}
+
+#[test]
+fn idle_expansion_is_bounded_and_resets_on_interaction() {
+    let mut state = RenderState::new();
+
+    for _ in 0..3 {
+        assert!(!state.advance_idle());
+    }
+    assert!(state.advance_idle());
+    assert_eq!(state.idle_expansion, IDLE_EXPANSION_STEP);
+
+    for _ in 0..100 {
+        state.advance_idle();
+    }
+    assert_eq!(state.idle_expansion, MAX_IDLE_EXPANSION);
+    assert!(!state.advance_idle());
+
+    state.note_interaction();
+    assert_eq!(state.idle_expansion, 0);
+    assert_eq!(state.idle_polls, 0);
+}
+
+#[test]
 fn test_view_model_validation_and_caching() {
     let mut render_state = RenderState::new();
 
@@ -145,6 +347,7 @@ fn test_view_model_validation_and_caching() {
         selections: selections.clone(),
         is_current: true,
         scroll_top: 0,
+        path: None,
         name: "test".to_string(),
         is_modified: false,
         visual_kind: None,
@@ -205,6 +408,7 @@ fn test_view_model_validation_and_caching() {
         selections: selections.clone(),
         is_current: true,
         scroll_top: 0,
+        path: None,
         name: "test".to_string(),
         is_modified: false,
         visual_kind: None,
@@ -269,6 +473,7 @@ fn empty_projection(window: WindowId, buffer: BufferId, is_current: bool) -> Win
         selections,
         is_current,
         scroll_top: 0,
+        path: None,
         name: "test".to_string(),
         is_modified: false,
         visual_kind: None,
@@ -785,15 +990,26 @@ fn test_visual_selection_rendering_modes() {
         let mut render_state = RenderState::new();
         let win_id = editor.current_context().window;
 
-        editor.execute(Action::MoveRight { count: 2, select: false });
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: false,
+        });
         editor.execute(Action::SetToVisual);
-        editor.execute(Action::MoveRight { count: 4, select: true });
+        editor.execute(Action::MoveRight {
+            count: 4,
+            select: true,
+        });
 
         render_frame(&mut editor, &mut render_state, screen, &[], true);
         let cache = render_state.windows.get(&win_id).unwrap();
         let model = cache.last_model.as_ref().unwrap();
-        assert_eq!(model.decorations.len(), 1);
-        let dec = &model.decorations[0];
+        let selections = model
+            .decorations
+            .iter()
+            .filter(|decoration| decoration.priority == 100)
+            .collect::<Vec<_>>();
+        assert_eq!(selections.len(), 1);
+        let dec = selections[0];
         assert_eq!(dec.start.row, 0);
         assert_eq!(dec.start.column, 2);
         assert_eq!(dec.end.row, 0);
@@ -810,13 +1026,21 @@ fn test_visual_selection_rendering_modes() {
         render_frame(&mut editor, &mut render_state, screen, &[], true);
 
         editor.execute(Action::SetToVisualLine);
-        editor.execute(Action::MoveDown { count: 1, select: true });
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: true,
+        });
 
         render_frame(&mut editor, &mut render_state, screen, &[], true);
         let cache = render_state.windows.get(&win_id).unwrap();
         let model = cache.last_model.as_ref().unwrap();
-        assert_eq!(model.decorations.len(), 1);
-        let dec = &model.decorations[0];
+        let selections = model
+            .decorations
+            .iter()
+            .filter(|decoration| decoration.priority == 100)
+            .collect::<Vec<_>>();
+        assert_eq!(selections.len(), 1);
+        let dec = selections[0];
         assert_eq!(dec.start.row, 0);
         assert_eq!(dec.start.column, 0);
         assert_eq!(dec.end.row, 1);
@@ -833,18 +1057,32 @@ fn test_visual_selection_rendering_modes() {
         // Initialize viewport height to avoid scrolling on move down
         render_frame(&mut editor, &mut render_state, screen, &[], true);
 
-        editor.execute(Action::MoveRight { count: 1, select: false });
+        editor.execute(Action::MoveRight {
+            count: 1,
+            select: false,
+        });
         editor.execute(Action::SetToVisualBlock);
-        editor.execute(Action::MoveDown { count: 1, select: true });
-        editor.execute(Action::MoveRight { count: 2, select: true });
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: true,
+        });
+        editor.execute(Action::MoveRight {
+            count: 2,
+            select: true,
+        });
 
         render_frame(&mut editor, &mut render_state, screen, &[], true);
         let cache = render_state.windows.get(&win_id).unwrap();
         let model = cache.last_model.as_ref().unwrap();
-        // Block-wise mode should produce a decoration on each line in the block range
-        assert_eq!(model.decorations.len(), 2);
-        let dec1 = &model.decorations[0];
-        let dec2 = &model.decorations[1];
+        // Block-wise mode should produce a selection decoration on each line.
+        let selections = model
+            .decorations
+            .iter()
+            .filter(|decoration| decoration.priority == 100)
+            .collect::<Vec<_>>();
+        assert_eq!(selections.len(), 2);
+        let dec1 = selections[0];
+        let dec2 = selections[1];
         assert_eq!(dec1.start.row, 0);
         assert_eq!(dec1.start.column, 1);
         assert_eq!(dec1.end.row, 0);
@@ -856,4 +1094,3 @@ fn test_visual_selection_rendering_modes() {
         assert_eq!(dec2.end.column, 4);
     }
 }
-

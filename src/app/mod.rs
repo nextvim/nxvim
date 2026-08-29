@@ -22,6 +22,7 @@ pub struct App {
     prompt: CommandPrompt,
     pending_request: Option<AppRequest>,
     script: crate::script::ScriptHost,
+    colorscheme: vim_ui::ColorScheme,
 }
 
 impl App {
@@ -49,6 +50,7 @@ impl App {
             prompt,
             pending_request: None,
             script,
+            colorscheme: vim_ui::ColorScheme::load_default(),
         }
     }
 
@@ -124,6 +126,33 @@ impl App {
         &mut self.editor
     }
 
+    pub fn colorscheme(&self) -> &vim_ui::ColorScheme {
+        &self.colorscheme
+    }
+
+    pub fn render(
+        &mut self,
+        out: &mut impl std::io::Write,
+        render_state: &mut crate::view::RenderState,
+        status: &str,
+        prompt: Option<&str>,
+        screen: vim_ui::Rect,
+        pending: &[crate::kernel::outcome::RedrawInvalidation],
+        force_full: bool,
+    ) -> std::io::Result<()> {
+        crate::view::render_with_scheme(
+            out,
+            &mut self.editor,
+            render_state,
+            status,
+            prompt,
+            screen,
+            pending,
+            force_full,
+            &self.colorscheme,
+        )
+    }
+
     pub fn prompt(&self) -> &CommandPrompt {
         &self.prompt
     }
@@ -193,7 +222,10 @@ impl App {
                 // Return the editor to Normal mode via Clear
                 let _exit_outcome = self.editor.execute(Action::Clear);
                 outcome.mode_changed = true;
-                outcome.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+                if outcome.invalidation == crate::kernel::outcome::RedrawInvalidation::None {
+                    outcome.invalidation =
+                        crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+                }
 
                 self.process_autocommands(&outcome);
                 outcome
@@ -292,6 +324,37 @@ impl App {
             let message = command.arguments.trim().to_string();
             self.pending_request = Some(AppRequest::ShowMessage(message));
             return Outcome::default();
+        }
+
+        if command.name == "colorscheme" || command.name == "colo" {
+            let name = command.arguments.trim();
+            if name.is_empty() {
+                self.pending_request = Some(AppRequest::ShowMessage(format!(
+                    "{}",
+                    self.colorscheme.metadata.name
+                )));
+                return Outcome::default();
+            }
+            return match vim_ui::ColorScheme::get_by_name(name) {
+                Some(colorscheme) => {
+                    self.colorscheme = colorscheme;
+                    self.editor.buffers_mut().invalidate_all_highlights();
+                    self.pending_request = Some(AppRequest::ShowMessage(format!(
+                        "colorscheme {}",
+                        self.colorscheme.metadata.name
+                    )));
+                    Outcome {
+                        invalidation: crate::kernel::outcome::RedrawInvalidation::All,
+                        ..Outcome::default()
+                    }
+                }
+                None => {
+                    self.pending_request = Some(AppRequest::ShowMessage(format!(
+                        "E185: Cannot find color scheme '{name}'"
+                    )));
+                    Outcome::default()
+                }
+            };
         }
 
         let expanded = match self.script.expand_user_command(command) {
@@ -488,6 +551,68 @@ mod tests {
         app.handle_action(resolved, None);
 
         assert_eq!(app.take_request(), Some(AppRequest::Quit));
+    }
+
+    #[test]
+    fn colorscheme_command_replaces_app_theme_and_invalidates_highlights() {
+        let mut app = App::new("fn main() {}\n");
+        let buffer = app.editor.current_context().buffer;
+        app.editor
+            .buffers_mut()
+            .analysis_mut(buffer)
+            .unwrap()
+            .highlights_mut()
+            .rows
+            .insert(0, Vec::new());
+        let command = crate::kernel::command::ex::parse("colorscheme dracula").unwrap();
+
+        let outcome = app.execute_ex_command(command);
+
+        assert_eq!(
+            outcome.invalidation,
+            crate::kernel::outcome::RedrawInvalidation::All
+        );
+        assert!(
+            app.colorscheme
+                .metadata
+                .name
+                .to_lowercase()
+                .contains("dracula")
+        );
+        assert!(
+            app.editor
+                .buffers_mut()
+                .analysis(buffer)
+                .unwrap()
+                .highlights()
+                .rows
+                .is_empty()
+        );
+        assert!(matches!(
+            app.take_request(),
+            Some(AppRequest::ShowMessage(_))
+        ));
+    }
+
+    #[test]
+    fn unknown_colorscheme_preserves_current_theme() {
+        let mut app = App::new("text");
+        let original = app.colorscheme.clone();
+        let command = crate::kernel::command::ex::parse("colo definitely-missing").unwrap();
+
+        let outcome = app.execute_ex_command(command);
+
+        assert_eq!(
+            outcome.invalidation,
+            crate::kernel::outcome::RedrawInvalidation::None
+        );
+        assert_eq!(app.colorscheme, original);
+        assert_eq!(
+            app.take_request(),
+            Some(AppRequest::ShowMessage(
+                "E185: Cannot find color scheme 'definitely-missing'".to_string()
+            ))
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! `Editor::execute()` is the *only* public mutation entry point — see
 //! `RESCUE.md`'s architecture section. Nothing under `kernel/` may import
-//! `crate::app`, `vim_ui::*`, or `vim_clipboard::*`.
+//! application, concrete UI, or clipboard infrastructure modules.
 
 pub mod buffer;
 pub mod command;

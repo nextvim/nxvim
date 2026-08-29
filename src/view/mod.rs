@@ -40,10 +40,16 @@ pub struct WindowRenderCache {
     pub built_count: u32,
 }
 
+const IDLE_POLLS_PER_STEP: u8 = 4;
+const IDLE_EXPANSION_STEP: u32 = 8;
+const MAX_IDLE_EXPANSION: u32 = 64;
+
 #[derive(Default)]
 pub struct RenderState {
     pub windows: HashMap<WindowId, WindowRenderCache>,
     renderer: Option<BufferedRenderer>,
+    idle_polls: u8,
+    idle_expansion: u32,
 }
 
 impl RenderState {
@@ -51,13 +57,55 @@ impl RenderState {
         Self {
             windows: HashMap::new(),
             renderer: None,
+            idle_polls: 0,
+            idle_expansion: 0,
         }
+    }
+
+    pub fn note_interaction(&mut self) {
+        self.idle_polls = 0;
+        self.idle_expansion = 0;
+    }
+
+    /// Advances bounded idle prefetch and reports whether an idle frame is
+    /// needed. Called once per 50 ms terminal poll timeout.
+    pub fn advance_idle(&mut self) -> bool {
+        if self.idle_expansion >= MAX_IDLE_EXPANSION {
+            return false;
+        }
+        self.idle_polls = self.idle_polls.saturating_add(1);
+        if self.idle_polls < IDLE_POLLS_PER_STEP {
+            return false;
+        }
+        self.idle_polls = 0;
+        self.idle_expansion = (self.idle_expansion + IDLE_EXPANSION_STEP).min(MAX_IDLE_EXPANSION);
+        true
     }
 }
 
 /// A window's model is rebuilt this frame if a full redraw was forced, if
 /// it has never been built, or if this window is within scope of one of
 /// the invalidations accumulated since the last frame.
+fn visible_buffer_rows(
+    snapshot: &display_map::DisplaySnapshot,
+    viewport_height: u32,
+) -> Option<std::ops::RangeInclusive<u32>> {
+    let start = snapshot.scroll_y;
+    let end = start
+        .saturating_add(snapshot.visible_rows.min(viewport_height))
+        .min(snapshot.row_count());
+    let mut first = None;
+    let mut last = None;
+
+    for display_row in start..end {
+        let range = snapshot.buffer_range_for_display_row(display_row);
+        first = Some(first.map_or(range.start.row, |row: u32| row.min(range.start.row)));
+        last = Some(last.map_or(range.end.row, |row: u32| row.max(range.end.row)));
+    }
+
+    first.zip(last).map(|(first, last)| first..=last)
+}
+
 fn should_rebuild(
     has_model: bool,
     buffer: BufferId,
@@ -69,6 +117,7 @@ fn should_rebuild(
         || !has_model
         || pending.iter().any(|invalidation| match invalidation {
             RedrawInvalidation::None => false,
+            RedrawInvalidation::All => true,
             RedrawInvalidation::CurrentWindow => is_current,
             RedrawInvalidation::Range { buffer: dirty, .. } => *dirty == buffer,
         })
@@ -83,6 +132,7 @@ fn should_rebuild(
 /// repaint, regardless of `pending`. Drawing itself always goes through the
 /// `BufferedRenderer` retained on `render_state`, which diffs against the
 /// previous frame and only writes changed cells to `out`.
+#[cfg(test)]
 pub fn render(
     out: &mut impl Write,
     editor: &mut crate::kernel::Editor,
@@ -92,6 +142,31 @@ pub fn render(
     screen: Rect,
     pending: &[RedrawInvalidation],
     force_full: bool,
+) -> io::Result<()> {
+    let scheme = ColorScheme::load_default();
+    render_with_scheme(
+        out,
+        editor,
+        render_state,
+        status,
+        prompt,
+        screen,
+        pending,
+        force_full,
+        &scheme,
+    )
+}
+
+pub fn render_with_scheme(
+    out: &mut impl Write,
+    editor: &mut crate::kernel::Editor,
+    render_state: &mut RenderState,
+    status: &str,
+    prompt: Option<&str>,
+    screen: Rect,
+    pending: &[RedrawInvalidation],
+    force_full: bool,
+    scheme: &ColorScheme,
 ) -> io::Result<()> {
     use text::ToOffset;
     let projections = crate::app::view_sync::project(editor);
@@ -120,7 +195,6 @@ pub fn render(
     };
     let rects = layout::layout(tab, layout_screen);
 
-    let scheme = ColorScheme::load_default();
     let mut selected_style = Style::default();
     selected_style.bg = scheme.selection;
 
@@ -137,6 +211,7 @@ pub fn render(
 
     let mut current_window_view = None;
     let mut current_window_rect = None;
+    let idle_expansion = render_state.idle_expansion;
 
     for projection in &projections {
         let Some(&rect) = rects.get(&projection.window) else {
@@ -205,6 +280,25 @@ pub fn render(
             pending,
         );
 
+        if !rebuild && idle_expansion > 0 {
+            let snapshot = cache.display_map.snapshot();
+            if let Some(visible_rows) = visible_buffer_rows(&snapshot, view_rect.height as u32) {
+                if let Some(analysis) = editor.buffers_mut().analysis_mut(projection.buffer) {
+                    textmate::highlight_run(
+                        analysis.highlights_mut(),
+                        &projection.snapshot,
+                        projection.path.as_deref(),
+                        *visible_rows.start(),
+                        *visible_rows.end(),
+                        idle_expansion,
+                        idle_expansion,
+                        None,
+                        &scheme,
+                    );
+                }
+            }
+        }
+
         let model = if rebuild {
             // Sync display map with projection snapshot and viewport rows
             let buffer_row_count = projection.snapshot.row_count();
@@ -227,6 +321,35 @@ pub fn render(
                 .point_to_display_point(head_point);
 
             let snapshot = cache.display_map.snapshot();
+            let syntax_rows = if let Some(visible_rows) =
+                visible_buffer_rows(&snapshot, view_rect.height as u32)
+            {
+                if let Some(analysis) = editor.buffers_mut().analysis_mut(projection.buffer) {
+                    textmate::highlight_run(
+                        analysis.highlights_mut(),
+                        &projection.snapshot,
+                        projection.path.as_deref(),
+                        *visible_rows.start(),
+                        *visible_rows.end(),
+                        0,
+                        0,
+                        None,
+                        &scheme,
+                    );
+                    visible_rows
+                        .filter_map(|row| {
+                            analysis
+                                .highlights()
+                                .highlight_row(row)
+                                .map(|spans| (row, spans.to_vec()))
+                        })
+                        .collect::<HashMap<_, _>>()
+                } else {
+                    HashMap::new()
+                }
+            } else {
+                HashMap::new()
+            };
             let (number, relativenumber, signcolumn, foldcolumn) =
                 if let Some(win) = editor.window(projection.window) {
                     let opts = win.options();
@@ -323,8 +446,43 @@ pub fn render(
                 });
             }
 
-            // Decorations (formerly Selections)
+            // Syntax is a low-priority decoration over unchanged display text.
+            // TextView composes all decoration layers in priority order.
             let mut decorations = Vec::new();
+            for (buffer_row, spans) in &syntax_rows {
+                for span in spans {
+                    let Some(start) = snapshot
+                        .try_point_to_display_point(Point::new(*buffer_row, span.start_column))
+                    else {
+                        continue;
+                    };
+                    let Some(end) = snapshot
+                        .try_point_to_display_point(Point::new(*buffer_row, span.end_column))
+                    else {
+                        continue;
+                    };
+                    let mut style = Style::default();
+                    style.fg = Some(vim_ui::Color::Rgb(
+                        span.foreground[0],
+                        span.foreground[1],
+                        span.foreground[2],
+                    ));
+                    decorations.push(DisplayDecoration {
+                        start: DisplayPosition {
+                            row: start.row().saturating_sub(scroll_y),
+                            column: start.column(),
+                        },
+                        end: DisplayPosition {
+                            row: end.row().saturating_sub(scroll_y),
+                            column: end.column(),
+                        },
+                        style,
+                        priority: 0,
+                    });
+                }
+            }
+
+            // Higher-priority semantic overlays.
             for sel in &projection.selections.selections {
                 let start_pt = projection
                     .snapshot

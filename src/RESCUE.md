@@ -671,7 +671,7 @@ one compiles and the kernel-purity grep above is clean.
         Depends on the windows/tabs milestone (3) already landed and on
         8.5's statusline pattern.
 
-   8.7. **Scrollbar (nxvim enhancement, not Vim compatibility)** — wire
+   8.7. [x] **Scrollbar (nxvim enhancement, not Vim compatibility)** — wire
         `vim_ui::model::ScrollbarModel` and `TextView`'s existing
         `draw_scrollbar` from the display map's total/visible row counts.
         Off by default; a new `scrollbar` window-local option (7.1's
@@ -689,7 +689,7 @@ one compiles and the kernel-purity grep above is clean.
         rect's own trailing column(s) after the text/gutter content, not
         into space carved out ahead of time. Depends on 8.1.
 
-   8.8. **Selections rendering** — Visual/Select mode's selection
+   8.8. [x] **Selections rendering** — Visual/Select mode's selection
         highlight, actually painted into `TextViewModel.selections: Vec<
         DisplaySelection>` (the field already exists per 8.1's
         `DisplaySnapshot` plumbing, but nothing populates it beyond the
@@ -729,7 +729,7 @@ one compiles and the kernel-purity grep above is clean.
         reuses 8.7's scrollbar wiring pattern for its horizontal
         counterpart.
 
-   8.10. **TextMate syntax highlighting (buffer-owned, window-driven)** —
+   8.10. [x] **TextMate syntax highlighting (buffer-owned, window-driven)** —
          regain syntax highlighting by wiring the existing `crates/textmate`
          implementation into the 8.1 projection/rendering path; do not design a
          replacement parser or a window-owned highlight store. Each buffer owns

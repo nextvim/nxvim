@@ -439,7 +439,13 @@ pub fn parse_scopes_cancellable(
     } else {
         start_row.saturating_sub(MAX_LOOKBACK)
     };
-    let end_row_iter = end_row.min(snapshot.row_count());
+    let convergence_row = existing_checkpoints
+        .iter()
+        .filter(|checkpoint| checkpoint.row >= end_row)
+        .map(|checkpoint| checkpoint.row)
+        .min()
+        .unwrap_or(end_row);
+    let end_row_iter = convergence_row.min(snapshot.row_count());
 
     let mut rows = Vec::new();
     let mut checkpoints = Vec::new();
@@ -690,6 +696,11 @@ pub fn highlight_run(
     let row_start = row_start.saturating_sub(expand_before);
     let row_end = row_end.saturating_add(expand_after);
 
+    // Keep the previous checkpoints as convergence sentinels. Checkpoints at
+    // and after an edit are never valid resume points, but their scope stacks
+    // still tell reparsing when it has reached the old stable parser state.
+    let existing_checkpoints: Vec<ParseStateCheckpoint> =
+        state.checkpoints.values().cloned().collect();
     let mut lowest_affected_row: Option<u32> = None;
     if let Some(previous) = state.published_snapshot.as_ref() {
         if previous.version != snapshot.version {
@@ -712,8 +723,6 @@ pub fn highlight_run(
     }
 
     let checkpoint = state.nearest_checkpoint(row_start);
-    let existing_checkpoints: Vec<ParseStateCheckpoint> =
-        state.checkpoints.values().cloned().collect();
 
     if let Some((rows, checkpoints)) = parse_scopes_cancellable(
         snapshot,
@@ -744,7 +753,7 @@ pub fn highlight_run(
 mod tests {
     use super::*;
     use clock::ReplicaId;
-    use vim_buffer::{Buffer, BufferId};
+    use vim_buffer::{Buffer, BufferId, ByteOffset, Edit, EditOrigin, PlannedEdit};
 
     #[test]
     fn test_map_scope_to_style_last_segment() {
@@ -827,5 +836,193 @@ mod tests {
 
         assert!(state.highlight_row(50).is_none());
         assert!(state.highlight_row(1800).is_none());
+    }
+
+    #[test]
+    fn edit_invalidates_rows_and_checkpoints_from_earliest_affected_row() {
+        let mut state = BufferHighlightState::new();
+        let text = "fn first() {}\nfn second() {}\nfn third() {}\nfn fourth() {}\n";
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text);
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
+        let before = buffer.snapshot().as_inner().clone();
+
+        highlight_run(
+            &mut state,
+            &before,
+            Some("main.rs"),
+            0,
+            3,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+        assert!(state.highlight_row(3).is_some());
+
+        let edit_offset = text.find("fn third").unwrap();
+        let mut transaction = buffer.transaction(EditOrigin::User);
+        transaction.push(PlannedEdit {
+            selection: None,
+            edit: Edit::insert(ByteOffset(edit_offset), "// changed\n"),
+        });
+        transaction.commit(None).unwrap();
+        let after = buffer.snapshot().as_inner().clone();
+
+        // Requesting an already-cached earlier row still processes snapshot
+        // invalidation before taking the cache-hit fast path.
+        highlight_run(
+            &mut state,
+            &after,
+            Some("main.rs"),
+            0,
+            0,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+
+        assert!(state.highlight_row(0).is_some());
+        assert!(state.highlight_row(1).is_some());
+        assert!(state.highlight_row(2).is_none());
+        assert!(state.checkpoints.keys().all(|row| *row < 2));
+        assert_eq!(
+            state.published_snapshot.as_ref().unwrap().version,
+            after.version
+        );
+    }
+
+    #[test]
+    fn fully_cached_range_is_a_no_op() {
+        let mut state = BufferHighlightState::new();
+        let buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "let value = 1;\n".repeat(20),
+        );
+        let snapshot = buffer.snapshot().as_inner().clone();
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
+        highlight_run(
+            &mut state,
+            &snapshot,
+            Some("main.rs"),
+            3,
+            8,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+        let rows_before = state.rows.clone();
+        let checkpoint_rows_before = state.checkpoints.keys().copied().collect::<Vec<_>>();
+
+        highlight_run(
+            &mut state,
+            &snapshot,
+            Some("main.rs"),
+            3,
+            8,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+
+        assert_eq!(state.rows, rows_before);
+        assert_eq!(
+            state.checkpoints.keys().copied().collect::<Vec<_>>(),
+            checkpoint_rows_before
+        );
+    }
+
+    #[test]
+    fn nearest_checkpoint_bounds_lookback_and_converges_at_next_checkpoint() {
+        let buffer = Buffer::new(
+            BufferId::new(1).unwrap(),
+            ReplicaId::LOCAL,
+            "let value = 1;\n".repeat(260),
+        );
+        let snapshot = buffer.snapshot().as_inner().clone();
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
+        let mut state = BufferHighlightState::new();
+        highlight_run(
+            &mut state,
+            &snapshot,
+            Some("main.rs"),
+            0,
+            255,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+
+        let resume = state.nearest_checkpoint(130).unwrap();
+        assert_eq!(resume.row, 128);
+        let existing = state.checkpoints.values().cloned().collect::<Vec<_>>();
+        let mut visited = 0;
+        let (rows, _) = parse_scopes_cancellable(
+            &snapshot,
+            Some("main.rs"),
+            130,
+            130,
+            Some(resume),
+            &existing,
+            None,
+            &colorscheme,
+            || {
+                visited += 1;
+                false
+            },
+        )
+        .unwrap();
+
+        assert_eq!(visited, 65, "only checkpoint 128 through sentinel 192");
+        assert_eq!(rows.first().unwrap().row, 130);
+        assert_eq!(rows.last().unwrap().row, 191);
+    }
+
+    #[test]
+    fn edit_reparse_stops_when_scope_stack_reconverges() {
+        let text = "let value = 1;\n".repeat(200);
+        let mut buffer = Buffer::new(BufferId::new(1).unwrap(), ReplicaId::LOCAL, text.clone());
+        let colorscheme = vim_colorscheme::ColorScheme::load_default();
+        let mut state = BufferHighlightState::new();
+        let before = buffer.snapshot().as_inner().clone();
+        highlight_run(
+            &mut state,
+            &before,
+            Some("main.rs"),
+            0,
+            192,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+
+        let edit_offset = text.lines().take(10).map(|line| line.len() + 1).sum();
+        let mut transaction = buffer.transaction(EditOrigin::User);
+        transaction.push(PlannedEdit {
+            selection: None,
+            edit: Edit::insert(ByteOffset(edit_offset), "let inserted = 2;\n"),
+        });
+        transaction.commit(None).unwrap();
+        let after = buffer.snapshot().as_inner().clone();
+        highlight_run(
+            &mut state,
+            &after,
+            Some("main.rs"),
+            10,
+            20,
+            0,
+            0,
+            None,
+            &colorscheme,
+        );
+
+        assert!(state.highlight_row(63).is_some());
+        assert!(state.highlight_row(64).is_none());
+        assert!(state.checkpoints.contains_key(&64));
     }
 }
