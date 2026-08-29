@@ -6,12 +6,13 @@ pub mod layout;
 pub mod tests;
 
 use crate::kernel::ids::WindowId;
+use crate::kernel::mode::VisualKind;
 use crate::kernel::outcome::RedrawInvalidation;
 use display_map::{DisplayMap, DisplayPoint};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, Write};
-use text::ToOffset;
+use text::{Point, ToOffset};
 use vim_buffer::BufferId;
 use vim_formatter::{CompiledFormat, ExprId, FormatDialect, FormatResolver, RenderItem, StyleId};
 use vim_ui::ColorScheme;
@@ -331,41 +332,83 @@ pub fn render(
                 let end_pt = projection
                     .snapshot
                     .offset_to_point(sel.end.to_offset(&projection.snapshot));
-                if let (Some(d_start), Some(d_end)) = (
-                    snapshot.try_point_to_display_point(start_pt),
-                    snapshot.try_point_to_display_point(end_pt),
-                ) {
-                    // Ensure proper orientation for DisplaySelection (validate checks end >= start)
-                    let (start_pos, end_pos) = if d_end >= d_start {
-                        (
-                            DisplayPosition {
-                                row: d_start.row().saturating_sub(scroll_y),
-                                column: d_start.column(),
-                            },
-                            DisplayPosition {
-                                row: d_end.row().saturating_sub(scroll_y),
-                                column: d_end.column(),
-                            },
-                        )
-                    } else {
-                        (
-                            DisplayPosition {
-                                row: d_end.row().saturating_sub(scroll_y),
-                                column: d_end.column(),
-                            },
-                            DisplayPosition {
-                                row: d_start.row().saturating_sub(scroll_y),
-                                column: d_start.column(),
-                            },
-                        )
-                    };
 
-                    decorations.push(DisplayDecoration {
-                        start: start_pos,
-                        end: end_pos,
-                        style: selected_style,
-                        priority: 100,
-                    });
+                let mut ranges = Vec::new();
+                match projection.visual_kind {
+                    Some(VisualKind::Line) => {
+                        let start_row = start_pt.row.min(end_pt.row);
+                        let end_row = start_pt.row.max(end_pt.row);
+                        let s_pt = Point::new(start_row, 0);
+                        let e_pt = Point::new(end_row, projection.snapshot.line_len(end_row));
+                        ranges.push((s_pt, e_pt));
+                    }
+                    Some(VisualKind::Block) => {
+                        let row_start = start_pt.row.min(end_pt.row);
+                        let row_end = start_pt.row.max(end_pt.row);
+                        let col_start = start_pt.column.min(end_pt.column);
+                        let col_end = start_pt.column.max(end_pt.column) + 1;
+                        for r in row_start..=row_end {
+                            let line_len = projection.snapshot.line_len(r);
+                            let s_col = col_start.min(line_len);
+                            let e_col = col_end.min(line_len);
+                            ranges.push((Point::new(r, s_col), Point::new(r, e_col)));
+                        }
+                    }
+                    _ => {
+                        if projection.visual_kind.is_some() {
+                            let (low, mut high) = if start_pt <= end_pt {
+                                (start_pt, end_pt)
+                            } else {
+                                (end_pt, start_pt)
+                            };
+                            let line_len = projection.snapshot.line_len(high.row);
+                            if high.column < line_len {
+                                high.column += 1;
+                            }
+                            ranges.push((low, high));
+                        } else {
+                            ranges.push((start_pt, end_pt));
+                        }
+                    }
+                }
+
+                for (s_pt, e_pt) in ranges {
+                    if let (Some(d_start), Some(d_end)) = (
+                        snapshot.try_point_to_display_point(s_pt),
+                        snapshot.try_point_to_display_point(e_pt),
+                    ) {
+                        // Ensure proper orientation for DisplaySelection (validate checks end >= start)
+                        let (start_pos, end_pos) = if d_end >= d_start {
+                            (
+                                DisplayPosition {
+                                    row: d_start.row().saturating_sub(scroll_y),
+                                    column: d_start.column(),
+                                },
+                                DisplayPosition {
+                                    row: d_end.row().saturating_sub(scroll_y),
+                                    column: d_end.column(),
+                                },
+                            )
+                        } else {
+                            (
+                                DisplayPosition {
+                                    row: d_end.row().saturating_sub(scroll_y),
+                                    column: d_end.column(),
+                                },
+                                DisplayPosition {
+                                    row: d_start.row().saturating_sub(scroll_y),
+                                    column: d_start.column(),
+                                },
+                            )
+                        };
+
+                        decorations.push(DisplayDecoration {
+                            start: start_pos,
+                            end: end_pos,
+                            style: selected_style,
+                            priority: 100,
+                        });
+                    }
                 }
             }
 

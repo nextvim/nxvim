@@ -2120,22 +2120,68 @@ in under this one just because they share the `"{c}` syntax.
 
 ---
 
-# Selections rendering (Build Order 8.8)
+# Selections rendering (Build Order 8.8) — [x] COMPLETE
 
 > Visual/Select mode's selection highlight, actually painted into `TextViewModel.selections: Vec<DisplaySelection>` (the field already exists per 8.1's `DisplaySnapshot` plumbing, but nothing populates it beyond the single cursor position today).
 
 ## Checklist
 
-1. - [ ] `view/mod.rs`: Update selections translation logic in `view/mod.rs` to compute char-wise, line-wise, and block-wise visual selections based on the current mode and visual selection ranges.
-2. - [ ] `view/mod.rs`: Clip and format these selections to fit correctly in `DisplaySelection` coordinate offsets relative to `scroll_y`.
-3. - [ ] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
-4. - [ ] Unit tests: Add unit tests in `src/view/tests.rs` verifying selection highlight ranges under char, line, and block selection modes.
-5. - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+1. - [x] `view/mod.rs`: Update selections translation logic in `view/mod.rs` to compute char-wise, line-wise, and block-wise visual selections based on the current mode and visual selection ranges.
+2. - [x] `view/mod.rs`: Clip and format these selections to fit correctly in `DisplaySelection` coordinate offsets relative to `scroll_y`.
+3. - [x] Kernel purity check: Run the grep `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+4. - [x] Unit tests: Add unit tests in `src/view/tests.rs` verifying selection highlight ranges under char, line, and block selection modes.
+5. - [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
 
 ## Criteria for Completion
 
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] Selections are mapped correctly to `DisplaySelection` objects for char, line, and block visual modes.
+- [x] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+
+---
+
+# TextMate syntax highlighting (Build Order 8.10)
+
+> Reuse `crates/textmate` to restore immediate syntax highlighting. Highlight cache and parser checkpoints are buffer-owned; windows only request the tight visible buffer-row ranges they need, and multiple windows extend the same shared cache.
+
+## Checklist
+
+1. - [ ] Dependencies: Wire the existing `crates/textmate` crate into `nxvim`; do not add another TextMate/syntax parser or copy its parsing implementation into `src/`.
+2. - [ ] Buffer lifecycle: Give each loaded buffer exactly one `textmate::BufferHighlightState`, created and dropped with that buffer's analysis state. Do not put highlighted rows or parser state in `WindowRenderCache`, and do not create a separately-owned per-window highlight cache.
+3. - [ ] Invalidation: On text edits, preserve the retired implementation's snapshot-based invalidation from the earliest affected buffer row, removing stale rows/checkpoints at and after that point while retaining valid earlier cache entries.
+4. - [ ] Full invalidation: Clear the affected buffer's highlight rows, checkpoints, and published snapshot when syntax/filetype, file path, colorscheme/theme, or syntax-highlighting enablement changes make cached spans invalid.
+5. - [ ] `app/view_sync.rs`: For every displayed window, derive the tight visible **buffer-row** interval by translating its display-row viewport through that window's `DisplayMap`; do not treat display rows as buffer rows under folds or wrapping.
+6. - [ ] Multi-window scheduling: Request the visible interval for every window showing a buffer, not only the active window. Let disjoint or overlapping requests accumulate as the union of rows in the buffer's single shared cache.
+7. - [ ] Immediate rebuild: At the redraw boundary, synchronously call `textmate::highlight_run` for uncached visible rows before building/painting that window's `TextViewModel`. A fully cached interval must remain a no-op; do not defer required visible highlighting to a background task.
+8. - [ ] Tight work bounds: Use no generous eager margin for interaction-driven redraws. Reuse the nearest bounded-lookback checkpoint and retain TextMate's parser-state convergence behavior beyond the requested end row.
+9. - [ ] Parse efficiency: Preserve `crates/textmate`'s per-run scope-stack style memoization, line-buffer reuse, cached-row short circuit, checkpoints, and convergence logic rather than introducing a full-buffer reparse path.
+10. - [ ] Idle expansion: Add bounded elapsed-idle expansion before/after each visible interval in small steps. Repeated windows must share the resulting cache, skip rows already covered, and never request a large one-shot speculative range.
+11. - [ ] Scrolling behavior: Ensure scrolling into prefetched rows is a cache hit and scrolling beyond cached coverage immediately highlights only the newly required tight visible interval.
+12. - [ ] `view/mod.rs`: Split each visible row into styled `TextSpan`s using cached `textmate::HighlightSpan` column ranges while preserving the exact source text, tabs/display-map projection, and unhighlighted gaps.
+13. - [ ] Decoration precedence: Apply syntax foreground styles before search, selection, cursor-line, and cursor decorations so higher-priority overlays can override syntax without deleting unrelated style attributes.
+14. - [ ] Redraw routing: Route text/syntax/theme invalidations to every window displaying the affected buffer and rebuild only the window models whose visible output can change.
+15. - [ ] Tests — crate/cache: Cover tight non-expanded ranges, cache-hit no-op behavior, bounded expansion, edit invalidation from the first affected row, checkpoint reuse, and parser-state reconvergence.
+16. - [ ] Tests — view: Add cell-grid snapshots for syntax colors in one viewport and verify decoration precedence over syntax styles.
+17. - [ ] Tests — shared buffer: Add a two-window test with disjoint viewports over one buffer, proving both ranges are cached in one `BufferHighlightState` and neither window owns duplicate parser/highlight state.
+18. - [ ] Tests — viewport movement: Verify scrolling within cached expansion does not rebuild highlighting, while scrolling outside it synchronously fills only the missing visible range.
+19. - [ ] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` and ensure TextMate orchestration does not introduce UI/app dependencies into kernel code.
+20. - [ ] Validation: Run targeted TextMate and view tests, then `cargo check -p nxvim`, `cargo test -p nxvim`, and `cargo check --workspace`.
+
+## Criteria for Completion
+
+- [ ] Every loaded buffer owns exactly one TextMate highlight cache; windows own only viewport/render state.
+- [ ] One, several, or zero windows may reference the buffer without duplicating cache ownership or requiring an active window.
+- [ ] Every visible uncached row is highlighted synchronously before its frame is painted, using the tightest practical buffer-row interval.
+- [ ] Cached rows/checkpoints are reused across redraws, scrolling, and all windows showing the same buffer.
+- [ ] Idle expansion is gradual and bounded; it never replaces or delays immediate visible-range rebuilding.
+- [ ] Edits invalidate from the earliest affected row and reparsing stops after convergence with retained parser state.
+- [ ] Syntax/filetype/path/theme changes cannot leave stale highlight spans in the buffer cache.
+- [ ] Syntax spans render correctly through `DisplayMap`, with search/selection/cursor decorations retaining higher precedence.
+- [ ] Single-window, disjoint multi-window, scrolling/cache, invalidation, convergence, and cell-grid tests pass.
 - [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo test -p nxvim` passes.
 - [ ] `cargo check --workspace` passes.
 - [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
-- [ ] Selections are mapped correctly to `DisplaySelection` objects for char, line, and block visual modes.
-- [ ] Manual smoke test passes in a live terminal. **Needs a human with a real terminal.**
+- [ ] Manual smoke test confirms immediate highlighting while editing and scrolling in two windows showing the same buffer. **Needs a human with a real terminal.**

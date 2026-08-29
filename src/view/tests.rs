@@ -147,6 +147,7 @@ fn test_view_model_validation_and_caching() {
         scroll_top: 0,
         name: "test".to_string(),
         is_modified: false,
+        visual_kind: None,
     };
 
     // Lazy cache creation
@@ -206,6 +207,7 @@ fn test_view_model_validation_and_caching() {
         scroll_top: 0,
         name: "test".to_string(),
         is_modified: false,
+        visual_kind: None,
     };
 
     // Perform swapping logic
@@ -269,6 +271,7 @@ fn empty_projection(window: WindowId, buffer: BufferId, is_current: bool) -> Win
         scroll_top: 0,
         name: "test".to_string(),
         is_modified: false,
+        visual_kind: None,
     }
 }
 
@@ -771,3 +774,86 @@ fn test_hscrollbar_rendering() {
     )
     .unwrap();
 }
+
+#[test]
+fn test_visual_selection_rendering_modes() {
+    let screen = Rect::new(0, 0, 40, 10);
+
+    // 1. Char-wise Visual Mode: select from (0, 2) to (0, 6) ("ne o")
+    {
+        let mut editor = Editor::new("line one\nline two\nline three\n");
+        let mut render_state = RenderState::new();
+        let win_id = editor.current_context().window;
+
+        editor.execute(Action::MoveRight { count: 2, select: false });
+        editor.execute(Action::SetToVisual);
+        editor.execute(Action::MoveRight { count: 4, select: true });
+
+        render_frame(&mut editor, &mut render_state, screen, &[], true);
+        let cache = render_state.windows.get(&win_id).unwrap();
+        let model = cache.last_model.as_ref().unwrap();
+        assert_eq!(model.decorations.len(), 1);
+        let dec = &model.decorations[0];
+        assert_eq!(dec.start.row, 0);
+        assert_eq!(dec.start.column, 2);
+        assert_eq!(dec.end.row, 0);
+        assert_eq!(dec.end.column, 7);
+    }
+
+    // 2. Line-wise Visual Mode: select whole lines 1 & 2
+    {
+        let mut editor = Editor::new("line one\nline two\nline three\n");
+        let mut render_state = RenderState::new();
+        let win_id = editor.current_context().window;
+
+        // Initialize viewport height to avoid scrolling on move down
+        render_frame(&mut editor, &mut render_state, screen, &[], true);
+
+        editor.execute(Action::SetToVisualLine);
+        editor.execute(Action::MoveDown { count: 1, select: true });
+
+        render_frame(&mut editor, &mut render_state, screen, &[], true);
+        let cache = render_state.windows.get(&win_id).unwrap();
+        let model = cache.last_model.as_ref().unwrap();
+        assert_eq!(model.decorations.len(), 1);
+        let dec = &model.decorations[0];
+        assert_eq!(dec.start.row, 0);
+        assert_eq!(dec.start.column, 0);
+        assert_eq!(dec.end.row, 1);
+        // Line-wise selection spans to end of line 2 (which is 8 characters long: "line two")
+        assert_eq!(dec.end.column, 8);
+    }
+
+    // 3. Block-wise Visual Mode: select columns 1 to 3 on lines 1 & 2
+    {
+        let mut editor = Editor::new("line one\nline two\nline three\n");
+        let mut render_state = RenderState::new();
+        let win_id = editor.current_context().window;
+
+        // Initialize viewport height to avoid scrolling on move down
+        render_frame(&mut editor, &mut render_state, screen, &[], true);
+
+        editor.execute(Action::MoveRight { count: 1, select: false });
+        editor.execute(Action::SetToVisualBlock);
+        editor.execute(Action::MoveDown { count: 1, select: true });
+        editor.execute(Action::MoveRight { count: 2, select: true });
+
+        render_frame(&mut editor, &mut render_state, screen, &[], true);
+        let cache = render_state.windows.get(&win_id).unwrap();
+        let model = cache.last_model.as_ref().unwrap();
+        // Block-wise mode should produce a decoration on each line in the block range
+        assert_eq!(model.decorations.len(), 2);
+        let dec1 = &model.decorations[0];
+        let dec2 = &model.decorations[1];
+        assert_eq!(dec1.start.row, 0);
+        assert_eq!(dec1.start.column, 1);
+        assert_eq!(dec1.end.row, 0);
+        assert_eq!(dec1.end.column, 4);
+
+        assert_eq!(dec2.start.row, 1);
+        assert_eq!(dec2.start.column, 1);
+        assert_eq!(dec2.end.row, 1);
+        assert_eq!(dec2.end.column, 4);
+    }
+}
+

@@ -729,11 +729,63 @@ one compiles and the kernel-purity grep above is clean.
         reuses 8.7's scrollbar wiring pattern for its horizontal
         counterpart.
 
-   Syntax/semantic highlighting (`textmate`, `vim-treesitter`) and popup/
-   completion menus are explicitly deferred past this milestone — they
-   need their own concrete feature to justify wiring, per the same "add
-   only once a feature needs it" discipline item 6's Services already
-   established.
+   8.10. **TextMate syntax highlighting (buffer-owned, window-driven)** —
+         regain syntax highlighting by wiring the existing `crates/textmate`
+         implementation into the 8.1 projection/rendering path; do not design a
+         replacement parser or a window-owned highlight store. Each buffer owns
+         exactly one `textmate::BufferHighlightState` alongside its other
+         analysis state, as `src_/model/buffer_state.rs` did. That state owns
+         the row-span cache, parse checkpoints, and published buffer snapshot,
+         and is created/dropped with the buffer. Windows own only viewport
+         state: they request highlighting for the tightest buffer-row interval
+         currently needed to paint their visible display rows, then consume
+         spans from the buffer's shared cache when building `TextViewModel`.
+
+         "Windowed" describes the work range, not ownership. Zero windows means
+         no viewport-driven highlight work; one window grows one cached region;
+         several windows showing the same buffer request several ranges whose
+         union accumulates in that buffer's single cache. Never duplicate parser
+         state or highlighted rows per `WindowId`, and never collapse multiple
+         windows to only the active window's viewport. Convert each window's
+         display-row viewport through its `DisplayMap` to buffer rows before
+         requesting work, preserving the pattern in `src_/app/services.rs`'s
+         `schedule_window_highlight_inner` rather than assuming display rows and
+         buffer rows are interchangeable under folds/wraps.
+
+         Visible syntax must rebuild immediately and synchronously at the redraw
+         boundary, and it must be fast enough to do so: request the visible
+         interval with no generous eager margin, reuse already-cached rows and
+         the nearest bounded-lookback parse checkpoint, memoize repeated scope
+         stack-to-style resolution during a parse run, and publish spans before
+         painting the frame. A cache hit is a no-op. After an edit, use snapshot
+         edit history to discard rows/checkpoints from the earliest affected row
+         onward, then immediately rebuild only the visible/requested range;
+         continue parsing past its end only until parser state converges with a
+         retained checkpoint. Syntax/theme/filetype changes invalidate the whole
+         buffer highlight cache. Do not turn the required visible rebuild into a
+         background task that can flash stale or unhighlighted text.
+
+         Expansion is opportunistic, cached, and secondary to the immediate
+         tight-window rule. While idle, gradually widen each visible window's
+         request before/after the viewport in small bounded steps (the retired
+         implementation used elapsed-idle ticks), allowing several windows to
+         expand the same shared cache without reparsing rows already covered.
+         Never issue a large one-shot speculative range: synchronous parsing of
+         uncached rows can stall the UI. Scrolling into prefetched rows should be
+         a cache hit; scrolling beyond them triggers the same immediate tight
+         visible-range rebuild. Feed the resulting `HighlightSpan`s into text
+         rendering before selection/search/cursor overlays so those higher-
+         priority decorations can still override syntax colors. Add cell-grid
+         coverage for one viewport, two disjoint windows on one buffer, cache
+         reuse while scrolling, and edit invalidation/reconvergence. Depends on
+         8.1 (display-row to buffer-row projection), 8.2 (redraw invalidation),
+         and 8.3 (render snapshots); reuse `crates/textmate` and port the narrow
+         orchestration from `src_/`, not its retired window/UI containers.
+
+   Tree-sitter semantic highlighting (`vim-treesitter`) and popup/completion
+   menus remain explicitly deferred past this milestone — they need their own
+   concrete feature to justify wiring, per the same "add only once a feature
+   needs it" discipline item 6's Services already established.
 
 At every milestone boundary, re-run the kernel-purity grep and sanity-check
 that no file has become a dumping ground for more than one command family

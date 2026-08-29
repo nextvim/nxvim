@@ -1,5 +1,6 @@
 use crate::kernel::Editor;
 use crate::kernel::ids::WindowId;
+use crate::kernel::mode::VisualKind;
 use vim_buffer::{BufferId, SelectionSet};
 
 /// A plain, kernel-read-only projection of a single window's state.
@@ -13,6 +14,7 @@ pub struct WindowProjection {
     pub scroll_top: u32,
     pub name: String,
     pub is_modified: bool,
+    pub visual_kind: Option<VisualKind>,
 }
 
 /// Project the kernel's active window layout into a vector of read-only projections.
@@ -39,6 +41,7 @@ pub fn project(editor: &Editor) -> Vec<WindowProjection> {
                     scroll_top: win.scroll_top(),
                     name,
                     is_modified: buf.is_modified(),
+                    visual_kind: win.visual_kind(),
                 });
             }
         }
