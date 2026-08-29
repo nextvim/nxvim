@@ -2,9 +2,9 @@ use crate::WindowId;
 pub use vim_colorscheme::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitAxis {
-    Rows,    // Vertical stacking (splits top/bottom)
-    Columns, // Horizontal stacking (splits left/right)
+pub enum Axis {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,12 +13,6 @@ pub enum NavigationDirection {
     Right,
     Up,
     Down,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SizeConstraint {
-    Fixed(u16),
-    Percentage(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

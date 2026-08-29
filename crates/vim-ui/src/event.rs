@@ -1,5 +1,5 @@
 use crate::id::WindowId;
-use crate::types::{FloatingConfig, NavigationDirection, SplitAxis};
+use crate::types::{FloatingConfig, NavigationDirection, Axis};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {
@@ -89,7 +89,7 @@ pub enum UiEvent {
 pub enum UiCommand {
     FocusWindow(WindowId),
     FocusDirection(NavigationDirection),
-    SplitWindow(SplitAxis),
+    SplitWindow(Axis),
     CloseWindow(WindowId),
     OpenOverlay(WindowId, FloatingConfig),
     CloseOverlay(WindowId),

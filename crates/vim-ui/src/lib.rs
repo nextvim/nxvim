@@ -20,7 +20,7 @@ pub use event::{
 };
 pub use focus::FocusManager;
 pub use id::{BufferId, TabPageId, WindowId};
-pub use layout::{ComputedLayout, LayoutEngine, LayoutNode, SlotLayout, WindowSlot};
+pub use layout::{ComputedLayout, LayoutEngine, LayoutNode};
 pub use manager::Ui;
 pub use model::{
     CursorShape, DisplayPosition, DisplayRow, DisplayRowKind, DisplaySelection, GutterCell,
@@ -30,7 +30,7 @@ pub use overlay::OverlayManager;
 pub use rect::Rect;
 pub use renderer::{BufferedRenderer, CrosstermRenderer, Renderer};
 pub use types::{
-    Anchor, Color, FloatingConfig, NavigationDirection, RelativeTo, SizeConstraint, SplitAxis,
+    Anchor, Axis, Color, FloatingConfig, NavigationDirection, RelativeTo,
 };
 pub use views::text::TextView;
 pub use window::{View, Viewport, Window, WindowState};

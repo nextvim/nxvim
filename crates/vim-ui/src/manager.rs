@@ -6,7 +6,7 @@ use crate::layout::{ComputedLayout, LayoutEngine, LayoutNode};
 use crate::overlay::OverlayManager;
 use crate::rect::Rect;
 use crate::renderer::Renderer;
-use crate::types::{FloatingConfig, NavigationDirection, SizeConstraint, SplitAxis};
+use crate::types::{FloatingConfig, NavigationDirection, Axis};
 use crate::window::Window;
 use crate::window_store::WindowStore;
 use std::collections::HashSet;
@@ -218,7 +218,7 @@ impl Ui {
         self.set_window_visible(id, false)
     }
 
-    pub fn split_focused(&mut self, axis: SplitAxis) -> UiResult<WindowId> {
+    pub fn split_focused(&mut self, axis: Axis) -> UiResult<WindowId> {
         let focused_id = self.focus_manager.focused_id();
         if !self.layout_engine.contains_leaf(focused_id) {
             return Err(UiError::WindowNotInLayout(focused_id));
@@ -307,8 +307,8 @@ impl Ui {
     pub fn adjust_window_size(
         &mut self,
         id: WindowId,
-        axis: SplitAxis,
-        amount: f32,
+        _axis: Axis,
+        _amount: f32,
     ) -> UiResult<bool> {
         if !self.window_store.contains(id) {
             return Err(UiError::UnknownWindow(id));
@@ -316,19 +316,7 @@ impl Ui {
         if !self.layout_engine.contains_leaf(id) {
             return Err(UiError::WindowNotInLayout(id));
         }
-        let adjusted = self.layout_engine.adjust_size(id, axis, amount);
-        if adjusted {
-            self.update_layout();
-        }
-        Ok(adjusted)
-    }
-
-    pub fn set_window_constraint(&mut self, id: WindowId, constraint: SizeConstraint) -> bool {
-        let updated = self.layout_engine.set_constraint(id, constraint);
-        if updated {
-            self.update_layout();
-        }
-        updated
+        Ok(false)
     }
 
     pub fn draw(&mut self, renderer: &mut dyn Renderer) -> std::io::Result<()> {
@@ -518,11 +506,10 @@ mod tests {
 
     fn split_layout(left: WindowId, right: WindowId) -> LayoutNode {
         LayoutNode::Split {
-            axis: SplitAxis::Columns,
-            constraints: vec![],
+            axis: Axis::Vertical,
             children: vec![
-                LayoutNode::Leaf { window_id: left },
-                LayoutNode::Leaf { window_id: right },
+                LayoutNode::Leaf(left),
+                LayoutNode::Leaf(right),
             ],
         }
     }
@@ -531,7 +518,7 @@ mod tests {
     fn split_and_close_keep_layout_window_and_focus_consistent() {
         let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
         let first = ui.focused_window_id();
-        let second = ui.split_focused(SplitAxis::Columns).unwrap();
+        let second = ui.split_focused(Axis::Vertical).unwrap();
         assert_eq!(ui.window_count(), 2);
         assert_eq!(ui.focused_window_id(), second);
 
@@ -586,13 +573,13 @@ mod tests {
         let first = ui.focused_window_id();
         let second = ui.create_window("second");
 
-        ui.activate_layout(LayoutNode::Leaf { window_id: second }, second)
+        ui.activate_layout(LayoutNode::Leaf(second), second)
             .unwrap();
         assert_eq!(ui.focused_window_id(), second);
         assert!(ui.window(first).is_some());
         assert!(!ui.layout().contains_leaf(first));
 
-        ui.activate_layout(LayoutNode::Leaf { window_id: first }, first)
+        ui.activate_layout(LayoutNode::Leaf(first), first)
             .unwrap();
         assert_eq!(ui.focused_window_id(), first);
         assert!(ui.window(second).is_some());
@@ -607,7 +594,7 @@ mod tests {
             Err(UiError::WindowNotInLayout(unattached))
         );
 
-        let second = ui.split_focused(SplitAxis::Rows).unwrap();
+        let second = ui.split_focused(Axis::Horizontal).unwrap();
         let first = ui.layout().window_ids()[0];
         ui.focus(first).unwrap();
         ui.set_window_visible(second, false).unwrap();
@@ -618,7 +605,7 @@ mod tests {
     fn neighbor_navigation_uses_typed_ids() {
         let mut ui = Ui::new(Rect::new(0, 0, 80, 24));
         let first = ui.focused_window_id();
-        let second = ui.split_focused(SplitAxis::Rows).unwrap();
+        let second = ui.split_focused(Axis::Horizontal).unwrap();
         ui.focus(first).unwrap();
         assert_eq!(ui.find_neighbor(NavigationDirection::Down), Some(second));
     }
