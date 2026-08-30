@@ -118,6 +118,36 @@ impl Registers {
         }
     }
 
+    pub fn entries(&self) -> Vec<(RegisterName, Register)> {
+        let mut entries = vec![
+            (RegisterName::Unnamed, self.unnamed.clone()),
+            (RegisterName::SmallDelete, self.small_delete.clone()),
+            (RegisterName::Search, self.search.clone()),
+        ];
+        entries.extend(
+            self.numbered
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, register)| (RegisterName::Numbered(index as u8), register)),
+        );
+        let mut named: Vec<_> = self.named.iter().collect();
+        named.sort_by_key(|(name, _)| **name);
+        entries.extend(
+            named
+                .into_iter()
+                .map(|(&name, register)| (RegisterName::Named(name), register.clone())),
+        );
+        entries
+    }
+
+    pub fn replace(&mut self, entries: impl IntoIterator<Item = (RegisterName, Register)>) {
+        *self = Self::default();
+        for (name, register) in entries {
+            self.set(name, register);
+        }
+    }
+
     pub fn clear(&mut self, name: RegisterName) {
         match name {
             RegisterName::Unnamed => {

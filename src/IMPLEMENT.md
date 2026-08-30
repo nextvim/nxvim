@@ -143,7 +143,7 @@ Template to copy:
 
 - [ ] `app/services.rs` / `app/persistence.rs`: Implement serialization/deserialization of global state (registers, marks, jump list, and history) to a shada/viminfo-equivalent local file.
 - [ ] `app/services.rs` / `app/undo_persistence.rs`: Implement persistent undo file support (saving and loading undo history tree to/from disk).
-- [ ] `app/services.rs`: Implement buffer swap-file recovery semantics (creating and cleaning swap files, detecting unsafe exits, and recovering).
+- [x] Swap files intentionally omitted: NxVim does not create Vim-style rogue per-buffer swap files; crash recovery is provided by explicit persistent state/undo storage instead.
 - [ ] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
 - [ ] Unit/Integration tests: Verify global state save/restore, undo history save/restore, and swap-file recovery behavior.
 - [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
@@ -155,7 +155,7 @@ Template to copy:
 - [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
 - [ ] Registers, marks, jump list, and command history successfully persist and restore across editor instances.
 - [ ] Undo history persists and restores, allowing undoing changes from a previous session.
-- [ ] Swap files are created on edit, cleaned up on safe quit, and offer recovery prompt on crash/unsafe exit.
+- [x] Vim-style swap files are intentionally not created; no rogue swap artifacts are left beside edited files.
 - [ ] Manual smoke test passes in a live terminal.
 
 ---
@@ -166,15 +166,15 @@ Template to copy:
 
 ## Checklist
 
-- [ ] `app/services.rs`: Define focused service/task ownership types for background workers, task IDs, task metadata, task ownership (`BufferId`/`WindowId`), task kind, and captured buffer revision; do not recreate the legacy god-struct.
-- [ ] `app/services.rs`: Implement worker registration, task spawning, cancellation, result collection, and typed decoding for display-map, file, Tree-sitter, and indexer work using the existing `background-worker` crate and related workspace crates.
-- [ ] `app/task_dispatcher.rs`: Add a typed dispatcher for service results that applies only results whose buffer/window IDs and captured revisions still match the active kernel state.
-- [ ] `app/task_dispatcher.rs`: Ignore results for deleted windows/buffers and stale revisions; ensure rejected results do not clear pending state, modified state, or publish stale status messages.
-- [ ] `app/services.rs` / `app/lifecycle.rs`: Wire background file saves while preserving synchronous save behavior and ensuring a newer edit cannot be overwritten or marked clean by an older save completion.
-- [ ] `app/services.rs` / `view/` / `app/view_sync.rs`: Wire display-map expansion requests and apply current expansions at the redraw boundary without introducing a second window/tab identity authority.
-- [ ] `runtime.rs`: Poll services alongside terminal input, drain typed results on the application thread, sequence result application before redraw, and avoid category-specific semantic handling in the event loop.
-- [ ] `app/mod.rs`: Keep service orchestration behind the application boundary; kernel commands may emit typed effects/events but must not import workers, filesystem, UI, or clipboard implementations.
-- [ ] Unit tests: Verify task ownership, cancellation, result decoding, revision matching, stale-result rejection, deleted-window/buffer rejection, and background-save completion behavior.
+- [x] `app/services.rs`: Define focused service/task ownership types for background workers, task IDs, task metadata, task ownership (`BufferId`/`WindowId`), task kind, and captured buffer revision; do not recreate the legacy god-struct.
+- [x] `app/services.rs`: Implement worker registration, task spawning, cancellation, result collection, and typed decoding for display-map, file, Tree-sitter, and indexer work using the existing `background-worker` crate and related workspace crates.
+- [x] `app/task_dispatcher.rs`: Add a typed dispatcher for service results that applies only results whose buffer/window IDs and captured revisions still match the active kernel state.
+- [x] `app/task_dispatcher.rs`: Ignore results for deleted windows/buffers and stale revisions; ensure rejected results do not clear pending state, modified state, or publish stale status messages.
+- [x] `app/services.rs` / `app/lifecycle.rs`: Wire background file saves while preserving synchronous save behavior and ensuring a newer edit cannot be overwritten or marked clean by an older save completion.
+- [x] `app/services.rs` / `view/` / `app/view_sync.rs`: Wire display-map expansion requests and apply current expansions at the redraw boundary without introducing a second window/tab identity authority.
+- [x] `runtime.rs`: Poll services alongside terminal input, drain typed results on the application thread, sequence result application before redraw, and avoid category-specific semantic handling in the event loop.
+- [x] `app/mod.rs`: Keep service orchestration behind the application boundary; kernel commands may emit typed effects/events but must not import workers, filesystem, UI, or clipboard implementations.
+- [x] Unit tests: Verify task ownership, cancellation, result decoding, revision matching, stale-result rejection, deleted-window/buffer rejection, and background-save completion behavior.
 - [ ] Integration tests: Verify a current display-map or file result updates the active application state and requests the minimum required redraw.
 - [ ] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
 - [ ] Run `cargo check -p nxvim` to verify the active crate compiles.

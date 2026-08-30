@@ -44,12 +44,25 @@ const IDLE_POLLS_PER_STEP: u8 = 4;
 const IDLE_EXPANSION_STEP: u32 = 8;
 const MAX_IDLE_EXPANSION: u32 = 64;
 
+pub struct DisplayMapRequest {
+    pub window: WindowId,
+    pub buffer: BufferId,
+    pub input: display_map::DisplayMapExpansionInput,
+}
+
 #[derive(Default)]
 pub struct RenderState {
     pub windows: HashMap<WindowId, WindowRenderCache>,
     renderer: Option<BufferedRenderer>,
     idle_polls: u8,
     idle_expansion: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpansionApplication {
+    Updated,
+    Replaced,
+    Discarded,
 }
 
 impl RenderState {
@@ -65,6 +78,77 @@ impl RenderState {
     pub fn note_interaction(&mut self) {
         self.idle_polls = 0;
         self.idle_expansion = 0;
+    }
+
+    /// Applies completed wrapping work to the authoritative map already owned
+    /// by a window. Generation/config mismatches are stale and discarded.
+    pub fn apply_display_map_expansion(
+        &mut self,
+        window: WindowId,
+        buffer: BufferId,
+        snapshot: text::BufferSnapshot,
+        expansion: display_map::DisplayMapExpansion,
+    ) -> ExpansionApplication {
+        if let Some(cache) = self.windows.get_mut(&window) {
+            if cache.buffer == buffer {
+                return if cache.display_map.apply_expansion(expansion).is_ok() {
+                    cache.last_model = None;
+                    ExpansionApplication::Updated
+                } else {
+                    ExpansionApplication::Discarded
+                };
+            }
+
+            let config = expansion.config().clone();
+            let exact_rows = expansion.exact_rows.clone();
+            let old_map = std::mem::replace(
+                &mut cache.display_map,
+                DisplayMap::new_windowed(snapshot, config.wrap_width, exact_rows),
+            );
+            cache.retained.insert(cache.buffer, old_map);
+            cache.buffer = buffer;
+            cache.display_map.set_tab_size(config.tab_size);
+            if cache.display_map.apply_expansion(expansion).is_err() {
+                return ExpansionApplication::Discarded;
+            }
+            cache.last_model = None;
+            return ExpansionApplication::Replaced;
+        }
+
+        let config = expansion.config().clone();
+        let exact_rows = expansion.exact_rows.clone();
+        let mut display_map = DisplayMap::new_windowed(snapshot, config.wrap_width, exact_rows);
+        display_map.set_tab_size(config.tab_size);
+        if display_map.apply_expansion(expansion).is_err() {
+            return ExpansionApplication::Discarded;
+        }
+        self.windows.insert(
+            window,
+            WindowRenderCache {
+                display_map,
+                buffer,
+                retained: HashMap::new(),
+                last_model: None,
+                built_count: 0,
+            },
+        );
+        ExpansionApplication::Replaced
+    }
+
+    pub fn display_map_requests(&self) -> Vec<DisplayMapRequest> {
+        self.windows
+            .iter()
+            .filter_map(|(&window, cache)| {
+                let center = cache.display_map.scroll_y;
+                let rows = cache.display_map.nearest_missing_range(center, 512)?;
+                let input = cache.display_map.expansion_input(rows)?;
+                Some(DisplayMapRequest {
+                    window,
+                    buffer: cache.buffer,
+                    input,
+                })
+            })
+            .collect()
     }
 
     /// Advances bounded idle prefetch and reports whether an idle frame is
@@ -232,13 +316,19 @@ pub fn render_with_scheme(
             rect
         };
 
-        let wrap_width = if projection.wrap { Some(view_rect.width as u32) } else { None };
+        let wrap_width = if projection.wrap {
+            Some(view_rect.width as u32)
+        } else {
+            None
+        };
 
         let scroll_top = projection.scroll_top;
         let viewport_height = view_rect.height as u32;
         let margin = 128;
         let start_row = scroll_top.saturating_sub(margin);
-        let end_row = scroll_top.saturating_add(viewport_height).saturating_add(margin);
+        let end_row = scroll_top
+            .saturating_add(viewport_height)
+            .saturating_add(margin);
         let row_count = projection.snapshot.row_count();
         let initial_window = (start_row.min(row_count))..(end_row.min(row_count));
 
@@ -312,7 +402,8 @@ pub fn render_with_scheme(
             let expanded_start = start_buffer_row.saturating_sub(total_margin);
             let expanded_end = end_buffer_row.saturating_add(total_margin);
             let buffer_row_count = projection.snapshot.row_count();
-            let expanded_window = (expanded_start.min(buffer_row_count))..(expanded_end.min(buffer_row_count));
+            let expanded_window =
+                (expanded_start.min(buffer_row_count))..(expanded_end.min(buffer_row_count));
 
             let current_window = cache.display_map.buffer_window.clone();
             if expanded_window != current_window {
@@ -437,7 +528,11 @@ pub fn render_with_scheme(
                 }
 
                 let mut line_text = snapshot.line_text(display_row);
-                let leftcol_offset = if projection.wrap { 0 } else { projection.leftcol as usize };
+                let leftcol_offset = if projection.wrap {
+                    0
+                } else {
+                    projection.leftcol as usize
+                };
                 if leftcol_offset > 0 {
                     let chars: Vec<char> = line_text.chars().collect();
                     if leftcol_offset < chars.len() {
@@ -530,7 +625,11 @@ pub fn render_with_scheme(
                     else {
                         continue;
                     };
-                    let leftcol_offset = if projection.wrap { 0 } else { projection.leftcol };
+                    let leftcol_offset = if projection.wrap {
+                        0
+                    } else {
+                        projection.leftcol
+                    };
                     if !projection.wrap && end.column() <= leftcol_offset {
                         continue;
                     }
@@ -611,7 +710,11 @@ pub fn render_with_scheme(
                         snapshot.try_point_to_display_point(s_pt),
                         snapshot.try_point_to_display_point(e_pt),
                     ) {
-                        let leftcol_offset = if projection.wrap { 0 } else { projection.leftcol };
+                        let leftcol_offset = if projection.wrap {
+                            0
+                        } else {
+                            projection.leftcol
+                        };
                         // Ensure proper orientation for DisplaySelection (validate checks end >= start)
                         let (start_pos, end_pos) = if d_end >= d_start {
                             (
@@ -787,11 +890,12 @@ pub fn render_with_scheme(
                 visible: cursor_visible,
             });
 
-            let (scrollbar_option, hscrollbar_option) = if let Some(win) = editor.window(projection.window) {
-                (win.options().scrollbar, win.options().hscrollbar)
-            } else {
-                (false, false)
-            };
+            let (scrollbar_option, hscrollbar_option) =
+                if let Some(win) = editor.window(projection.window) {
+                    (win.options().scrollbar, win.options().hscrollbar)
+                } else {
+                    (false, false)
+                };
 
             let scrollbar = if scrollbar_option {
                 let track_style =
@@ -843,21 +947,23 @@ pub fn render_with_scheme(
                     }
                 }
                 if max_width > view_rect.width as u32 {
-                    let track_style = scheme
-                        .get_style("ScrollbarTrack")
-                        .cloned()
-                        .unwrap_or_else(|| Style {
-                            bg: Some(vim_colorscheme::Color::DarkGrey),
-                            ..Default::default()
-                        });
+                    let track_style =
+                        scheme
+                            .get_style("ScrollbarTrack")
+                            .cloned()
+                            .unwrap_or_else(|| Style {
+                                bg: Some(vim_colorscheme::Color::DarkGrey),
+                                ..Default::default()
+                            });
 
-                    let thumb_style = scheme
-                        .get_style("ScrollbarThumb")
-                        .cloned()
-                        .unwrap_or_else(|| Style {
-                            bg: Some(vim_colorscheme::Color::Grey),
-                            ..Default::default()
-                        });
+                    let thumb_style =
+                        scheme
+                            .get_style("ScrollbarThumb")
+                            .cloned()
+                            .unwrap_or_else(|| Style {
+                                bg: Some(vim_colorscheme::Color::Grey),
+                                ..Default::default()
+                            });
 
                     let cursor_style = scheme.get_style("ScrollbarCursor").cloned();
 

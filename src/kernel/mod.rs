@@ -135,6 +135,21 @@ impl Editor {
         outcome
     }
 
+    pub fn persistent_registers(
+        &self,
+    ) -> Vec<(buffer::registers::RegisterName, buffer::registers::Register)> {
+        self.registers.entries()
+    }
+
+    pub fn restore_persistent_registers(
+        &mut self,
+        entries: impl IntoIterator<
+            Item = (buffer::registers::RegisterName, buffer::registers::Register),
+        >,
+    ) {
+        self.registers.replace(entries);
+    }
+
     pub fn prime_clipboard_register(&mut self, text: String) {
         self.primed_clipboard_register = Some(text);
     }
@@ -176,6 +191,24 @@ impl Editor {
 
     pub fn buffer_ids(&self) -> Vec<BufferId> {
         self.buffers.list()
+    }
+
+    /// Marks an asynchronously saved snapshot clean only while it is still
+    /// the buffer's current revision. This is the sole app-facing completion
+    /// boundary; filesystem work remains outside the kernel.
+    pub fn mark_buffer_saved_if_revision(
+        &mut self,
+        id: BufferId,
+        revision: &vim_buffer::Revision,
+    ) -> bool {
+        let Some(buffer) = self.buffers.get_mut(id) else {
+            return false;
+        };
+        if &buffer.revision() != revision {
+            return false;
+        }
+        buffer.mark_saved();
+        true
     }
 
     pub fn window(&self, id: WindowId) -> Option<&Window> {

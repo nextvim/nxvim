@@ -57,6 +57,12 @@ pub struct DisplayMapExpansion {
     transforms: sum_tree::SumTree<crate::wrap_map::Transform>,
 }
 
+impl DisplayMapExpansion {
+    pub fn config(&self) -> &DisplayMapConfig {
+        &self.config
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaleExpansion;
 

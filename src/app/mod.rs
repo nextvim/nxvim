@@ -6,10 +6,13 @@
 
 pub mod args;
 pub mod input;
+pub mod lifecycle;
+pub mod persistence;
 pub mod prompt;
 pub mod request;
 pub mod script_host;
 pub mod services;
+pub mod task_dispatcher;
 pub mod view_sync;
 
 use crate::kernel::{Editor, outcome::Outcome};
@@ -41,6 +44,7 @@ pub struct App {
     script: crate::script::ScriptHost,
     colorscheme: vim_ui::ColorScheme,
     script_rx: std::sync::mpsc::Receiver<AppRequest>,
+    services: services::Services,
     source_depth: usize,
 }
 
@@ -74,6 +78,7 @@ impl App {
             script,
             colorscheme: vim_ui::ColorScheme::load_default(),
             script_rx: rx,
+            services: services::Services::new(),
             source_depth: 0,
         }
     }
@@ -199,6 +204,50 @@ impl App {
         &self.colorscheme
     }
 
+    /// Queues a save through the application service boundary. The caller does
+    /// not receive worker/task internals; completion is sequenced by runtime.
+    pub fn save_current_buffer_in_background(
+        &mut self,
+        path: Option<std::path::PathBuf>,
+    ) -> Result<(), String> {
+        let buffer = self.editor.current_context().buffer;
+        lifecycle::start_background_save(&mut self.services, &self.editor, buffer, path).map(|_| ())
+    }
+
+    pub(crate) fn poll_services(&mut self, render_state: &mut crate::view::RenderState) -> Outcome {
+        let mut outcome = Outcome::default();
+        for result in self.services.poll() {
+            match result.metadata.kind {
+                services::TaskKind::DisplayMap => {
+                    let application = view_sync::apply_display_map_result(
+                        &self.editor,
+                        &mut self.services,
+                        render_state,
+                        result,
+                    );
+                    if application != crate::view::ExpansionApplication::Discarded {
+                        outcome.invalidation =
+                            crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+                    }
+                }
+                services::TaskKind::File => {
+                    if let Ok(Some(effect)) = lifecycle::apply_background_save(
+                        &mut self.services,
+                        &mut self.editor,
+                        result,
+                    ) {
+                        if let Some(request) = services::describe_effect(&effect) {
+                            self.pending_request = Some(request);
+                        }
+                        outcome.effects.push(effect);
+                    }
+                }
+                services::TaskKind::TreeSitter | services::TaskKind::Indexer => {}
+            }
+        }
+        outcome
+    }
+
     pub fn render(
         &mut self,
         out: &mut impl std::io::Write,
@@ -219,7 +268,9 @@ impl App {
             pending,
             force_full,
             &self.colorscheme,
-        )
+        )?;
+        view_sync::schedule_display_map_expansions(&mut self.services, render_state);
+        Ok(())
     }
 
     pub fn prompt(&self) -> &CommandPrompt {
@@ -925,6 +976,38 @@ mod tests {
 
         let resolved = r3.unwrap();
         assert_eq!(resolved.action, Action::InsertText("∞".to_string()));
+    }
+
+    #[test]
+    fn app_boundary_owns_background_save_submission_and_completion() {
+        let path = std::env::temp_dir().join(format!(
+            "nxvim-app-background-save-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let mut app = App::new("saved asynchronously");
+        app.save_current_buffer_in_background(Some(path.clone()))
+            .unwrap();
+        let mut render_state = crate::view::RenderState::new();
+
+        for _ in 0..100 {
+            let outcome = app.poll_services(&mut render_state);
+            if outcome.effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::kernel::outcome::Effect::FileSaved { path: saved, .. } if saved == &path
+                )
+            }) {
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    "saved asynchronously\n"
+                );
+                let _ = std::fs::remove_file(path);
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("background save did not complete");
     }
 
     #[test]

@@ -48,7 +48,11 @@ pub fn run(
 
     loop {
         if !event::poll(Duration::from_millis(50))? {
-            if render_state.advance_idle() {
+            let service_outcome = app.poll_services(&mut render_state);
+            if service_outcome.invalidation != RedrawInvalidation::None {
+                pending_invalidations.push(service_outcome.invalidation);
+            }
+            if !pending_invalidations.is_empty() || render_state.advance_idle() {
                 let prompt_opt = if app.editor().mode().is_command() {
                     Some(app.prompt().text().to_string())
                 } else {
@@ -60,9 +64,10 @@ pub fn run(
                     &status,
                     prompt_opt.as_deref(),
                     screen,
-                    &[],
+                    &pending_invalidations,
                     false,
                 )?;
+                pending_invalidations.clear();
             }
             continue;
         }
@@ -108,6 +113,11 @@ pub fn run(
                     pending_invalidations.push(outcome.invalidation);
                 }
             }
+        }
+
+        let service_outcome = app.poll_services(&mut render_state);
+        if service_outcome.invalidation != RedrawInvalidation::None {
+            pending_invalidations.push(service_outcome.invalidation);
         }
 
         if let Some(request) = app.take_request() {
