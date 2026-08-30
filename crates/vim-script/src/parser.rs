@@ -816,7 +816,10 @@ impl<'a> Parser<'a> {
 
     fn looks_like_source_ex_command(&self) -> bool {
         if let TokenKind::Identifier(ref name) = self.current().kind {
-            if name == "substitute" || name == "s" || name == "smagic" || name == "snomagic" {
+            if matches!(
+                name.as_str(),
+                "substitute" | "s" | "smagic" | "snomagic" | "source" | "so"
+            ) {
                 return true;
             }
         }
@@ -1192,6 +1195,21 @@ mod tests {
         };
         assert_eq!(mapping.name, "nnoremap");
         assert_eq!(mapping.arguments, "<silent> <leader>w :write<CR>");
+    }
+
+    #[test]
+    fn source_command_with_an_absolute_path_is_not_parsed_as_division() {
+        let source = "source /tmp/plugin.vim\n";
+        let lexed = Lexer::new(SourceId(0), source).lex();
+        assert!(lexed.diagnostics.is_empty(), "{:?}", lexed.diagnostics);
+        let output = Parser::new_with_source(&lexed.tokens, source).parse();
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let program = output.program.unwrap();
+        let StmtKind::ExCommand(command) = &program.statements[0].kind else {
+            panic!("expected source Ex command")
+        };
+        assert_eq!(command.name, "source");
+        assert_eq!(command.arguments, "/tmp/plugin.vim");
     }
 
     #[test]

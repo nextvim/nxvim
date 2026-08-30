@@ -111,6 +111,67 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         ),
         Action::NextTab { count } => windows::next_tab(editor, count),
         Action::PreviousTab { count } => windows::previous_tab(editor, count),
+        Action::ResizeLeft => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Left, 1),
+        Action::ResizeRight => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Right, 1),
+        Action::ResizeUp => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Up, 1),
+        Action::ResizeDown => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Down, 1),
+        Action::ResizeEqual => windows::resize_equal(editor, ctx),
+        Action::MoveWindowLeft => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Left),
+        Action::MoveWindowRight => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Right),
+        Action::MoveWindowUp => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Up),
+        Action::MoveWindowDown => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Down),
+        Action::CarriageReturn => {
+            let win_type = editor.window(ctx.window).map(|w| w.window_type()).unwrap_or(crate::kernel::window::WindowType::Normal);
+            match win_type {
+                crate::kernel::window::WindowType::Quickfix => {
+                    let current_row = if let Some(win) = editor.window(ctx.window) {
+                        let head = win.selections().primary().head();
+                        if let Some(buf) = editor.buffer(ctx.buffer) {
+                            let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                            pt.row
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    let items = editor.quickfix_list().to_vec();
+                    if let Some(item) = items.get(current_row as usize) {
+                        let item_clone = item.clone();
+                        super::ex::jump_to_quickfix_item(editor, ctx, &item_clone)
+                    } else {
+                        Outcome::default()
+                    }
+                }
+                crate::kernel::window::WindowType::LocationList => {
+                    let current_row = if let Some(win) = editor.window(ctx.window) {
+                        let head = win.selections().primary().head();
+                        if let Some(buf) = editor.buffer(ctx.buffer) {
+                            let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                            pt.row
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    let items = if let Some(win) = editor.window(ctx.window) {
+                        win.location_list().to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(item) = items.get(current_row as usize) {
+                        let item_clone = item.clone();
+                        super::ex::jump_to_quickfix_item(editor, ctx, &item_clone)
+                    } else {
+                        Outcome::default()
+                    }
+                }
+                crate::kernel::window::WindowType::Normal => {
+                    motions::move_to_start_of_next_line(editor, ctx.window, false)
+                }
+            }
+        }
         Action::MoveToWord { count, select } => {
             motions::move_to_word(editor, ctx.window, count, select)
         }

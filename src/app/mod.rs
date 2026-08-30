@@ -15,7 +15,24 @@ pub mod view_sync;
 use crate::kernel::{Editor, outcome::Outcome};
 use prompt::CommandPrompt;
 use request::AppRequest;
+use vim_buffer::BufferText;
 use vim_input::Action;
+
+fn merge_outcomes(combined: &mut Outcome, next: Outcome) {
+    use crate::kernel::outcome::RedrawInvalidation;
+
+    combined.mutated |= next.mutated;
+    combined.mode_changed |= next.mode_changed;
+    combined.invalidation = match (combined.invalidation, next.invalidation) {
+        (RedrawInvalidation::None, invalidation) => invalidation,
+        (invalidation, RedrawInvalidation::None) => invalidation,
+        (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => RedrawInvalidation::All,
+        (left, right) if left == right => left,
+        _ => RedrawInvalidation::All,
+    };
+    combined.effects.extend(next.effects);
+    combined.events.extend(next.events);
+}
 
 pub struct App {
     editor: Editor,
@@ -23,6 +40,8 @@ pub struct App {
     pending_request: Option<AppRequest>,
     script: crate::script::ScriptHost,
     colorscheme: vim_ui::ColorScheme,
+    script_rx: std::sync::mpsc::Receiver<AppRequest>,
+    source_depth: usize,
 }
 
 impl App {
@@ -42,8 +61,11 @@ impl App {
         let prompt = CommandPrompt::new();
         let keymaps =
             std::sync::Arc::new(std::sync::RwLock::new(vim_input::MappingStore::default()));
-        let host = std::sync::Arc::new(script_host::NullHost);
-        let script = crate::script::ScriptHost::new(host, keymaps);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::script::EditorState::default()));
+        let host = std::sync::Arc::new(script_host::ActiveHost::new(tx, state.clone()));
+        let script = crate::script::ScriptHost::new(host, keymaps, state);
 
         Self {
             editor,
@@ -51,11 +73,17 @@ impl App {
             pending_request: None,
             script,
             colorscheme: vim_ui::ColorScheme::load_default(),
+            script_rx: rx,
+            source_depth: 0,
         }
     }
 
     pub fn shared_keymaps(&self) -> vim_input::SharedMappingStore {
         self.script.shared_keymaps()
+    }
+
+    pub fn digraphs(&self) -> &crate::script::DigraphStore {
+        self.script.digraphs()
     }
 
     pub fn init(
@@ -64,10 +92,6 @@ impl App {
         post_config_cmds: &[String],
         scripts: &[std::path::PathBuf],
     ) {
-        if cfg!(test) {
-            return;
-        }
-
         for cmd in pre_config_cmds {
             self.execute_line(cmd);
         }
@@ -83,9 +107,7 @@ impl App {
 
             for path in &paths {
                 if path.exists() {
-                    if let Ok(content) = std::fs::read_to_string(path) {
-                        self.execute_script(&content);
-                    }
+                    self.execute_source(path);
                     break;
                 }
             }
@@ -96,26 +118,73 @@ impl App {
         }
 
         for path in scripts {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                self.execute_script(&content);
-            }
+            self.execute_source(path);
         }
     }
 
-    pub fn execute_line(&mut self, line: &str) {
-        if let Some(command) = crate::kernel::command::ex::parse(line) {
-            self.execute_ex_command(command);
+    pub fn execute_source(&mut self, path: &std::path::Path) -> Outcome {
+        const MAX_SOURCE_DEPTH: usize = 100;
+
+        if self.source_depth >= MAX_SOURCE_DEPTH {
+            self.pending_request = Some(AppRequest::ShowMessage(format!(
+                "E169: Command too recursive while sourcing {}",
+                path.display()
+            )));
+            return Outcome::default();
         }
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(_) => {
+                self.pending_request = Some(AppRequest::ShowMessage(format!(
+                    "E484: Can't open file {}",
+                    path.display()
+                )));
+                return Outcome::default();
+            }
+        };
+
+        self.source_depth += 1;
+        let outcome = self.execute_script(&content);
+        self.source_depth -= 1;
+        outcome
     }
 
-    pub fn execute_script(&mut self, content: &str) {
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('"') {
-                continue;
-            }
-            self.execute_line(trimmed);
+    pub fn execute_line(&mut self, line: &str) -> Outcome {
+        self.execute_script(line)
+    }
+
+    pub fn execute_script(&mut self, content: &str) -> Outcome {
+        let _ = self.script.update_state(&self.editor);
+        let ctx = self.editor.current_context();
+        if let Err(e) = self.script.execute_with_context(content, Some(ctx)) {
+            self.pending_request = Some(AppRequest::ShowMessage(format!("Error: {e}")));
         }
+
+        self.dispatch_script_requests()
+    }
+
+    /// Drains commands emitted by the scripting host. Kernel mutations stay on
+    /// the application thread; only terminal-facing requests are retained for
+    /// the outer runtime loop.
+    fn dispatch_script_requests(&mut self) -> Outcome {
+        let mut combined = Outcome::default();
+        while let Ok(request) = self.script_rx.try_recv() {
+            let outcome = match request {
+                AppRequest::Quit => {
+                    self.pending_request = Some(AppRequest::Quit);
+                    Outcome::default()
+                }
+                AppRequest::ShowMessage(message) => {
+                    self.pending_request = Some(AppRequest::ShowMessage(message));
+                    Outcome::default()
+                }
+                AppRequest::ExecuteEx(command) => self.execute_ex_command(command),
+                AppRequest::Source(path) => self.execute_source(&path),
+            };
+            merge_outcomes(&mut combined, outcome);
+        }
+        combined
     }
 
     pub fn editor(&self) -> &Editor {
@@ -158,6 +227,7 @@ impl App {
     }
 
     pub fn handle_action(&mut self, action: Action, register: Option<char>) -> Outcome {
+        let _ = self.script.update_state(&self.editor);
         if register == Some('+') || register == Some('*') {
             let reg_name = if register == Some('*') {
                 vim_clipboard::RegisterName::Selection
@@ -169,7 +239,50 @@ impl App {
             }
         }
 
-        let outcome = self.editor.execute_with_register(action, register);
+        let mut prefix_outcome = None;
+        if self.editor.mode().is_insert() {
+            let is_keyword = |c: char| c.is_alphanumeric() || c == '_';
+            match &action {
+                Action::InsertText(text) => {
+                    if let Some(first_char) = text.chars().next() {
+                        if !is_keyword(first_char) {
+                            prefix_outcome = self.check_abbreviation_expansion(Some(first_char));
+                        }
+                    }
+                }
+                Action::InsertNewLine { .. } | Action::Clear => {
+                    prefix_outcome = self.check_abbreviation_expansion(None);
+                }
+                _ => {}
+            }
+        }
+
+        let mut outcome = self.editor.execute_with_register(action, register);
+        if let Some(prefix) = prefix_outcome {
+            outcome.mode_changed |= prefix.mode_changed;
+            use crate::kernel::outcome::RedrawInvalidation;
+            match (prefix.invalidation, outcome.invalidation) {
+                (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
+                    outcome.invalidation = RedrawInvalidation::All;
+                }
+                (RedrawInvalidation::Range { buffer, range }, _) => {
+                    if outcome.invalidation == RedrawInvalidation::None
+                        || outcome.invalidation == RedrawInvalidation::CurrentWindow
+                    {
+                        outcome.invalidation = RedrawInvalidation::Range { buffer, range };
+                    }
+                }
+                (RedrawInvalidation::CurrentWindow, _) => {
+                    if outcome.invalidation == RedrawInvalidation::None {
+                        outcome.invalidation = RedrawInvalidation::CurrentWindow;
+                    }
+                }
+                _ => {}
+            }
+            outcome.effects.extend(prefix.effects);
+            outcome.events.extend(prefix.events);
+        }
+
         if outcome
             .effects
             .contains(&crate::kernel::outcome::Effect::Quit)
@@ -186,6 +299,7 @@ impl App {
     }
 
     pub fn handle_raw_key(&mut self, raw_key: input::RawKey) -> Outcome {
+        let _ = self.script.update_state(&self.editor);
         if self.editor.has_pending_substitute() {
             let outcome = match raw_key {
                 input::RawKey::Char(ch) => {
@@ -208,6 +322,20 @@ impl App {
 
         let mut outcome = match raw_key {
             input::RawKey::Char(ch) => {
+                let is_keyword = |c: char| c.is_alphanumeric() || c == '_';
+                if !is_keyword(ch) {
+                    let left_text = self.prompt.text();
+                    if let Some(abbr) = self.script.lookup_abbreviation(
+                        left_text,
+                        crate::script::AbbreviationMode::CommandLine,
+                    ) {
+                        let lhs_len = abbr.lhs.len();
+                        let new_len = left_text.len() - lhs_len;
+                        let mut new_text = left_text[..new_len].to_string();
+                        new_text.push_str(&abbr.rhs);
+                        self.prompt.set_text(new_text);
+                    }
+                }
                 self.prompt.push(ch);
                 Outcome::default()
             }
@@ -304,17 +432,15 @@ impl App {
                     crate::kernel::command::search::parse_search_query(line, '?');
                 crate::kernel::command::search::search(&mut self.editor, &pattern, false, 1, offset)
             }
-            _ => {
-                let command = match crate::kernel::command::ex::parse(line) {
-                    Some(cmd) => cmd,
-                    None => return Outcome::default(),
-                };
-                self.execute_ex_command(command)
-            }
+            _ => self.execute_line(line),
         }
     }
 
-    fn execute_ex_command(&mut self, command: vim_script::ast::ExCommand) -> Outcome {
+    pub(crate) fn execute_ex_command(&mut self, command: vim_script::ast::ExCommand) -> Outcome {
+        let command = self
+            .script
+            .canonicalize_command(command.clone())
+            .unwrap_or(command);
         if let Some(reg_result) = self.script.try_handle_registration(&command) {
             let _ = reg_result;
             return Outcome::default();
@@ -391,7 +517,10 @@ impl App {
                     let commands = self.script.fire_event("TextChanged", None);
                     autocmds_to_run.extend(commands);
                 }
-                crate::kernel::events::EditorEvent::OptionSet { .. } => {}
+                crate::kernel::events::EditorEvent::OptionSet { name } => {
+                    let commands = self.script.fire_event("OptionSet", Some(name));
+                    autocmds_to_run.extend(commands);
+                }
             }
         }
 
@@ -400,7 +529,53 @@ impl App {
         }
     }
 
+    fn check_abbreviation_expansion(&mut self, _trigger_char: Option<char>) -> Option<Outcome> {
+        let mode = self.editor.mode();
+        if !matches!(
+            mode,
+            crate::kernel::mode::Mode::Insert
+                | crate::kernel::mode::Mode::Replace
+                | crate::kernel::mode::Mode::VirtualReplace
+        ) {
+            return None;
+        }
+
+        let ctx = self.editor.current_context();
+        let buffer = self.editor.buffer(ctx.buffer)?;
+        let text_buffer = buffer.as_text_buffer();
+        let head = self
+            .editor
+            .window(ctx.window)?
+            .selections()
+            .primary()
+            .head();
+        let offset = text_buffer.offset_for_anchor(&head);
+
+        use text::ToPoint;
+        let point = offset.to_point(text_buffer);
+        let row_text = BufferText::row_text(text_buffer, point.row);
+        if (point.column as usize) > row_text.len() {
+            return None;
+        }
+        let left_text = &row_text[..point.column as usize];
+
+        if let Some(abbr) = self
+            .script
+            .lookup_abbreviation(left_text, crate::script::AbbreviationMode::Insert)
+        {
+            let del_outcome = self.editor.execute(Action::DeleteCharBefore {
+                count: abbr.lhs.chars().count() as u32,
+            });
+            let _ins_outcome = self.editor.execute(Action::InsertText(abbr.rhs.clone()));
+            let mut combined = del_outcome;
+            combined.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+            return Some(combined);
+        }
+        None
+    }
+
     pub fn take_request(&mut self) -> Option<AppRequest> {
+        let _ = self.dispatch_script_requests();
         self.pending_request.take()
     }
 }
@@ -498,6 +673,91 @@ mod tests {
             app.handle_raw_key(input::RawKey::Char(ch));
         }
         app.handle_raw_key(input::RawKey::Enter);
+    }
+
+    fn temporary_script(contents: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("nxvim-source-{}-{nonce}.vim", std::process::id()));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn source_command_executes_a_script_file() {
+        let path = temporary_script("delete");
+        let mut app = App::new("line1\nline2");
+
+        let outcome = app.execute_line(&format!("source {}", path.display()));
+
+        let text: String = app.editor().current_buffer().snapshot().chunks().collect();
+        assert_eq!(text, "line2");
+        assert!(outcome.mutated);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn source_command_reports_a_missing_file() {
+        let path =
+            std::env::temp_dir().join(format!("nxvim-missing-source-{}.vim", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut app = App::new("text");
+
+        app.execute_line(&format!("source {}", path.display()));
+
+        assert_eq!(
+            app.take_request(),
+            Some(AppRequest::ShowMessage(format!(
+                "E484: Can't open file {}",
+                path.display()
+            )))
+        );
+    }
+
+    #[test]
+    fn command_line_alias_is_canonicalized_before_kernel_admission() {
+        let mut app = App::new("line1\nline2");
+
+        submit_line(&mut app, "d");
+
+        let text: String = app.editor().current_buffer().snapshot().chunks().collect();
+        assert_eq!(text, "line2");
+    }
+
+    #[test]
+    fn command_line_resolves_registered_simple_command_and_executes_it() {
+        let mut app = App::new("charlie\nalice\nbob");
+
+        submit_line(&mut app, "sort");
+
+        let text: String = app.editor().current_buffer().snapshot().chunks().collect();
+        assert_eq!(text, "alice\nbob\ncharlie");
+    }
+
+    #[test]
+    fn script_channel_dispatches_ex_commands_to_the_kernel() {
+        let mut app = App::new("line1\nline2");
+
+        let outcome = app.execute_line("delete");
+
+        let text: String = app.editor().current_buffer().snapshot().chunks().collect();
+        assert_eq!(text, "line2");
+        assert!(outcome.mutated);
+    }
+
+    #[test]
+    fn script_channel_retains_terminal_requests_without_requeueing() {
+        let mut app = App::new("text");
+
+        app.execute_line("quit");
+
+        assert_eq!(app.take_request(), Some(AppRequest::Quit));
+        assert_eq!(app.take_request(), None);
     }
 
     #[test]
@@ -619,7 +879,7 @@ mod tests {
     fn echo_smoke_test() {
         let mut app = App::new("line1");
 
-        submit_line(&mut app, "echo hello");
+        submit_line(&mut app, "echo \"hello\"");
 
         assert_eq!(
             app.take_request(),
@@ -628,5 +888,55 @@ mod tests {
 
         let text: String = app.editor().current_buffer().snapshot().chunks().collect();
         assert_eq!(text, "line1");
+    }
+
+    #[test]
+    fn abbreviations_smoke_test() {
+        let mut app = App::new("");
+        submit_line(&mut app, "iabbrev ad advertisement");
+
+        let mut input = InputTranslator::new();
+        let resolved = input.translate(key_event('i')).expect("i resolves");
+        app.handle_action(resolved.action, resolved.register);
+
+        // Type 'a', 'd', ' '
+        app.handle_action(Action::InsertText("a".to_string()), None);
+        app.handle_action(Action::InsertText("d".to_string()), None);
+        app.handle_action(Action::InsertText(" ".to_string()), None);
+
+        let text: String = app.editor().current_buffer().snapshot().chunks().collect();
+        assert_eq!(text, "advertisement ");
+    }
+
+    #[test]
+    fn digraphs_smoke_test() {
+        let mut app = App::new("");
+        let mut input = InputTranslator::with_mappings(app.shared_keymaps());
+        app.editor.set_mode(crate::kernel::mode::Mode::Insert);
+        input.resolver = vim_input::Resolver::new(vim_input::Mode::Insert);
+
+        // Feed Ctrl-K, 0, 0
+        let r1 = input.translate(Event::Key(KeyEvent::new(CKey::Char('k'), CMod::CONTROL)));
+        assert!(r1.is_none());
+        let r2 = input.translate(Event::Key(KeyEvent::new(CKey::Char('0'), CMod::NONE)));
+        assert!(r2.is_none());
+        let r3 = input.translate(Event::Key(KeyEvent::new(CKey::Char('0'), CMod::NONE)));
+        assert!(r3.is_some());
+
+        let resolved = r3.unwrap();
+        assert_eq!(resolved.action, Action::InsertText("∞".to_string()));
+    }
+
+    #[test]
+    fn mapping_recursion_limit_smoke_test() {
+        let mut app = App::new("");
+        let mut input = InputTranslator::with_mappings(app.shared_keymaps());
+        submit_line(&mut app, "map a b");
+        submit_line(&mut app, "map b a");
+
+        // This would trigger an infinite loop if no limit exists
+        let resolved = input.translate(key_event('a'));
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap().action, Action::NoOp);
     }
 }

@@ -794,6 +794,36 @@ impl Keymap {
             .bind("<C-Down>", Action::ResizeDown)
             .expect("Valid binding");
         normal_actions
+            .bind("<C-w>+", Action::ResizeUp)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>-", Action::ResizeDown)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w><lt>", Action::ResizeLeft)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>>", Action::ResizeRight)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>=", Action::ResizeEqual)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>H", Action::MoveWindowLeft)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>J", Action::MoveWindowDown)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>K", Action::MoveWindowUp)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<C-w>L", Action::MoveWindowRight)
+            .expect("Valid binding");
+        normal_actions
+            .bind("<CR>", Action::CarriageReturn)
+            .expect("Valid binding");
+        normal_actions
             .bind("J", Action::JoinLines { count: 1 })
             .expect("Valid binding");
         normal_actions

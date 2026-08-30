@@ -82,3 +82,43 @@ pub fn previous_tab(editor: &mut Editor, count: u32) -> Outcome {
     editor.set_current_tab(new_tab_id);
     Outcome::default()
 }
+
+pub fn resize_window(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    dir: NavigationDirection,
+    count: u32,
+) -> Outcome {
+    let axis = match dir {
+        NavigationDirection::Up | NavigationDirection::Down => Axis::Horizontal,
+        NavigationDirection::Left | NavigationDirection::Right => Axis::Vertical,
+    };
+    // Standard increment/decrement step (e.g. 10 weight units per count)
+    let step = 10 * count as i32;
+    let delta = match dir {
+        NavigationDirection::Up | NavigationDirection::Right => step,
+        NavigationDirection::Down | NavigationDirection::Left => -step,
+    };
+
+    let active_win = ctx.window;
+    let tab = editor.tabs_mut().active_mut();
+    tab.layout_mut().adjust_weight(active_win, axis, delta);
+    Outcome::default()
+}
+
+pub fn resize_equal(editor: &mut Editor, _ctx: CommandContext) -> Outcome {
+    let tab = editor.tabs_mut().active_mut();
+    tab.layout_mut().equalize_weights();
+    Outcome::default()
+}
+
+pub fn move_window(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    dir: NavigationDirection,
+) -> Outcome {
+    let active_win = ctx.window;
+    let tab = editor.tabs_mut().active_mut();
+    tab.move_window(active_win, dir);
+    Outcome::default()
+}

@@ -1,7 +1,9 @@
 //! Typed application-level request envelope.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AppRequest {
     Quit,
     ShowMessage(String),
+    ExecuteEx(vim_script::ast::ExCommand),
+    Source(std::path::PathBuf),
 }

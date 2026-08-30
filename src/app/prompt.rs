@@ -29,4 +29,8 @@ impl CommandPrompt {
     pub fn take(&mut self) -> String {
         std::mem::take(&mut self.text)
     }
+
+    pub fn set_text(&mut self, text: String) {
+        self.text = text;
+    }
 }

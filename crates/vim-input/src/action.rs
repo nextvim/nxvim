@@ -101,6 +101,12 @@ pub enum Action {
     ResizeRight,
     ResizeUp,
     ResizeDown,
+    ResizeEqual,
+    MoveWindowLeft,
+    MoveWindowRight,
+    MoveWindowUp,
+    MoveWindowDown,
+    CarriageReturn,
 
     // MOTIONS
     /*
@@ -582,6 +588,12 @@ impl std::fmt::Display for Action {
             Action::ResizeRight => write!(f, "ResizeRight"),
             Action::ResizeUp => write!(f, "ResizeUp"),
             Action::ResizeDown => write!(f, "ResizeDown"),
+            Action::ResizeEqual => write!(f, "ResizeEqual"),
+            Action::MoveWindowLeft => write!(f, "MoveWindowLeft"),
+            Action::MoveWindowRight => write!(f, "MoveWindowRight"),
+            Action::MoveWindowUp => write!(f, "MoveWindowUp"),
+            Action::MoveWindowDown => write!(f, "MoveWindowDown"),
+            Action::CarriageReturn => write!(f, "CarriageReturn"),
             Action::MarkSet { ch } => write!(f, "MarkSet({})", ch),
             Action::MarkJump {
                 ch,
@@ -968,7 +980,13 @@ impl Action {
             | Action::ResizeLeft
             | Action::ResizeRight
             | Action::ResizeUp
-            | Action::ResizeDown => self,
+            | Action::ResizeDown
+            | Action::ResizeEqual
+            | Action::MoveWindowLeft
+            | Action::MoveWindowRight
+            | Action::MoveWindowUp
+            | Action::MoveWindowDown
+            | Action::CarriageReturn => self,
             Action::NextTab { .. } => Action::NextTab { count },
             Action::PreviousTab { .. } => Action::PreviousTab { count },
             Action::Delete { .. } => Action::Delete { count },

@@ -24,7 +24,11 @@ pub enum NavigationDirection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Layout {
     Leaf(WindowId),
-    Split { axis: Axis, children: Vec<Layout> },
+    Split {
+        axis: Axis,
+        children: Vec<Layout>,
+        weights: Vec<u32>,
+    },
 }
 
 impl Layout {
@@ -44,6 +48,7 @@ impl Layout {
                     *self = Layout::Split {
                         axis,
                         children: vec![Layout::Leaf(target), Layout::Leaf(new_win)],
+                        weights: vec![100, 100],
                     };
                     true
                 } else {
@@ -104,7 +109,7 @@ impl Layout {
         }
 
         for (parent, index) in path.into_iter().rev() {
-            if let Layout::Split { axis, children } = parent {
+            if let Layout::Split { axis, children, .. } = parent {
                 match (dir, axis) {
                     (NavigationDirection::Left, Axis::Vertical) => {
                         if index > 0 {
@@ -142,7 +147,7 @@ impl Layout {
                     (false, None)
                 }
             }
-            Layout::Split { children, .. } => {
+            Layout::Split { children, weights, .. } => {
                 let mut remove_idx = None;
                 for (i, child) in children.iter().enumerate() {
                     if let Layout::Leaf(win_id) = child {
@@ -160,6 +165,9 @@ impl Layout {
                         None
                     };
                     children.remove(idx);
+                    if idx < weights.len() {
+                        weights.remove(idx);
+                    }
                     if children.len() == 1 {
                         *self = children.remove(0);
                     }
@@ -172,11 +180,17 @@ impl Layout {
                         if child.is_empty_or_single() {
                             if let Layout::Split {
                                 children: mut sub_c,
+                                weights: mut sub_w,
                                 ..
                             } = children.remove(i)
                             {
+                                if i < weights.len() {
+                                    weights.remove(i);
+                                }
                                 if !sub_c.is_empty() {
                                     children.insert(i, sub_c.remove(0));
+                                    let w = if !sub_w.is_empty() { sub_w.remove(0) } else { 100 };
+                                    weights.insert(i, w);
                                 }
                             }
                         }
@@ -214,6 +228,60 @@ impl Layout {
             }
         }
     }
+
+    pub fn adjust_weight(&mut self, active_win: WindowId, axis: Axis, delta: i32) -> bool {
+        match self {
+            Layout::Leaf(_) => false,
+            Layout::Split { axis: split_axis, children, weights } => {
+                if *split_axis == axis {
+                    if let Some(idx) = children.iter().position(|child| child.contains_window(active_win)) {
+                        let current_weight = weights.get(idx).copied().unwrap_or(100) as i32;
+                        let neighbor_idx = if idx + 1 < children.len() {
+                            idx + 1
+                        } else if idx > 0 {
+                            idx - 1
+                        } else {
+                            return false;
+                        };
+                        let neighbor_weight = weights.get(neighbor_idx).copied().unwrap_or(100) as i32;
+                        let min_weight = 10;
+                        let actual_delta = if delta > 0 {
+                            let available = (neighbor_weight - min_weight).max(0);
+                            delta.min(available)
+                        } else {
+                            let available = (current_weight - min_weight).max(0);
+                            -(-delta).min(available)
+                        };
+                        if actual_delta != 0 {
+                            weights[idx] = (current_weight + actual_delta) as u32;
+                            weights[neighbor_idx] = (neighbor_weight - actual_delta) as u32;
+                            return true;
+                        }
+                    }
+                }
+                for child in children {
+                    if child.adjust_weight(active_win, axis, delta) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    pub fn equalize_weights(&mut self) {
+        match self {
+            Layout::Leaf(_) => {}
+            Layout::Split { children, weights, .. } => {
+                for w in weights.iter_mut() {
+                    *w = 100;
+                }
+                for child in children {
+                    child.equalize_weights();
+                }
+            }
+        }
+    }
 }
 
 pub struct TabPage {
@@ -233,6 +301,10 @@ impl TabPage {
 
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+
+    pub fn layout_mut(&mut self) -> &mut Layout {
+        &mut self.layout
     }
 
     pub fn active_window(&self) -> WindowId {
@@ -271,6 +343,40 @@ impl TabPage {
             }
         }
         removed
+    }
+
+    pub fn move_window(&mut self, target: WindowId, dir: NavigationDirection) -> bool {
+        let win_ids = self.layout.window_ids();
+        if win_ids.len() <= 1 || !win_ids.contains(&target) {
+            return false;
+        }
+
+        let (removed, _) = self.layout.remove_window(target);
+        if !removed {
+            return false;
+        }
+
+        let axis = match dir {
+            NavigationDirection::Left | NavigationDirection::Right => Axis::Vertical,
+            NavigationDirection::Up | NavigationDirection::Down => Axis::Horizontal,
+        };
+
+        let old_root = std::mem::replace(&mut self.layout, Layout::Leaf(target));
+
+        self.layout = match dir {
+            NavigationDirection::Left | NavigationDirection::Up => Layout::Split {
+                axis,
+                children: vec![Layout::Leaf(target), old_root],
+                weights: vec![100, 100],
+            },
+            NavigationDirection::Right | NavigationDirection::Down => Layout::Split {
+                axis,
+                children: vec![old_root, Layout::Leaf(target)],
+                weights: vec![100, 100],
+            },
+        };
+
+        true
     }
 }
 

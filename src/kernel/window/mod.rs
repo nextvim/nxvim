@@ -17,6 +17,22 @@ use crate::kernel::ids::WindowId;
 use crate::kernel::mode::VisualKind;
 use crate::kernel::options::WindowOptions;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowType {
+    Normal,
+    Quickfix,
+    LocationList,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuickfixItem {
+    pub buffer: Option<BufferId>,
+    pub filename: String,
+    pub row: u32,
+    pub col: u32,
+    pub text: String,
+}
+
 #[derive(Clone)]
 pub struct Window {
     buffer: BufferId,
@@ -26,19 +42,12 @@ pub struct Window {
     viewport_width: u32,
     scroll_top: u32,
     leftcol: u32,
-    /// Which kind of Visual selection is active, if any -- the per-window
-    /// "how do I interpret the current selection" fact (`RESCUE.md` Rule 4
-    /// item 2). Set on entering Visual, cleared on leaving it.
     visual_kind: Option<VisualKind>,
-    /// The range and kind of the most recently exited Visual selection, for
-    /// `gv` to restore -- small, window-local history, not `Editor`-global.
     last_visual: Option<(VisualKind, Selection<Anchor>)>,
-    /// Replace-mode overtype history for the current Replace session: one
-    /// entry per character typed so far, `Some(original)` if it overtyped a
-    /// real character or `None` if it was appended past end-of-line.
-    /// `Backspace` pops this to restore/undo the overtype (`:help
-    /// i_Backspace` under Replace mode). Reset on entering Replace.
     replace_overtype: Vec<Option<char>>,
+    window_type: WindowType,
+    location_list: Vec<QuickfixItem>,
+    location_list_index: usize,
 }
 
 impl Window {
@@ -66,6 +75,9 @@ impl Window {
             visual_kind: None,
             last_visual: None,
             replace_overtype: Vec::new(),
+            window_type: WindowType::Normal,
+            location_list: Vec::new(),
+            location_list_index: 0,
         }
     }
 
@@ -170,6 +182,30 @@ impl Window {
 
     pub fn pop_replace_overtype(&mut self) -> Option<Option<char>> {
         self.replace_overtype.pop()
+    }
+
+    pub fn window_type(&self) -> WindowType {
+        self.window_type
+    }
+
+    pub fn set_window_type(&mut self, window_type: WindowType) {
+        self.window_type = window_type;
+    }
+
+    pub fn location_list(&self) -> &[QuickfixItem] {
+        &self.location_list
+    }
+
+    pub fn location_list_mut(&mut self) -> &mut Vec<QuickfixItem> {
+        &mut self.location_list
+    }
+
+    pub fn location_list_index(&self) -> usize {
+        self.location_list_index
+    }
+
+    pub fn set_location_list_index(&mut self, index: usize) {
+        self.location_list_index = index;
     }
 }
 

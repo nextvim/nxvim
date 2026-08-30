@@ -102,7 +102,7 @@ pub fn run(
             }
         } else {
             let buf_id = app.editor().current_context().buffer.get();
-            if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id)) {
+            if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id), app.digraphs()) {
                 let outcome = app.handle_action(resolved.action, resolved.register);
                 if outcome.invalidation != RedrawInvalidation::None {
                     pending_invalidations.push(outcome.invalidation);
@@ -115,6 +115,18 @@ pub fn run(
                 crate::app::request::AppRequest::Quit => return Ok(()),
                 crate::app::request::AppRequest::ShowMessage(msg) => {
                     status = msg;
+                }
+                crate::app::request::AppRequest::ExecuteEx(cmd) => {
+                    let outcome = app.execute_ex_command(cmd);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
+                crate::app::request::AppRequest::Source(path) => {
+                    let outcome = app.execute_source(&path);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
                 }
             }
         }

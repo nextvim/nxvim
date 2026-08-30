@@ -16,7 +16,7 @@ use crate::kernel::{
     transaction,
 };
 use text::{Selection, SelectionGoal, ToOffset};
-use vim_buffer::{ByteOffset, Edit, EditOrigin, PlannedEdit, TextRange};
+use vim_buffer::{BufferText, ByteOffset, Edit, EditOrigin, PlannedEdit, TextRange};
 use vim_input::Action;
 use vim_script::SourceId;
 use vim_script::ast::{Address, CommandRange, ExCommand};
@@ -79,7 +79,7 @@ pub fn admit(editor: &mut Editor, ctx: CommandContext, line: &str) -> Outcome {
 
 pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExCommand) -> Outcome {
     match command.name.as_str() {
-        "d" | "delete" => {
+        "delete" => {
             let current_row = if let Some(win) = editor.window(ctx.window) {
                 let head = win.selections().primary().head();
                 if let Some(buf) = editor.buffer(ctx.buffer) {
@@ -107,11 +107,11 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
 
             execute_delete_lines(editor, ctx, start_line, end_line)
         }
-        "q" | "quit" => Outcome {
+        "quit" => Outcome {
             effects: vec![Effect::Quit],
             ..Outcome::default()
         },
-        "wq" | "x" => {
+        "wq" | "xit" | "exit" => {
             let force = command.bang;
             let trimmed = command.arguments.trim();
             let res = if !trimmed.is_empty() {
@@ -133,11 +133,255 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 },
             }
         }
-        "sp" | "split" => {
-            super::normal::windows::split_horizontal(editor, ctx)
+        "split" => {
+            let trimmed = command.arguments.trim();
+            let mut outcome = super::normal::windows::split_horizontal(editor, ctx);
+            if !trimmed.is_empty() {
+                let path = std::path::PathBuf::from(trimmed);
+                let opened = editor
+                    .buffers_mut()
+                    .load(&path)
+                    .or_else(|_| editor.buffers_mut().create_named(&path, ""));
+                match opened {
+                    Ok((id, _)) => {
+                        let active_win = editor.current_context().window;
+                        let _ = editor.buffers_mut().set_current(id);
+                        editor.set_window_buffer(active_win, id);
+                        outcome.invalidation = RedrawInvalidation::All;
+                    }
+                    Err(err) => {
+                        outcome.effects.push(Effect::OptionMessage {
+                            message: format!("E297: Cannot open file: {}", err),
+                        });
+                    }
+                }
+            }
+            outcome
         }
-        "vs" | "vsplit" => {
-            super::normal::windows::split_vertical(editor, ctx)
+        "vsplit" => {
+            let trimmed = command.arguments.trim();
+            let mut outcome = super::normal::windows::split_vertical(editor, ctx);
+            if !trimmed.is_empty() {
+                let path = std::path::PathBuf::from(trimmed);
+                let opened = editor
+                    .buffers_mut()
+                    .load(&path)
+                    .or_else(|_| editor.buffers_mut().create_named(&path, ""));
+                match opened {
+                    Ok((id, _)) => {
+                        let active_win = editor.current_context().window;
+                        let _ = editor.buffers_mut().set_current(id);
+                        editor.set_window_buffer(active_win, id);
+                        outcome.invalidation = RedrawInvalidation::All;
+                    }
+                    Err(err) => {
+                        outcome.effects.push(Effect::OptionMessage {
+                            message: format!("E297: Cannot open file: {}", err),
+                        });
+                    }
+                }
+            }
+            outcome
+        }
+        "only" => super::normal::windows::only_window(editor, ctx),
+        "close" => super::normal::windows::close_window(editor, ctx),
+        "copen" => {
+            let mut outcome = super::normal::windows::split_horizontal(editor, ctx);
+            let qf_buf = get_or_create_quickfix_buffer(editor);
+            let items = editor.quickfix_list().to_vec();
+            populate_quickfix_buffer(editor, qf_buf, &items);
+            let active_win = editor.current_context().window;
+            editor.set_window_buffer(active_win, qf_buf);
+            if let Some(win) = editor.windows_mut().get_mut(active_win) {
+                win.set_window_type(crate::kernel::window::WindowType::Quickfix);
+            }
+            outcome.invalidation = RedrawInvalidation::All;
+            outcome
+        }
+        "lopen" => {
+            let target_win = ctx.window;
+            let mut outcome = super::normal::windows::split_horizontal(editor, ctx);
+            let items = if let Some(win) = editor.window(target_win) {
+                win.location_list().to_vec()
+            } else {
+                Vec::new()
+            };
+            let loc_buf = get_or_create_location_buffer(editor, target_win);
+            populate_quickfix_buffer(editor, loc_buf, &items);
+            let active_win = editor.current_context().window;
+            editor.set_window_buffer(active_win, loc_buf);
+            if let Some(win) = editor.windows_mut().get_mut(active_win) {
+                win.set_window_type(crate::kernel::window::WindowType::LocationList);
+            }
+            outcome.invalidation = RedrawInvalidation::All;
+            outcome
+        }
+        "cclose" => {
+            let active_tab = editor.tabs().active();
+            let win_ids = active_tab.layout().window_ids();
+            let mut win_to_close = None;
+            for w in win_ids {
+                if let Some(win) = editor.window(w) {
+                    if win.window_type() == crate::kernel::window::WindowType::Quickfix {
+                        win_to_close = Some(w);
+                        break;
+                    }
+                }
+            }
+            if let Some(w) = win_to_close {
+                let close_ctx = CommandContext { window: w, ..ctx };
+                super::normal::windows::close_window(editor, close_ctx)
+            } else {
+                Outcome::default()
+            }
+        }
+        "lclose" => {
+            let active_tab = editor.tabs().active();
+            let win_ids = active_tab.layout().window_ids();
+            let mut win_to_close = None;
+            for w in win_ids {
+                if let Some(win) = editor.window(w) {
+                    if win.window_type() == crate::kernel::window::WindowType::LocationList {
+                        win_to_close = Some(w);
+                        break;
+                    }
+                }
+            }
+            if let Some(w) = win_to_close {
+                let close_ctx = CommandContext { window: w, ..ctx };
+                super::normal::windows::close_window(editor, close_ctx)
+            } else {
+                Outcome::default()
+            }
+        }
+        "cnext" => {
+            let len = editor.quickfix_list().len();
+            if len == 0 {
+                return Outcome::default();
+            }
+            let next_idx = (editor.quickfix_index() + 1) % len;
+            editor.set_quickfix_index(next_idx);
+            let item = editor.quickfix_list()[next_idx].clone();
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "cprevious" => {
+            let len = editor.quickfix_list().len();
+            if len == 0 {
+                return Outcome::default();
+            }
+            let prev_idx = if editor.quickfix_index() == 0 {
+                len - 1
+            } else {
+                editor.quickfix_index() - 1
+            };
+            editor.set_quickfix_index(prev_idx);
+            let item = editor.quickfix_list()[prev_idx].clone();
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "cfirst" => {
+            let len = editor.quickfix_list().len();
+            if len == 0 {
+                return Outcome::default();
+            }
+            editor.set_quickfix_index(0);
+            let item = editor.quickfix_list()[0].clone();
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "clast" => {
+            let len = editor.quickfix_list().len();
+            if len == 0 {
+                return Outcome::default();
+            }
+            let idx = len - 1;
+            editor.set_quickfix_index(idx);
+            let item = editor.quickfix_list()[idx].clone();
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "lnext" => {
+            let (len, next_idx) = if let Some(win) = editor.window(ctx.window) {
+                let len = win.location_list().len();
+                if len == 0 {
+                    (0, 0)
+                } else {
+                    let next = (win.location_list_index() + 1) % len;
+                    (len, next)
+                }
+            } else {
+                (0, 0)
+            };
+            if len == 0 {
+                return Outcome::default();
+            }
+            let item = if let Some(win) = editor.windows_mut().get_mut(ctx.window) {
+                win.set_location_list_index(next_idx);
+                win.location_list()[next_idx].clone()
+            } else {
+                return Outcome::default();
+            };
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "lprevious" => {
+            let (len, prev_idx) = if let Some(win) = editor.window(ctx.window) {
+                let len = win.location_list().len();
+                if len == 0 {
+                    (0, 0)
+                } else {
+                    let prev = if win.location_list_index() == 0 {
+                        len - 1
+                    } else {
+                        win.location_list_index() - 1
+                    };
+                    (len, prev)
+                }
+            } else {
+                (0, 0)
+            };
+            if len == 0 {
+                return Outcome::default();
+            }
+            let item = if let Some(win) = editor.windows_mut().get_mut(ctx.window) {
+                win.set_location_list_index(prev_idx);
+                win.location_list()[prev_idx].clone()
+            } else {
+                return Outcome::default();
+            };
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "lfirst" => {
+            let (len, idx) = if let Some(win) = editor.window(ctx.window) {
+                (win.location_list().len(), 0)
+            } else {
+                (0, 0)
+            };
+            if len == 0 {
+                return Outcome::default();
+            }
+            let item = if let Some(win) = editor.windows_mut().get_mut(ctx.window) {
+                win.set_location_list_index(idx);
+                win.location_list()[idx].clone()
+            } else {
+                return Outcome::default();
+            };
+            jump_to_quickfix_item(editor, ctx, &item)
+        }
+        "llast" => {
+            let (len, idx) = if let Some(win) = editor.window(ctx.window) {
+                let len = win.location_list().len();
+                let last = len.saturating_sub(1);
+                (len, last)
+            } else {
+                (0, 0)
+            };
+            if len == 0 {
+                return Outcome::default();
+            }
+            let item = if let Some(win) = editor.windows_mut().get_mut(ctx.window) {
+                win.set_location_list_index(idx);
+                win.location_list()[idx].clone()
+            } else {
+                return Outcome::default();
+            };
+            jump_to_quickfix_item(editor, ctx, &item)
         }
         "new" => {
             let mut outcome = super::normal::windows::split_horizontal(editor, ctx);
@@ -163,7 +407,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 ..Outcome::default()
             }
         }
-        "bn" | "bnext" => {
+        "bnext" => {
             let list = editor.buffers_mut().list();
             if list.len() <= 1 {
                 return Outcome::default();
@@ -181,7 +425,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 Outcome::default()
             }
         }
-        "bp" | "bprevious" => {
+        "bprevious" => {
             let list = editor.buffers_mut().list();
             if list.len() <= 1 {
                 return Outcome::default();
@@ -199,7 +443,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 Outcome::default()
             }
         }
-        "b" | "buffer" => {
+        "buffer" => {
             let arg = command.arguments.trim();
             if arg.is_empty() {
                 return Outcome::default();
@@ -244,7 +488,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 }
             }
         }
-        "bd" | "bdelete" => {
+        "bdelete" => {
             let force = command.bang;
             let arg = command.arguments.trim();
             let target_id = if arg.is_empty() {
@@ -269,7 +513,10 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                     if buf.is_modified() && !force {
                         return Outcome {
                             effects: vec![Effect::OptionMessage {
-                                message: format!("E89: No write since last change for buffer {} (add ! to override)", id.get()),
+                                message: format!(
+                                    "E89: No write since last change for buffer {} (add ! to override)",
+                                    id.get()
+                                ),
                             }],
                             ..Outcome::default()
                         };
@@ -277,9 +524,11 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 }
 
                 let list = editor.buffers_mut().list();
-                let replacement = list.iter().copied().find(|&x| x != id).unwrap_or_else(|| {
-                    editor.buffers_mut().insert("")
-                });
+                let replacement = list
+                    .iter()
+                    .copied()
+                    .find(|&x| x != id)
+                    .unwrap_or_else(|| editor.buffers_mut().insert(""));
 
                 editor.handle_buffer_deleted(id, replacement);
 
@@ -304,7 +553,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 }
             }
         }
-        "e" | "edit" => {
+        "edit" => {
             let trimmed = command.arguments.trim();
             let force = command.bang;
             if trimmed.is_empty() {
@@ -326,14 +575,17 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                     if buf.is_modified() && !force {
                         return Outcome {
                             effects: vec![Effect::OptionMessage {
-                                message: "E37: No write since last change (add ! to override)".to_string(),
+                                message: "E37: No write since last change (add ! to override)"
+                                    .to_string(),
                             }],
                             ..Outcome::default()
                         };
                     }
                 }
 
-                let opened = editor.buffers_mut().load(&path)
+                let opened = editor
+                    .buffers_mut()
+                    .load(&path)
                     .or_else(|_| editor.buffers_mut().create_named(&path, ""));
 
                 match opened {
@@ -354,7 +606,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 }
             }
         }
-        "s" | "substitute" => {
+        "substitute" => {
             let current_row = if let Some(win) = editor.window(ctx.window) {
                 let head = win.selections().primary().head();
                 if let Some(buf) = editor.buffer(ctx.buffer) {
@@ -389,7 +641,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 editor, ctx, start_line, end_line, args,
             )
         }
-        "w" | "write" => {
+        "write" => {
             let force = command.bang;
             let trimmed = command.arguments.trim();
             let res = if !trimmed.is_empty() {
@@ -414,7 +666,7 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
                 },
             }
         }
-        "set" | "se" => {
+        "set" => {
             let mut outcome = Outcome {
                 invalidation: RedrawInvalidation::CurrentWindow,
                 ..Outcome::default()
@@ -496,8 +748,533 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
             }
             outcome
         }
+        "global" | "vglobal" => {
+            let is_v = command.name == "vglobal";
+            let args = &command.arguments;
+            let (pattern, cmd_str) = match parse_global_arguments(args) {
+                Some(p) => p,
+                None => return Outcome::default(),
+            };
+
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+
+            let (start_line, end_line) = if command.range.is_none() {
+                (1, row_count)
+            } else {
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                }
+            };
+
+            let buffer = match editor.buffer(ctx.buffer) {
+                Some(b) => b,
+                None => return Outcome::default(),
+            };
+
+            let ignorecase = editor.global_options().ignorecase;
+            let compile_opts = vim_regex::CompileOptions {
+                editor: vim_regex::EditorOptions {
+                    ignore_case: ignorecase,
+                    smart_case: false,
+                    ..vim_regex::EditorOptions::default()
+                },
+                ..vim_regex::CompileOptions::default()
+            };
+            let regex = match vim_regex::Regex::compile(&pattern, compile_opts) {
+                Ok(r) => r,
+                Err(_) => return Outcome::default(),
+            };
+
+            use vim_buffer::TextSearch;
+
+            let mut target_anchors = Vec::new();
+            let start_row = start_line.saturating_sub(1).min(max_row);
+            let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+
+            for r in start_row..=end_row {
+                let text = buffer.as_text_buffer().row_text(r);
+                let is_match = !text.find_pattern(&regex).is_empty();
+                if is_match != is_v {
+                    let offset = text::Point::new(r, 0).to_offset(buffer.as_text_buffer());
+                    let anchor = buffer.as_text_buffer().anchor_before(offset);
+                    target_anchors.push(anchor);
+                }
+            }
+
+            let mut outcome = Outcome::default();
+            for anchor in target_anchors {
+                let buffer = match editor.buffer(ctx.buffer) {
+                    Some(b) => b,
+                    None => break,
+                };
+                let point: text::Point = buffer.as_text_buffer().summary_for_anchor(&anchor);
+                let current_row = point.row;
+                if current_row >= buffer.as_text_buffer().row_count() {
+                    continue;
+                }
+
+                set_cursor_to_row(editor, ctx.window, ctx.buffer, current_row);
+
+                let nested_outcome = if cmd_str.is_empty() {
+                    Outcome {
+                        invalidation: RedrawInvalidation::CurrentWindow,
+                        ..Outcome::default()
+                    }
+                } else {
+                    admit(editor, ctx, &cmd_str)
+                };
+
+                outcome.mutated |= nested_outcome.mutated;
+                outcome.mode_changed |= nested_outcome.mode_changed;
+                outcome.effects.extend(nested_outcome.effects);
+                outcome.events.extend(nested_outcome.events);
+                outcome.invalidation = match (outcome.invalidation, nested_outcome.invalidation) {
+                    (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
+                        RedrawInvalidation::All
+                    }
+                    (
+                        RedrawInvalidation::Range { buffer, range },
+                        RedrawInvalidation::Range {
+                            range: other_range, ..
+                        },
+                    ) => {
+                        use std::cmp::{max, min};
+                        RedrawInvalidation::Range {
+                            buffer,
+                            range: TextRange {
+                                start: min(range.start, other_range.start),
+                                end: max(range.end, other_range.end),
+                            },
+                        }
+                    }
+                    (RedrawInvalidation::Range { buffer, range }, _)
+                    | (_, RedrawInvalidation::Range { buffer, range }) => {
+                        RedrawInvalidation::Range { buffer, range }
+                    }
+                    (RedrawInvalidation::CurrentWindow, _)
+                    | (_, RedrawInvalidation::CurrentWindow) => RedrawInvalidation::CurrentWindow,
+                    (RedrawInvalidation::None, RedrawInvalidation::None) => {
+                        RedrawInvalidation::None
+                    }
+                };
+            }
+            outcome
+        }
+        "normal" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+
+            let (start_line, end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
+
+            let start_row = start_line.saturating_sub(1).min(max_row);
+            let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+
+            let mut outcome = Outcome::default();
+            for r in start_row..=end_row {
+                set_cursor_to_row_first_non_blank(editor, ctx.window, ctx.buffer, r);
+                let nested_outcome = execute_normal_keys(editor, &command.arguments);
+
+                outcome.mutated |= nested_outcome.mutated;
+                outcome.mode_changed |= nested_outcome.mode_changed;
+                outcome.effects.extend(nested_outcome.effects);
+                outcome.events.extend(nested_outcome.events);
+                outcome.invalidation = match (outcome.invalidation, nested_outcome.invalidation) {
+                    (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
+                        RedrawInvalidation::All
+                    }
+                    (
+                        RedrawInvalidation::Range { buffer, range },
+                        RedrawInvalidation::Range {
+                            range: other_range, ..
+                        },
+                    ) => {
+                        use std::cmp::{max, min};
+                        RedrawInvalidation::Range {
+                            buffer,
+                            range: TextRange {
+                                start: min(range.start, other_range.start),
+                                end: max(range.end, other_range.end),
+                            },
+                        }
+                    }
+                    (RedrawInvalidation::Range { buffer, range }, _)
+                    | (_, RedrawInvalidation::Range { buffer, range }) => {
+                        RedrawInvalidation::Range { buffer, range }
+                    }
+                    (RedrawInvalidation::CurrentWindow, _)
+                    | (_, RedrawInvalidation::CurrentWindow) => RedrawInvalidation::CurrentWindow,
+                    (RedrawInvalidation::None, RedrawInvalidation::None) => {
+                        RedrawInvalidation::None
+                    }
+                };
+            }
+            outcome
+        }
+        "sort" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+
+            let (start_line, end_line) = if command.range.is_none() {
+                (1, row_count)
+            } else {
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                }
+            };
+
+            let opts = parse_sort_options(command.bang, &command.arguments);
+            execute_sort_lines(editor, ctx, start_line, end_line, opts)
+        }
         _ => Outcome::default(),
     }
+}
+
+fn parse_global_arguments(args: &str) -> Option<(String, String)> {
+    let args = args.trim();
+    if args.is_empty() {
+        return None;
+    }
+    let mut chars = args.chars().peekable();
+    let delimiter = chars.next()?;
+    let mut pattern = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next_c) = chars.peek() {
+                if next_c == delimiter {
+                    pattern.push(delimiter);
+                    chars.next();
+                    continue;
+                }
+            }
+            pattern.push(c);
+        } else if c == delimiter {
+            break;
+        } else {
+            pattern.push(c);
+        }
+    }
+    let cmd = chars.collect::<String>();
+    Some((pattern, cmd.trim().to_string()))
+}
+
+fn set_cursor_to_row(
+    editor: &mut Editor,
+    window_id: crate::kernel::ids::WindowId,
+    buffer_id: crate::kernel::ids::BufferId,
+    row: u32,
+) {
+    if let Some(buf) = editor.buffer(buffer_id) {
+        let text_buffer = buf.as_text_buffer();
+        let max_row = text_buffer.row_count().saturating_sub(1);
+        let target_row = row.min(max_row);
+        let offset = text::Point::new(target_row, 0).to_offset(text_buffer);
+        let anchor = text_buffer.anchor_before(offset);
+        if let Some(win) = editor.windows_mut().get_mut(window_id) {
+            let primary_id = win.selections().primary().id;
+            let _ = win.selections_mut().replace_primary(Selection {
+                id: primary_id,
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+        }
+    }
+}
+
+fn set_cursor_to_row_first_non_blank(
+    editor: &mut Editor,
+    window_id: crate::kernel::ids::WindowId,
+    buffer_id: crate::kernel::ids::BufferId,
+    row: u32,
+) {
+    if let Some(buf) = editor.buffer(buffer_id) {
+        let text_buffer = buf.as_text_buffer();
+        let max_row = text_buffer.row_count().saturating_sub(1);
+        let target_row = row.min(max_row);
+        let row_text = text_buffer.row_text(target_row);
+        let col = row_text
+            .char_indices()
+            .find(|(_, c)| !c.is_whitespace())
+            .map(|(i, _)| i as u32)
+            .unwrap_or(0);
+        let offset = text::Point::new(target_row, col).to_offset(text_buffer);
+        let anchor = text_buffer.anchor_before(offset);
+        if let Some(win) = editor.windows_mut().get_mut(window_id) {
+            let primary_id = win.selections().primary().id;
+            let _ = win.selections_mut().replace_primary(Selection {
+                id: primary_id,
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+        }
+    }
+}
+
+fn execute_normal_keys(editor: &mut Editor, keys_str: &str) -> Outcome {
+    let keymap = vim_input::Keymap::vim_defaults();
+    let mut resolver = vim_input::Resolver::new(vim_input::Mode::Normal);
+
+    let seq = match vim_input::KeySequence::parse(keys_str) {
+        Ok(s) => s,
+        Err(_) => return Outcome::default(),
+    };
+
+    let mut outcome = Outcome::default();
+    for item in seq.items {
+        if let vim_input::KeyPattern::Exact(key) = item {
+            let resolve_outcome = resolver.feed(key, &keymap);
+            if let vim_input::ResolveOutcome::Resolved(resolved) = resolve_outcome {
+                let action_outcome =
+                    editor.execute_with_register(resolved.action, resolved.register);
+
+                outcome.mutated |= action_outcome.mutated;
+                outcome.mode_changed |= action_outcome.mode_changed;
+                outcome.effects.extend(action_outcome.effects);
+                outcome.events.extend(action_outcome.events);
+                outcome.invalidation = match (outcome.invalidation, action_outcome.invalidation) {
+                    (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
+                        RedrawInvalidation::All
+                    }
+                    (
+                        RedrawInvalidation::Range { buffer, range },
+                        RedrawInvalidation::Range {
+                            range: other_range, ..
+                        },
+                    ) => {
+                        use std::cmp::{max, min};
+                        RedrawInvalidation::Range {
+                            buffer,
+                            range: TextRange {
+                                start: min(range.start, other_range.start),
+                                end: max(range.end, other_range.end),
+                            },
+                        }
+                    }
+                    (RedrawInvalidation::Range { buffer, range }, _)
+                    | (_, RedrawInvalidation::Range { buffer, range }) => {
+                        RedrawInvalidation::Range { buffer, range }
+                    }
+                    (RedrawInvalidation::CurrentWindow, _)
+                    | (_, RedrawInvalidation::CurrentWindow) => RedrawInvalidation::CurrentWindow,
+                    (RedrawInvalidation::None, RedrawInvalidation::None) => {
+                        RedrawInvalidation::None
+                    }
+                };
+            }
+        }
+    }
+    outcome
+}
+
+struct SortOptions {
+    reverse: bool,
+    ignore_case: bool,
+    numeric: bool,
+    unique: bool,
+}
+
+fn parse_sort_options(bang: bool, args: &str) -> SortOptions {
+    let mut opts = SortOptions {
+        reverse: bang,
+        ignore_case: false,
+        numeric: false,
+        unique: false,
+    };
+    for c in args.chars() {
+        match c {
+            'i' => opts.ignore_case = true,
+            'n' => opts.numeric = true,
+            'u' => opts.unique = true,
+            '!' => opts.reverse = !opts.reverse,
+            _ => {}
+        }
+    }
+    opts
+}
+
+fn extract_number(s: &str) -> i64 {
+    let mut num_str = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_digit(10) || c == '-' || c == '+' {
+            num_str.push(chars.next().unwrap());
+            break;
+        }
+        chars.next();
+    }
+    while let Some(&c) = chars.peek() {
+        if c.is_digit(10) {
+            num_str.push(chars.next().unwrap());
+        } else {
+            break;
+        }
+    }
+    num_str.parse::<i64>().unwrap_or(0)
+}
+
+fn execute_sort_lines(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    start_line: u32,
+    end_line: u32,
+    opts: SortOptions,
+) -> Outcome {
+    let buffer_id = ctx.buffer;
+    let window_id = ctx.window;
+
+    let buffer = match editor.buffer(buffer_id) {
+        Some(b) => b,
+        None => return Outcome::default(),
+    };
+    let text_buffer = buffer.as_text_buffer();
+    let row_count = text_buffer.row_count();
+    if row_count == 0 {
+        return Outcome::default();
+    }
+    let max_row = row_count.saturating_sub(1);
+    let start_row = start_line.saturating_sub(1).min(max_row);
+    let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+
+    let mut lines: Vec<String> = (start_row..=end_row)
+        .map(|r| text_buffer.row_text(r).to_string())
+        .collect();
+
+    lines.sort_by(|a, b| {
+        let (cmp_a, cmp_b) = if opts.ignore_case {
+            (a.to_lowercase(), b.to_lowercase())
+        } else {
+            (a.clone(), b.clone())
+        };
+
+        let ordering = if opts.numeric {
+            let val_a = extract_number(&cmp_a);
+            let val_b = extract_number(&cmp_b);
+            val_a.cmp(&val_b)
+        } else {
+            cmp_a.cmp(&cmp_b)
+        };
+
+        if opts.reverse {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    });
+
+    if opts.unique {
+        if opts.ignore_case {
+            let mut seen = std::collections::HashSet::new();
+            lines.retain(|item| seen.insert(item.to_lowercase()));
+        } else {
+            lines.dedup();
+        }
+    }
+
+    let (start_offset, end_offset) = {
+        let start = text::Point::new(start_row, 0).to_offset(text_buffer);
+        let end = if end_row + 1 < row_count {
+            text::Point::new(end_row + 1, 0).to_offset(text_buffer)
+        } else {
+            text::Point::new(end_row, text_buffer.line_len(end_row)).to_offset(text_buffer)
+        };
+        (start, end)
+    };
+
+    let original_text: String = text_buffer
+        .text_for_range(start_offset..end_offset)
+        .collect();
+
+    let mut replacement = lines.join("\n");
+    if original_text.ends_with('\n') && !replacement.ends_with('\n') {
+        replacement.push('\n');
+    }
+
+    let selections_before = editor.window(window_id).unwrap().selections().clone();
+    let mutation = {
+        let buffer_mut = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer_mut,
+            transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::replace(
+                        TextRange {
+                            start: ByteOffset(start_offset),
+                            end: ByteOffset(end_offset),
+                        },
+                        replacement,
+                    ),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("sorting lines is always well-formed")
+    };
+
+    Outcome::from_mutation(&mutation)
 }
 
 fn resolve_address(
@@ -526,7 +1303,61 @@ fn resolve_address(
             }
             None
         }
-        Address::Search { .. } => None,
+        Address::Search { pattern, forward } => {
+            let buffer = editor.buffer(ctx.buffer)?;
+            let row_count = buffer.snapshot().row_count();
+            if row_count == 0 {
+                return None;
+            }
+            let ignorecase = editor.global_options().ignorecase;
+            let compile_opts = vim_regex::CompileOptions {
+                editor: vim_regex::EditorOptions {
+                    ignore_case: ignorecase,
+                    smart_case: false,
+                    ..vim_regex::EditorOptions::default()
+                },
+                ..vim_regex::CompileOptions::default()
+            };
+            let pattern_to_use = if pattern.is_empty() {
+                if let Some(reg) = editor
+                    .registers()
+                    .get(crate::kernel::buffer::registers::RegisterName::Search)
+                {
+                    reg.text.clone()
+                } else {
+                    return None;
+                }
+            } else {
+                pattern.clone()
+            };
+            let regex = vim_regex::Regex::compile(&pattern_to_use, compile_opts).ok()?;
+
+            use vim_buffer::TextSearch;
+
+            let start = current_row;
+            if *forward {
+                for i in 1..=row_count {
+                    let r = (start + i) % row_count;
+                    let text = buffer.as_text_buffer().row_text(r);
+                    if !text.find_pattern(&regex).is_empty() {
+                        return Some(r + 1);
+                    }
+                }
+            } else {
+                for i in 1..=row_count {
+                    let r = if start >= i {
+                        start - i
+                    } else {
+                        row_count - (i - start)
+                    };
+                    let text = buffer.as_text_buffer().row_text(r);
+                    if !text.find_pattern(&regex).is_empty() {
+                        return Some(r + 1);
+                    }
+                }
+            }
+            None
+        }
     }
 }
 
@@ -867,4 +1698,170 @@ fn set_option_val(
     outcome.events.push(EditorEvent::OptionSet {
         name: spec.canonical_name,
     });
+}
+
+pub fn get_or_create_quickfix_buffer(editor: &mut Editor) -> vim_buffer::BufferId {
+    if let Some(id) = editor.buffers_mut().list().into_iter().find(|&id| {
+        if let Some(buf) = editor.buffer(id) {
+            if let Some(path) = buf.path() {
+                if path.to_string_lossy() == "*quickfix*" {
+                    return true;
+                }
+            }
+        }
+        false
+    }) {
+        id
+    } else {
+        let (id, _) = editor
+            .buffers_mut()
+            .create_named(&std::path::PathBuf::from("*quickfix*"), "")
+            .unwrap();
+        id
+    }
+}
+
+pub fn get_or_create_location_buffer(
+    editor: &mut Editor,
+    target_window_id: crate::kernel::ids::WindowId,
+) -> vim_buffer::BufferId {
+    let name = format!("*location-list-{}*", target_window_id.get());
+    if let Some(id) = editor.buffers_mut().list().into_iter().find(|&id| {
+        if let Some(buf) = editor.buffer(id) {
+            if let Some(path) = buf.path() {
+                if path.to_string_lossy() == name {
+                    return true;
+                }
+            }
+        }
+        false
+    }) {
+        id
+    } else {
+        let (id, _) = editor
+            .buffers_mut()
+            .create_named(&std::path::PathBuf::from(&name), "")
+            .unwrap();
+        id
+    }
+}
+
+pub fn populate_quickfix_buffer(
+    editor: &mut Editor,
+    buffer_id: vim_buffer::BufferId,
+    items: &[crate::kernel::window::QuickfixItem],
+) {
+    let mut lines = Vec::new();
+    for item in items {
+        lines.push(format!(
+            "{}:{}:{}: {}",
+            item.filename,
+            item.row + 1,
+            item.col + 1,
+            item.text
+        ));
+    }
+    let text = lines.join("\n");
+    let text_len = {
+        let buf = editor.buffer(buffer_id).unwrap();
+        buf.snapshot().len_bytes()
+    };
+    let buffer_mut = editor.buffers_mut().get_mut(buffer_id).unwrap();
+    let _ = transaction::apply(
+        buffer_mut,
+        transaction::EditDescription {
+            origin: vim_buffer::EditOrigin::User,
+            edits: vec![vim_buffer::PlannedEdit {
+                selection: None,
+                edit: vim_buffer::Edit::replace(
+                    vim_buffer::TextRange {
+                        start: vim_buffer::ByteOffset(0),
+                        end: vim_buffer::ByteOffset(text_len),
+                    },
+                    text,
+                ),
+            }],
+            selections: None,
+            join_previous: false,
+        },
+    );
+}
+
+pub fn jump_to_quickfix_item(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    item: &crate::kernel::window::QuickfixItem,
+) -> Outcome {
+    let buffer_id = if let Some(id) = item.buffer {
+        if editor.buffer(id).is_some() {
+            id
+        } else {
+            let path = std::path::PathBuf::from(&item.filename);
+            if let Ok((new_id, _)) = editor
+                .buffers_mut()
+                .load(&path)
+                .or_else(|_| editor.buffers_mut().create_named(&path, ""))
+            {
+                new_id
+            } else {
+                return Outcome::default();
+            }
+        }
+    } else {
+        let path = std::path::PathBuf::from(&item.filename);
+        if let Ok((new_id, _)) = editor
+            .buffers_mut()
+            .load(&path)
+            .or_else(|_| editor.buffers_mut().create_named(&path, ""))
+        {
+            new_id
+        } else {
+            return Outcome::default();
+        }
+    };
+
+    let active_tab = editor.tabs().active();
+    let win_ids = active_tab.layout().window_ids();
+    let mut target_win = ctx.window;
+    if let Some(win) = editor.window(ctx.window) {
+        if win.window_type() != crate::kernel::window::WindowType::Normal {
+            for w in win_ids {
+                if let Some(ow) = editor.window(w) {
+                    if ow.window_type() == crate::kernel::window::WindowType::Normal {
+                        target_win = w;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = editor.buffers_mut().set_current(buffer_id);
+    editor.set_window_buffer(target_win, buffer_id);
+    editor.set_current_window(target_win);
+
+    if let Some(buf) = editor.buffer(buffer_id) {
+        let point = text::Point::new(item.row, item.col);
+        let anchor = buf
+            .as_text_buffer()
+            .anchor_before(point.to_offset(buf.as_text_buffer()));
+        let sel = Selection {
+            id: 0,
+            start: anchor,
+            end: anchor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        };
+        if let Some(win) = editor.windows_mut().get_mut(target_win) {
+            use vim_buffer::SelectionId;
+            *win.selections_mut() =
+                vim_buffer::SelectionSet::from_selections(SelectionId::new(0), vec![sel]).unwrap();
+            win.scroll_to_line(item.row);
+        }
+    }
+
+    Outcome {
+        invalidation: RedrawInvalidation::All,
+        ..Outcome::default()
+    }
 }

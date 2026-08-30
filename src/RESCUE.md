@@ -507,7 +507,7 @@ one compiles and the kernel-purity grep above is clean.
         indent fold methods. Depends on 7.2's motions for fold-create
         ranges.
 
-   7.10. **Ex command breadth** — `kernel/command/ex/mod.rs` plus the
+   7.10. [x] **Ex command breadth** — `kernel/command/ex/mod.rs` plus the
          script-owned Ex table, per "Add a new Ex command" above. Ranges/
          addresses (needs 7.5's marks for `'a,'b`), `:global`/`:vglobal`
          (needs 7.7's search and 7.4's operators), `:normal`, `:sort`,

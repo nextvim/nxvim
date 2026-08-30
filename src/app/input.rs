@@ -15,11 +15,19 @@ use vim_input::{
     SharedMappingStore,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DigraphState {
+    None,
+    First,
+    Second(char),
+}
+
 pub struct InputTranslator {
-    resolver: Resolver,
+    pub(crate) resolver: Resolver,
     keymap: Keymap,
     mappings: Option<SharedMappingStore>,
     mapped_keys: VecDeque<(Key, bool)>,
+    digraph_state: DigraphState,
 }
 
 impl InputTranslator {
@@ -29,6 +37,7 @@ impl InputTranslator {
             keymap: Keymap::vim_defaults(),
             mappings: None,
             mapped_keys: VecDeque::new(),
+            digraph_state: DigraphState::None,
         }
     }
 
@@ -38,6 +47,7 @@ impl InputTranslator {
             keymap: Keymap::vim_defaults(),
             mappings: Some(mappings),
             mapped_keys: VecDeque::new(),
+            digraph_state: DigraphState::None,
         }
     }
 
@@ -47,21 +57,67 @@ impl InputTranslator {
     /// (partial key sequences, unmapped keys, ignored event kinds) — the
     /// caller has nothing to execute yet.
     pub fn translate(&mut self, event: Event) -> Option<ResolvedAction> {
-        self.translate_with_buffer(event, None)
+        let digraphs = crate::script::DigraphStore::new();
+        self.translate_with_buffer(event, None, &digraphs)
     }
 
     pub fn translate_with_buffer(
         &mut self,
         event: Event,
         current_buffer: Option<u64>,
+        digraphs: &crate::script::DigraphStore,
     ) -> Option<ResolvedAction> {
         match event {
             Event::Key(key_event) if key_event.kind != KeyEventKind::Release => {
                 let key = translate_key(key_event)?;
+
+                // Handle digraph state machine when in Insert Mode
+                if self.resolver.mode() == Mode::Insert {
+                    match self.digraph_state {
+                        DigraphState::None => {
+                            if key == Key::new(KeyCode::Char('k'), Modifiers::CONTROL) {
+                                self.digraph_state = DigraphState::First;
+                                return None;
+                            }
+                        }
+                        DigraphState::First => {
+                            if let KeyCode::Char(c) = key.code {
+                                self.digraph_state = DigraphState::Second(c);
+                            } else {
+                                self.digraph_state = DigraphState::None;
+                            }
+                            return None;
+                        }
+                        DigraphState::Second(c1) => {
+                            self.digraph_state = DigraphState::None;
+                            if let KeyCode::Char(c2) = key.code {
+                                let ch = digraphs.lookup(c1, c2);
+                                return Some(ResolvedAction {
+                                    action: vim_input::Action::InsertText(ch.to_string()),
+                                    register: None,
+                                });
+                            } else {
+                                return None;
+                            }
+                        }
+                    }
+                } else {
+                    self.digraph_state = DigraphState::None;
+                }
+
                 let mut action = self.feed_key_with_buffer(key, current_buffer);
+                let mut depth = 0;
                 while action.is_none() && !self.mapped_keys.is_empty() {
+                    if depth > 1000 {
+                        self.mapped_keys.clear();
+                        return Some(ResolvedAction {
+                            action: vim_input::Action::NoOp,
+                            register: None,
+                        });
+                    }
                     if let Some((k, allow)) = self.mapped_keys.pop_front() {
                         let outcome = if allow {
+                            depth += 1;
                             match &self.mappings {
                                 Some(m) => self.resolver.feed_with_mappings(
                                     k,

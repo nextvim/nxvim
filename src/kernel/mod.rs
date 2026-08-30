@@ -48,6 +48,8 @@ pub struct Editor {
     pub(crate) pending_register: Option<char>,
     pub(crate) primed_clipboard_register: Option<String>,
     pub(crate) pending_substitute: Option<command::substitute::PendingSubstitute>,
+    pub(crate) quickfix_list: Vec<window::QuickfixItem>,
+    pub(crate) quickfix_index: usize,
 }
 
 impl Editor {
@@ -113,6 +115,8 @@ impl Editor {
             pending_register: None,
             primed_clipboard_register: None,
             pending_substitute: None,
+            quickfix_list: Vec::new(),
+            quickfix_index: 0,
         }
     }
 
@@ -168,6 +172,10 @@ impl Editor {
 
     pub fn buffer(&self, id: BufferId) -> Option<&Buffer> {
         self.buffers.get(id)
+    }
+
+    pub fn buffer_ids(&self) -> Vec<BufferId> {
+        self.buffers.list()
     }
 
     pub fn window(&self, id: WindowId) -> Option<&Window> {
@@ -255,6 +263,22 @@ impl Editor {
                 win.set_buffer(fallback_id);
             }
         }
+    }
+
+    pub fn quickfix_list(&self) -> &[window::QuickfixItem] {
+        &self.quickfix_list
+    }
+
+    pub fn quickfix_list_mut(&mut self) -> &mut Vec<window::QuickfixItem> {
+        &mut self.quickfix_list
+    }
+
+    pub fn quickfix_index(&self) -> usize {
+        self.quickfix_index
+    }
+
+    pub fn set_quickfix_index(&mut self, index: usize) {
+        self.quickfix_index = index;
     }
 
     pub fn has_pending_substitute(&self) -> bool {
@@ -1031,8 +1055,8 @@ mod tests {
 
         // 1. A range delete deletes exactly those lines
         let mut editor = Editor::new("line1\nline2\nline3\nline4");
-        // range delete `:2,3d`
-        let outcome = editor.submit_command_line("2,3d");
+        // `submit_command_line` is a canonical-only kernel test helper.
+        let outcome = editor.submit_command_line("2,3delete");
         assert_eq!(text_of(&editor), "line1\nline4");
         assert!(outcome.mutated);
         assert_eq!(outcome.events.len(), 1);
@@ -1050,10 +1074,6 @@ mod tests {
 
         // 3. :quit produces Effect::Quit with no mutation
         let mut editor = Editor::new("line1\nline2");
-        let outcome = editor.submit_command_line("q");
-        assert!(!outcome.mutated);
-        assert_eq!(outcome.effects, vec![Effect::Quit]);
-
         let outcome = editor.submit_command_line("quit");
         assert!(!outcome.mutated);
         assert_eq!(outcome.effects, vec![Effect::Quit]);
@@ -1085,7 +1105,7 @@ mod tests {
         // 1. :w <path> on unnamed buffer writes content
         let mut editor = Editor::new("hello write command");
         let outcome =
-            editor.submit_command_line(&format!("w {}", temp_file_path.to_str().unwrap()));
+            editor.submit_command_line(&format!("write {}", temp_file_path.to_str().unwrap()));
 
         assert!(!outcome.mutated);
         assert!(outcome.events.is_empty());
@@ -1110,7 +1130,7 @@ mod tests {
         editor.execute(Action::SetToNormal);
         assert_eq!(text_of(&editor), "new hello write command");
 
-        let outcome = editor.submit_command_line("w");
+        let outcome = editor.submit_command_line("write");
         assert!(!outcome.mutated);
         if let Effect::FileSaved {
             path,
@@ -1132,7 +1152,7 @@ mod tests {
         let bad_path = std::env::temp_dir()
             .join("nonexistent_dir_12345")
             .join("file.txt");
-        let outcome = editor.submit_command_line(&format!("w {}", bad_path.to_str().unwrap()));
+        let outcome = editor.submit_command_line(&format!("write {}", bad_path.to_str().unwrap()));
         assert!(!outcome.mutated);
         assert_eq!(outcome.effects.len(), 1);
         assert!(matches!(outcome.effects[0], Effect::FileSaveFailed { .. }));
@@ -1143,7 +1163,8 @@ mod tests {
             std::env::temp_dir().join(format!("readonly_file_{}.txt", rand::random::<u64>()));
 
         // First write to set a name and create the file
-        let outcome = editor.submit_command_line(&format!("w {}", ro_file_path.to_str().unwrap()));
+        let outcome =
+            editor.submit_command_line(&format!("write {}", ro_file_path.to_str().unwrap()));
         assert!(matches!(outcome.effects[0], Effect::FileSaved { .. }));
 
         // Make the buffer readonly
@@ -1159,8 +1180,8 @@ mod tests {
         editor.execute(Action::InsertText("edited ".to_string()));
         editor.execute(Action::SetToNormal);
 
-        // Bare :w should fail with ReadOnly error
-        let outcome = editor.submit_command_line("w");
+        // Bare :write should fail with ReadOnly error
+        let outcome = editor.submit_command_line("write");
         assert!(!outcome.mutated);
         assert_eq!(outcome.effects.len(), 1);
         if let Effect::FileSaveFailed { message } = &outcome.effects[0] {
@@ -1176,8 +1197,8 @@ mod tests {
             );
         }
 
-        // Forced :w! should succeed
-        let outcome = editor.submit_command_line("w!");
+        // Forced :write! should succeed
+        let outcome = editor.submit_command_line("write!");
         assert!(!outcome.mutated);
         assert_eq!(outcome.effects.len(), 1);
         assert!(matches!(outcome.effects[0], Effect::FileSaved { .. }));
@@ -1197,41 +1218,236 @@ mod tests {
         // 2. test :split and :vsplit
         let outcome = editor.submit_command_line("split");
         let split_win = editor.current_context().window;
-        assert_ne!(initial_win, split_win, "split should create and focus new window");
+        assert_ne!(
+            initial_win, split_win,
+            "split should create and focus new window"
+        );
 
         let outcome = editor.submit_command_line("vsplit");
         let vsplit_win = editor.current_context().window;
-        assert_ne!(split_win, vsplit_win, "vsplit should create and focus new window");
+        assert_ne!(
+            split_win, vsplit_win,
+            "vsplit should create and focus new window"
+        );
 
         // 3. test :new and :vnew
         let outcome = editor.submit_command_line("new");
         let new_win = editor.current_context().window;
         assert_ne!(vsplit_win, new_win);
-        assert_eq!(editor.buffer(editor.window(new_win).unwrap().buffer_id()).unwrap().snapshot().as_inner().text().as_str(), "");
+        assert_eq!(
+            editor
+                .buffer(editor.window(new_win).unwrap().buffer_id())
+                .unwrap()
+                .snapshot()
+                .as_inner()
+                .text()
+                .as_str(),
+            ""
+        );
 
         // 4. test :enew
         editor.submit_command_line("enew");
-        let current_buf = editor.window(editor.current_context().window).unwrap().buffer_id();
-        assert_eq!(editor.buffer(current_buf).unwrap().snapshot().as_inner().text().as_str(), "");
+        let current_buf = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .buffer_id();
+        assert_eq!(
+            editor
+                .buffer(current_buf)
+                .unwrap()
+                .snapshot()
+                .as_inner()
+                .text()
+                .as_str(),
+            ""
+        );
 
         // 5. test :bnext / :bprevious / :buffer
         let list_before = editor.buffers_mut().list();
         assert!(list_before.len() >= 2);
-        
+
         let initial_buf = list_before[0];
-        editor.submit_command_line("b 1");
-        assert_eq!(editor.window(editor.current_context().window).unwrap().buffer_id(), initial_buf);
+        editor.submit_command_line("buffer 1");
+        assert_eq!(
+            editor
+                .window(editor.current_context().window)
+                .unwrap()
+                .buffer_id(),
+            initial_buf
+        );
 
         editor.submit_command_line("bnext");
-        assert_ne!(editor.window(editor.current_context().window).unwrap().buffer_id(), initial_buf);
+        assert_ne!(
+            editor
+                .window(editor.current_context().window)
+                .unwrap()
+                .buffer_id(),
+            initial_buf
+        );
 
         editor.submit_command_line("bprevious");
-        assert_eq!(editor.window(editor.current_context().window).unwrap().buffer_id(), initial_buf);
+        assert_eq!(
+            editor
+                .window(editor.current_context().window)
+                .unwrap()
+                .buffer_id(),
+            initial_buf
+        );
 
         // 6. test :bdelete
-        let current_win_buf = editor.window(editor.current_context().window).unwrap().buffer_id();
+        let current_win_buf = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .buffer_id();
         editor.submit_command_line("bdelete");
-        assert_ne!(editor.window(editor.current_context().window).unwrap().buffer_id(), current_win_buf);
+        assert_ne!(
+            editor
+                .window(editor.current_context().window)
+                .unwrap()
+                .buffer_id(),
+            current_win_buf
+        );
+    }
+
+    #[test]
+    fn ex_commands_breadth_new_test() {
+        // Test 1: normal command execution
+        let mut editor = Editor::new("line 1\nline 2\nline 3");
+        let _win = editor.current_context().window;
+        let buf = editor.current_context().buffer;
+
+        // Execute :normal dw on the first line
+        editor.submit_command_line("1normal dw");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "1\nline 2\nline 3");
+
+        // Test 2: sort command execution
+        let mut editor = Editor::new("c\na\nb");
+        let buf = editor.current_context().buffer;
+        editor.submit_command_line("sort");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "a\nb\nc");
+
+        // Test 2b: sort! (reverse)
+        let mut editor = Editor::new("a\nb\nc");
+        let buf = editor.current_context().buffer;
+        editor.submit_command_line("sort!");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "c\nb\na");
+
+        // Test 2c: sort i (ignore case)
+        let mut editor = Editor::new("B\na");
+        let buf = editor.current_context().buffer;
+        editor.submit_command_line("sort i");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "a\nB");
+
+        // Test 2d: sort n (numeric)
+        let mut editor = Editor::new("10\n2");
+        let buf = editor.current_context().buffer;
+        editor.submit_command_line("sort n");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "2\n10");
+
+        // Test 3: global and vglobal commands
+        let mut editor = Editor::new("apple\nbanana\napricot");
+        let buf = editor.current_context().buffer;
+        // Delete all lines containing "ap"
+        editor.submit_command_line("global/ap/delete");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "banana\n");
+
+        let mut editor = Editor::new("apple\nbanana\napricot");
+        let buf = editor.current_context().buffer;
+        // Delete all lines NOT containing "ap"
+        editor.submit_command_line("vglobal/ap/delete");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "apple\napricot");
+
+        // Test 4: search pattern address resolving
+        let mut editor = Editor::new("hello\nworld\nmatch");
+        let buf = editor.current_context().buffer;
+        editor.submit_command_line("1,/world/delete");
+        let text = editor.buffer(buf).unwrap().snapshot().as_inner().text();
+        assert_eq!(text, "match");
+    }
+
+    #[test]
+    fn window_and_tab_breadth_test() {
+        let mut editor = Editor::new("hello");
+
+        editor.submit_command_line("split");
+        assert_eq!(editor.tabs().active().layout().window_ids().len(), 2);
+
+        editor.submit_command_line("close");
+        assert_eq!(editor.tabs().active().layout().window_ids().len(), 1);
+
+        editor.submit_command_line("vsplit test_file.txt");
+        assert_eq!(editor.tabs().active().layout().window_ids().len(), 2);
+        let current_buf = editor
+            .window(editor.current_context().window)
+            .unwrap()
+            .buffer_id();
+        let path = editor.buffer(current_buf).unwrap().path().unwrap();
+        assert!(path.to_string_lossy().ends_with("test_file.txt"));
+
+        editor.submit_command_line("only");
+        assert_eq!(editor.tabs().active().layout().window_ids().len(), 1);
+
+        editor.submit_command_line("split");
+        let active_win = editor.current_context().window;
+        editor.execute(Action::ResizeUp);
+
+        if let crate::kernel::window::tabpage::Layout::Split { weights, .. } =
+            editor.tabs().active().layout()
+        {
+            assert!(weights[1] > 100 || weights[0] > 100 || weights[1] < 100 || weights[0] < 100);
+        }
+
+        editor.execute(Action::ResizeEqual);
+        if let crate::kernel::window::tabpage::Layout::Split { weights, .. } =
+            editor.tabs().active().layout()
+        {
+            assert_eq!(weights[0], 100);
+            assert_eq!(weights[1], 100);
+        }
+
+        editor.execute(Action::MoveWindowUp);
+        let active_win_now = editor.current_context().window;
+        if let crate::kernel::window::tabpage::Layout::Split { children, .. } =
+            editor.tabs().active().layout()
+        {
+            if let crate::kernel::window::tabpage::Layout::Leaf(first_win) = &children[0] {
+                assert_eq!(*first_win, active_win_now);
+            }
+        }
+
+        let qf_item = window::QuickfixItem {
+            buffer: None,
+            filename: "qf_file.txt".to_string(),
+            row: 1,
+            col: 2,
+            text: "warning message".to_string(),
+        };
+        editor.quickfix_list_mut().push(qf_item);
+
+        editor.submit_command_line("copen");
+        let active_win = editor.current_context().window;
+        assert_eq!(
+            editor.window(active_win).unwrap().window_type(),
+            window::WindowType::Quickfix
+        );
+
+        editor.execute(Action::CarriageReturn);
+
+        let new_win = editor.current_context().window;
+        assert_eq!(
+            editor.window(new_win).unwrap().window_type(),
+            window::WindowType::Normal
+        );
+        let new_buf = editor.window(new_win).unwrap().buffer_id();
+        let path = editor.buffer(new_buf).unwrap().path().unwrap();
+        assert!(path.to_string_lossy().ends_with("qf_file.txt"));
     }
 
     fn visual_sentinel_motion() -> Action {

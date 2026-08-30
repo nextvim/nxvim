@@ -3,10 +3,9 @@
 //! Ported from `src_/app/args.rs` almost verbatim (Rule 5 — reuse proven,
 //! self-contained logic rather than rewrite it): it has no coupling to the
 //! retired `src_/` architecture, just `std::env`/`PathBuf`. Only `paths` is
-//! consumed today (`main.rs` loads each into a buffer via `kernel::Editor::
-//! open`); `pre_config_cmds`/`post_config_cmds`/`scripts` are parsed now so
-//! this file doesn't need to change shape again, but stay unused until a
-//! future milestone wires `--cmd`/`-c`/`+cmd`/`-S` through the script host.
+//! consumed by `main.rs`: paths initialize the editor, while `--cmd`, `-c`,
+//! `+cmd`, and `-S` values are passed to `App::init` in Vim-compatible startup
+//! phases around user configuration loading.
 
 use std::path::PathBuf;
 

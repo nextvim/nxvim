@@ -35,8 +35,12 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
             let text = "\n".repeat(count as usize);
             insert_text(editor, ctx.window, &text)
         }
-        Action::DeleteCharBefore { .. } if editor.mode().is_replace() => {
-            replace_backspace(editor, ctx.window)
+        Action::DeleteCharBefore { count } => {
+            if editor.mode().is_replace() {
+                replace_backspace(editor, ctx.window)
+            } else {
+                super::normal::operators::delete_char_before(editor, ctx.window, count)
+            }
         }
         Action::InsertRegister => {
             let (text, _kind) =
