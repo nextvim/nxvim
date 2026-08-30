@@ -29,6 +29,10 @@ pub fn run(
     let mut pending_invalidations: Vec<RedrawInvalidation> = Vec::new();
     let mut force_full = true;
 
+    let mut last_command_time = std::time::Instant::now();
+    let mut is_idle = false;
+    let mut idle_since: Option<std::time::Instant> = None;
+
     let prompt_opt = if app.editor().mode().is_command() {
         Some(app.prompt().text().to_string())
     } else {
@@ -146,6 +150,7 @@ pub fn run(
         } else {
             None
         };
+
         app.render(
             out,
             &mut render_state,

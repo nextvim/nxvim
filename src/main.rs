@@ -7,10 +7,14 @@ mod app;
 mod kernel;
 mod runtime;
 mod script;
+mod services;
 mod terminal;
 mod view;
 
 use std::io;
+
+#[macro_use]
+extern crate nxvim_log;
 
 fn main() -> io::Result<()> {
     let args = app::args::Args::parse();

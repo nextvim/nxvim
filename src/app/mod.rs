@@ -11,11 +11,13 @@ pub mod persistence;
 pub mod prompt;
 pub mod request;
 pub mod script_host;
-pub mod services;
 pub mod task_dispatcher;
 pub mod view_sync;
 
+use crate::kernel::outcome::RedrawInvalidation;
 use crate::kernel::{Editor, outcome::Outcome};
+use crate::services;
+
 use prompt::CommandPrompt;
 use request::AppRequest;
 use vim_buffer::BufferText;
@@ -81,14 +83,6 @@ impl App {
             services: services::Services::new(),
             source_depth: 0,
         }
-    }
-
-    pub fn shared_keymaps(&self) -> vim_input::SharedMappingStore {
-        self.script.shared_keymaps()
-    }
-
-    pub fn digraphs(&self) -> &crate::script::DigraphStore {
-        self.script.digraphs()
     }
 
     pub fn init(
@@ -165,7 +159,6 @@ impl App {
         if let Err(e) = self.script.execute_with_context(content, Some(ctx)) {
             self.pending_request = Some(AppRequest::ShowMessage(format!("Error: {e}")));
         }
-
         self.dispatch_script_requests()
     }
 
@@ -202,6 +195,14 @@ impl App {
 
     pub fn colorscheme(&self) -> &vim_ui::ColorScheme {
         &self.colorscheme
+    }
+
+    pub fn shared_keymaps(&self) -> vim_input::SharedMappingStore {
+        self.script.shared_keymaps()
+    }
+
+    pub fn digraphs(&self) -> &crate::script::DigraphStore {
+        self.script.digraphs()
     }
 
     /// Queues a save through the application service boundary. The caller does
@@ -269,6 +270,7 @@ impl App {
             force_full,
             &self.colorscheme,
         )?;
+
         view_sync::schedule_display_map_expansions(&mut self.services, render_state);
         Ok(())
     }
@@ -465,6 +467,7 @@ impl App {
                 }
             }
         }
+
         outcome
     }
 

@@ -79,6 +79,7 @@ impl View for TextView {
                         column: text_col as u32,
                     };
                     let mut char_style = span.style;
+
                     for decoration in &decorations {
                         if pos >= decoration.start && pos < decoration.end {
                             char_style = char_style.apply(decoration.style);
@@ -246,8 +247,7 @@ fn draw_hscrollbar(
     }
 
     let width = viewport_width as u32;
-    let thumb_width = ((scrollbar.visible_rows as f32 / scrollbar.total_rows as f32)
-        * width as f32)
+    let thumb_width = ((scrollbar.visible_rows as f32 / scrollbar.total_rows as f32) * width as f32)
         .round()
         .max(1.0) as u32;
     let travel = width.saturating_sub(thumb_width);

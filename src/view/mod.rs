@@ -501,6 +501,7 @@ pub fn render_with_scheme(
             } else {
                 HashMap::new()
             };
+
             let (number, relativenumber, signcolumn, foldcolumn) =
                 if let Some(win) = editor.window(projection.window) {
                     let opts = win.options();

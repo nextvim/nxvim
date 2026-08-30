@@ -1,5 +1,0 @@
-NxVim skeleton
-
-h/j/k/l move the cursor.
-i enters Insert mode, Esc returns to Normal.
-Ctrl-C quits (no :q yet).
