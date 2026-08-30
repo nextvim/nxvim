@@ -422,9 +422,11 @@ one compiles and the kernel-purity grep above is clean.
    context validation, no `ExCommand`.
 5. [x] **Script host** — mappings, user commands, autocommands, all emitting
    `app::request` values only.
-6. [x] **Services** — fs, clipboard-as-effect, background workers, external
+6. [ ] **Services** — fs, clipboard-as-effect, background workers, external
    runtime (timers/jobs/channels) — added only once a concrete feature needs
-   them, per `RESET.md` Phase 7 sequencing.
+   them, per `RESET.md` Phase 7 sequencing. The current `src/` has the
+   clipboard-effect adapter and synchronous file paths, but not the legacy
+   worker/event pipeline; see **Feature recovery from `src_/`** below.
 
 6.5. [x] **Other modes** — Visual, Visual-Line, Visual-Block, Select, and
      Replace, wired through `kernel/mode.rs`'s transition table (already
@@ -791,6 +793,147 @@ At every milestone boundary, re-run the kernel-purity grep and sanity-check
 that no file has become a dumping ground for more than one command family
 (there is no fixed line-count target — the concern is mixing features, not
 size).
+
+## Feature recovery from `src_`
+
+`src_/` is a retired implementation, not an alternate crate member. It is,
+however, the reference for behavior that has not yet been ported into the new
+kernel/app architecture. The following inventory records the major user-visible
+capabilities found during the comparison of the two trees. A feature is not
+considered rescued merely because its crate, option, or command name exists: it
+must be reachable from the active `src/` runtime and have behavioral coverage.
+
+### Recovery priorities
+
+#### 1. Restore the application service and event pipeline
+
+The most important missing capability is the infrastructure that connects
+background work to the main-thread editor safely.
+
+- **Reference:** `src_/app/services.rs`, `src_/app/task_dispatcher.rs`.
+- **Regain:** worker ownership, task IDs/metadata, cancellable tasks, polling in
+  `runtime.rs`, typed result dispatch, revision checks, stale-result rejection,
+  background file saves, and display-map expansion.
+- **Shape:** keep `App` small; split services by concern if needed. Results must
+  return through typed app events/requests and be validated against stable
+  `BufferId`/`WindowId` plus the captured buffer revision before applying them.
+- **Acceptance:** a background result for a deleted window, changed buffer, or
+  newer revision is ignored; current results update state and schedule only the
+  required redraw.
+
+This is the foundation for Tree-sitter, indexing, large-file rendering, and
+background saves. Do not restore the old god-struct or its app-side window
+authority.
+
+#### 2. Restore Tree-sitter and indexer integration
+
+The active command table contains `:treesitter`, `:indexer`, and `:inspect`, but
+command registration alone is not implementation.
+
+- **Reference:** `src_/app/services.rs`, `src_/app/task_dispatcher.rs`,
+  `src_/app/ui.rs`, and `src_/app/config/mod.rs`.
+- **Regain:** parse/index task scheduling, per-buffer analysis state, result
+  application, index queries, and status/inspection output.
+- **Reuse:** `crates/vim-treesitter` and `crates/vim-indexer`; wire them through
+  `app/services.rs` and typed projections rather than importing them into the
+  kernel.
+- **Acceptance:** enabling the feature schedules work, results are visible in
+  the active view/statusline, edits invalidate old analysis, and stale results
+  cannot overwrite newer buffer state.
+
+Semantic Tree-sitter highlighting and completion/popup menus remain separate
+features; do not silently count the command toggle as either one.
+
+#### 3. Restore external runtime resources
+
+- **Reference:** `src_/app/external_runtime.rs`.
+- **Regain:** owned IDs and lifecycle/event handling for timers, jobs,
+  stdout/stderr, channels, and terminal processes, including shutdown and
+  failure events.
+- **Shape:** transport threads may enqueue owned events only; they must never
+  receive live editor, VM, window, or buffer references. Admit events on the
+  application thread and associate them with explicit script/buffer/window/tab
+  owners.
+- **Acceptance:** job/timer/channel events are ordered, failures are surfaced,
+  resources stop accepting requests during shutdown, and callbacks cannot
+  mutate stale editor context.
+
+This is the runtime seam for asynchronous script features, not a reason to put
+process or channel state in `kernel/`.
+
+#### 4. Restore user macro recording and replay
+
+- **Reference:** `src_/app/editor.rs`, `src_/app/services.rs`,
+  `src_/app/input.rs`, and `src_/kernel/state.rs`.
+- **Regain:** `q{register}` recording, `q` termination, register storage,
+  `@{register}` replay, counts, input recording-state synchronization, and
+  macro status messages.
+- **Reuse:** `crates/vim-macros` where its API fits; keep macro ownership in
+  the app/script boundary and macro intent/state in kernel-owned state as
+  appropriate.
+- **Do not confuse:** dot/repeat-last-change recording is not user macro
+  recording and does not satisfy this item.
+- **Acceptance:** recording and replay work through the normal action queue,
+  nested/replayed actions preserve context validation, and macro tests cover
+  counts, missing registers, and termination.
+
+#### 5. Restore the richer view and inspection composition
+
+The new tree retains basic terminal rendering, status/tab display, and
+TextMate decoration, but the retired tree had a more complete composition and
+inspection path.
+
+- **Reference:** `src_/app/ui.rs`, `src_/view/mod.rs`, and
+  `src_/view/textview.rs`.
+- **Regain:** display-map-backed text views, viewport-aware rendering, search
+  and substitution overlays, syntax/Tree-sitter/indexer inspection, and the
+  optional panel/tabline/command-line/statusline composition where it is a
+  deliberate product requirement.
+- **Reuse:** rendering-only pieces from `crates/display_map` and `crates/vim-ui`.
+  Do not restore `vim_ui::Ui`, a second window/tab store, or a second mutable
+  layout authority; kernel `WindowId`/`TabPageId` remain the sole identity.
+- **Acceptance:** inspection reports the active buffer/cursor context, multiple
+  windows showing one buffer render independently, and rendering consumes
+  read-only projections rather than mutating kernel state.
+
+#### 6. Audit registered-but-unimplemented commands
+
+The command registry currently contains several `handler_id: "placeholders"`
+entries, including search forms and grep/quickfix-related commands. Audit each
+entry against the actual active dispatcher rather than assuming the registry is
+the source of behavior.
+
+- **Candidates:** `/`, `?`, `:nohlsearch`, `:vimgrep`, `:vimgrepadd`, and any
+  remaining placeholder entries.
+- `:global`/`:vglobal` and other Ex breadth may already be implemented directly
+  in `kernel/command/ex/mod.rs`; remove stale placeholder metadata when that is
+  the case instead of rewriting working semantics.
+- Every retained command needs a real handler, Vim-compatible error behavior,
+  and a focused test.
+
+### Recovery order and gates
+
+Recover these features in this order:
+
+1. typed services, runtime polling, and revision-aware result dispatch;
+2. display-map/file-save background work;
+3. Tree-sitter and indexer state plus inspection;
+4. external jobs, timers, channels, and terminal resources;
+5. user macro recording/replay;
+6. richer view composition and the placeholder-command audit.
+
+Each recovery slice must:
+
+- preserve the dependency direction and kernel-purity grep above;
+- use existing workspace crates before reimplementing their logic;
+- keep buffer/window/tab identity in the kernel and pass IDs across async
+  boundaries;
+- add focused unit or cell/snapshot tests plus a manual smoke test;
+- leave `cargo check -p nxvim` and, at phase boundaries,
+  `cargo check --workspace` passing.
+
+The recovery is complete only when the active `src/` runtime exercises the
+behavior and `src_/` can be removed without losing one of these capabilities.
 
 ## Definition of done for "rescued"
 

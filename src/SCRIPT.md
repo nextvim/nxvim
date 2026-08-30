@@ -6,7 +6,7 @@ This document compares the scripting engine functionality in the original codeba
 
 ## 1. Comparison & What Was Lost (`src_` vs. `src`)
 
-During the architectural transition from the legacy structure (`src_`) to the current clean structure (`src`), the scripting engine was simplified to a registration-only framework.
+The current `src` implementation has regained the core execution path. It is no longer registration-only, although it is still a deliberately smaller implementation than the legacy runtime and does not yet provide full Vim compatibility.
 
 ### In the Legacy Implementation (`src_`):
 * **Active Script Engine (`ScriptRuntime`):** A fully featured runtime utilizing a worker-channel loop (`mpsc::channel`) to dispatch asynchronous editor commands (`EmittedCommand`) from the VM to the editor controller.
@@ -16,15 +16,18 @@ During the architectural transition from the legacy structure (`src_`) to the cu
 * **Active Execution Interface:** Supported real-time expression lexing, parsing, compiling, and execution via `vim-script` vm.
 
 ### In the Current Implementation (`src`):
-* **Simplified `ScriptHost`:** Relocated to `src/script/mod.rs`, handles only abbreviations, digraphs, user command definitions, and events.
-* **`NullHost`:** Installed as a stub host in `src/app/script_host.rs`, which instantly fails with `E_HOST` for any function invocation.
-* **Execution Interface Removed:** The execution of arbitrary Vim script files and background event loops mapping evaluated state to the kernel are temporarily omitted/stubbed out.
+* **Active `ScriptHost`:** `src/script/mod.rs` lexes, parses, resolves, compiles, and runs scripts through `vim-script`'s VM. It registers host functions, Ex commands, abbreviations, digraphs, user commands, and autocmds. Autocmd registration/matching exists, but application event forwarding is currently partial.
+* **Active `ActiveHost`:** `src/app/script_host.rs` replaces the former stub. It emits app-level requests for messages, Ex commands, and `:source`, and handles the synced buffer-read functions (`bufnr`, `bufexists`, `getline`, `getbufline`, and `getbufoneline`).
+* **State synchronization:** `ScriptHost::update_state` snapshots active buffers and their paths, keyed by changed tick, before script execution. The current tab/window/buffer are also passed as `HostContext` for each execution, but tab/window state is not copied into `EditorState`.
+* **Application integration:** `App` owns the host, drains its `mpsc` request channel, executes kernel Ex commands on the application thread, preserves outcomes, and processes script-triggered source files and the currently wired autocmd events (`TextChanged` and `OptionSet`).
+* **Startup and sourcing:** `App::init` consumes `--cmd`, `-c`, `+cmd`, and `-S`, loads the first supported nxvim config file, and `:source` reads and executes a script with a recursion limit.
+* **Important distinction:** The current runtime executes synchronously via `Scheduler::run_until_complete`; the legacy `src_` runtime's command channel is retained as a reference design, not reproduced as a background worker.
 
 ---
 
 ## 2. Scripting Engine Commands
 
-Below is the list of all command specs that were registered in the scripting engine, mapping Ex commands to editor execution paths (found in `src_/script/commands/registry.rs`):
+Below is the command-spec inventory currently registered by `src/script/commands.rs`. The registry is broader than the kernel executor: some entries are intentionally placeholders or are handled by the application/script host (notably `source`, `colorscheme`, abbreviations, and user commands).
 
 | Command Name | Abbreviation | Accepts Bang (`!`) | Accepts Range | Accepts Count | Accepts Register | Purpose / Action |
 |:---|:---|:---|:---|:---|:---|:---|
@@ -66,7 +69,7 @@ Below is the list of all command specs that were registered in the scripting eng
 | `indexer` | `ind` | No | No | No | No | Toggle code symbol indexing |
 | `inspect` | `ins` | No | No | No | No | Toggle internal state inspector |
 
-*Placeholders/Stubs:* `pwd`, `cd`, `chdir`, `lcd`, `tcd`, `checktime`, `copy`, `move`, `join`, `print`, `change`, `global` (`g`), `vglobal` (`v`), `vimgrep`, `vimgrepadd`.
+*Partially implemented or host/application-owned entries:* `pwd`, `cd`, `chdir`, `lcd`, `tcd`, `checktime`, `copy`, `move`, `join`, `print`, `change`, `global` (`g`), `vglobal` (`v`), `vimgrep`, `vimgrepadd`, `source`, the abbreviation commands, and user-command registration. Verify each command's handler before treating registry presence as complete kernel behavior. The current registry also includes `read` and `file`, which are not listed in the abbreviated table above.
 
 ---
 
@@ -108,36 +111,36 @@ Within the Vim environment, scripts are structured and loaded in several ways:
 
 ---
 
-## 4. Implementation Roadmap (Checklist to Regain Scripting)
+## 4. Implementation Roadmap (Verified Status)
 
-To restore active scripting engine functionality while deferring the migration of existing direct command handling, complete the following items:
+The following status was checked against the current `src` tree and the legacy reference under `src_`.
 
-- [x] **A. Re-establish active Host Execution Bridge**
-  - Replace `NullHost` in [script_host.rs](file:///home/iceman/Developer/rust/nextvim/nxvim/src/app/script_host.rs) with a real script host implementation matching the legacy `EditorHost` capabilities control.
-  - Implement function execution capability to resolve standard host queries.
+- [x] **A. Active host execution bridge**
+  - `src/app/script_host.rs` contains `ActiveHost`, grants are configured in `src/script/mod.rs`, and host calls emit typed `AppRequest`s instead of mutating the kernel directly.
+  - This is a synchronous scheduler on the app thread, not the legacy background worker loop.
 
-- [x] **B. Implement Editor State Synchronization**
-  - Implement a mechanism (equivalent to legacy `update_state` in `src_`) to copy text buffer snapshots, active window focus, and tab states from the kernel [EditorModel](file:///home/iceman/Developer/rust/nextvim/nxvim/src/model/mod.rs) into the script host before execution.
+- [~] **B. Editor state synchronization (buffer-complete, layout-incomplete)**
+  - `ScriptHost::update_state` copies active buffer snapshots, changed ticks, names, and the current buffer.
+  - The current tab/window/buffer are supplied as per-execution `HostContext`; tab/window collections and cursor positions are not represented in the synchronized `EditorState`.
 
-- [x] **C. Wire Command Evaluation Channel**
-  - Set up an asynchronous channel (`mpsc::channel` or event loop) to receive `EmittedCommand` objects from the script runtime.
-  - Integrate this channel with the main application tick/event dispatcher in `src/app/mod.rs` to execute evaluated commands against the kernel.
+- [x] **C. Command evaluation channel**
+  - `ActiveHost` emits `AppRequest`s over `mpsc`; `App::dispatch_script_requests` drains them and admits Ex commands on the app thread.
+  - Kernel outcomes are merged and returned for redraw/event processing.
 
-- [x] **D. Implement Sourcing and CLI Argument Parsing Hooks**
-  - Add support for the `:source {file}` command to read and execute script files line-by-line using the parser.
-  - Hook the parsed `pre_config_cmds`, `post_config_cmds`, and `scripts` arrays in [args.rs](file:///home/iceman/Developer/rust/nextvim/nxvim/src/app/args.rs) into the engine's initialization pipeline on startup (handling `--cmd`, `-c`, and `-S`).
+- [x] **D. Sourcing and CLI argument hooks**
+  - `Args` parses `--cmd`, `-c`, `+cmd`, and `-S`; `App::init` runs the startup phases and supported nxvim config files.
+  - `source` is registered and reads script content through the same parser/VM path, with a recursion limit.
 
-- [x] **E. Register and Dispatch Simple Kernel Ex Commands**
-  - Register the directly implemented commands in `kernel/command/ex/mod.rs` as scripting `CommandSpec` definitions.
-  - Route `:` command-line input through Vim-script parsing, command registration/resolution, the active host channel, and finally kernel execution.
-  - Keep search command-lines on their dedicated kernel path and preserve command outcomes for redraw/event processing.
+- [x] **E. Script-driven Ex dispatch**
+  - Ex input is parsed through `ScriptHost`, canonicalized against the command registry, and dispatched to registration handlers or `kernel::command::ex::admit_command`.
+  - Search input remains on its dedicated kernel path.
 
-- [ ] **F. Re-register Core Synced Builtin Functions**
-  - Migrate and re-enable buffer read sync functions from `src_/script/functions/buffer.rs` (`bufnr`, `bufexists`, `getline`, `getbufline`, `getbufoneline`).
+- [x] **F. Core synced buffer-read builtins**
+  - `bufnr`, `bufexists`, `getline`, `getbufline`, and `getbufoneline` are registered in `src/script/mod.rs` and implemented in `src/app/script_host.rs`, using synchronized snapshots.
 
-- [ ] **G. (DEFERRED) Migrate Legacy Ex Command Registry**
-  - Continue using direct command handling in the application controller for core commands.
-  - Later, progressively migrate command resolution from the controller handlers to the script host registry.
+- [ ] **G. Full legacy Ex command migration and Vim compatibility**
+  - Core commands still use direct application/kernel handlers after registry resolution.
+  - Remaining work includes broader builtin coverage, complete option/editor/window/register APIs, full autocmd event forwarding/context propagation, runtimepath/plugin/autoload behavior, and true asynchronous script tasks/events.
 
 ---
 
@@ -147,8 +150,8 @@ All scripting engine code modifications must strictly adhere to the non-negotiab
 
 * **Rule 1 — No Rust anti-patterns:** No `unsafe`, `static mut`, thread-local editor state, broad `Mutex`/`RwLock` used to share subsystem ownership, or god structs.
 * **Rule 2 — Cheap and boring feature additions:** New functions or options must have one obvious place to live, and adding them must not require editing unrelated files.
-* **Rule 3 — Locality (No cross-directory scavenger hunts):** Script engine code lives strictly within `src/script/` and `src/app/script_host.rs`.
-* **Rule 4 — Buffer/Window/Tab ownership discipline:** A buffer is UI-agnostic; a window is a view into a buffer; options/history are correctly scoped. Mutation is decoupled from rendering. The scripting runtime executes scripts and fires events by emitting app-level requests, never by mutating the kernel directly.
+* **Rule 3 — Locality (No cross-directory scavenger hunts):** Script engine code lives within `src/script/` and `src/app/script_host.rs`; app startup/request plumbing is the narrow integration seam.
+* **Rule 4 — Buffer/Window/Tab ownership discipline:** A buffer is UI-agnostic; a window is a view into a buffer; options/history are correctly scoped. Mutation is decoupled from rendering. The scripting host emits app-level requests for kernel mutations, while synced reads use snapshots.
 * **Rule 5 — Reuse before rewriting:** Leverage types and helpers from `crates/` or port math/logic from `src_/` instead of rewriting it.
 
 

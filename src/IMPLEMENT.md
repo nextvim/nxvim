@@ -157,3 +157,39 @@ Template to copy:
 - [ ] Undo history persists and restores, allowing undoing changes from a previous session.
 - [ ] Swap files are created on edit, cleaned up on safe quit, and offer recovery prompt on crash/unsafe exit.
 - [ ] Manual smoke test passes in a live terminal.
+
+---
+
+# Services and asynchronous result pipeline (Feature recovery 1)
+
+> Restore the application service and event pipeline that connects background work to the main-thread editor safely.
+
+## Checklist
+
+- [ ] `app/services.rs`: Define focused service/task ownership types for background workers, task IDs, task metadata, task ownership (`BufferId`/`WindowId`), task kind, and captured buffer revision; do not recreate the legacy god-struct.
+- [ ] `app/services.rs`: Implement worker registration, task spawning, cancellation, result collection, and typed decoding for display-map, file, Tree-sitter, and indexer work using the existing `background-worker` crate and related workspace crates.
+- [ ] `app/task_dispatcher.rs`: Add a typed dispatcher for service results that applies only results whose buffer/window IDs and captured revisions still match the active kernel state.
+- [ ] `app/task_dispatcher.rs`: Ignore results for deleted windows/buffers and stale revisions; ensure rejected results do not clear pending state, modified state, or publish stale status messages.
+- [ ] `app/services.rs` / `app/lifecycle.rs`: Wire background file saves while preserving synchronous save behavior and ensuring a newer edit cannot be overwritten or marked clean by an older save completion.
+- [ ] `app/services.rs` / `view/` / `app/view_sync.rs`: Wire display-map expansion requests and apply current expansions at the redraw boundary without introducing a second window/tab identity authority.
+- [ ] `runtime.rs`: Poll services alongside terminal input, drain typed results on the application thread, sequence result application before redraw, and avoid category-specific semantic handling in the event loop.
+- [ ] `app/mod.rs`: Keep service orchestration behind the application boundary; kernel commands may emit typed effects/events but must not import workers, filesystem, UI, or clipboard implementations.
+- [ ] Unit tests: Verify task ownership, cancellation, result decoding, revision matching, stale-result rejection, deleted-window/buffer rejection, and background-save completion behavior.
+- [ ] Integration tests: Verify a current display-map or file result updates the active application state and requests the minimum required redraw.
+- [ ] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+- [ ] Run `cargo check -p nxvim` to verify the active crate compiles.
+- [ ] Run `cargo check --workspace` to verify all workspace crates compile.
+- [ ] Manual smoke test: edit a buffer while background work is pending, confirm current results appear, and confirm stale results are ignored without disrupting input or redraw.
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [ ] `App` contains focused service ownership rather than a legacy god-struct or duplicate window/tab store.
+- [ ] Background tasks are cancellable or safely superseded, and every result carries enough stable ownership/revision data for validation.
+- [ ] Results for deleted objects or older revisions are rejected without mutating editor state or producing stale redraw/status effects.
+- [ ] Current display-map and file-save results are applied on the application thread and trigger only the necessary redraw.
+- [ ] Background save completion cannot mark a buffer clean after a newer edit.
+- [ ] Unit/integration tests cover both accepted and rejected results.
+- [ ] Manual smoke test passes in a live terminal.
