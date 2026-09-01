@@ -13,6 +13,15 @@ use crate::app::{App, input::InputTranslator};
 use crate::kernel::outcome::RedrawInvalidation;
 use crate::view::RenderState;
 
+/// Time without input before we consider the editor "idle".
+const IDLE_THRESHOLD_MS: u64 = 200;
+/// Interval between idle expansion steps (each adds `IDLE_EXPANSION_STEP` rows).
+const IDLE_EXPANSION_INTERVAL_MS: u64 = 200;
+/// Extra rows to pre-compute per idle expansion step.
+const IDLE_EXPANSION_STEP: u32 = 8;
+/// Maximum extra rows to pre-compute for display-map / highlighter.
+const MAX_IDLE_EXPANSION: u32 = 64;
+
 pub fn run(
     app: &mut App,
     session: &crate::terminal::TerminalSession,
@@ -56,7 +65,26 @@ pub fn run(
             if service_outcome.invalidation != RedrawInvalidation::None {
                 pending_invalidations.push(service_outcome.invalidation);
             }
-            if !pending_invalidations.is_empty() || render_state.advance_idle() {
+            // Track idle state — start idling after a quiet period, then
+            // gradually expand the display-map and highlighter prefetch range.
+            if !is_idle && last_command_time.elapsed() >= Duration::from_millis(IDLE_THRESHOLD_MS) {
+                is_idle = true;
+                idle_since = Some(std::time::Instant::now());
+            }
+            if is_idle
+                && idle_since.map_or(false, |since| {
+                    since.elapsed() >= Duration::from_millis(IDLE_EXPANSION_INTERVAL_MS)
+                })
+            {
+                idle_since = Some(std::time::Instant::now());
+                if render_state.idle_expansion < MAX_IDLE_EXPANSION {
+                    render_state.idle_expansion =
+                        (render_state.idle_expansion + IDLE_EXPANSION_STEP).min(MAX_IDLE_EXPANSION);
+                    app.schedule_display_map_expansions(&mut render_state);
+                }
+            }
+
+            if !pending_invalidations.is_empty() {
                 let prompt_opt = if app.editor().mode().is_command() {
                     Some(app.prompt().text().to_string())
                 } else {
@@ -75,7 +103,12 @@ pub fn run(
             }
             continue;
         }
-        render_state.note_interaction();
+
+        // Interaction — reset idle tracking and highlighter prefetch range.
+        is_idle = false;
+        idle_since = None;
+        render_state.idle_expansion = 0;
+        last_command_time = std::time::Instant::now();
         let ev = event::read()?;
         status = String::new();
 

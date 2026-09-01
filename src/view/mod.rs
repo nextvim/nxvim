@@ -40,22 +40,28 @@ pub struct WindowRenderCache {
     pub built_count: u32,
 }
 
-const IDLE_POLLS_PER_STEP: u8 = 4;
-const IDLE_EXPANSION_STEP: u32 = 8;
-const MAX_IDLE_EXPANSION: u32 = 64;
-
 pub struct DisplayMapRequest {
     pub window: WindowId,
     pub buffer: BufferId,
     pub input: display_map::DisplayMapExpansionInput,
 }
 
-#[derive(Default)]
 pub struct RenderState {
     pub windows: HashMap<WindowId, WindowRenderCache>,
     renderer: Option<BufferedRenderer>,
-    idle_polls: u8,
-    idle_expansion: u32,
+    /// Extra rows beyond the viewport to pre-compute highlights for.
+    /// Driven by the runtime's idle polling — grows while idle, resets on interaction.
+    pub idle_expansion: u32,
+}
+
+impl RenderState {
+    pub fn new() -> Self {
+        Self {
+            windows: HashMap::new(),
+            renderer: None,
+            idle_expansion: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,20 +72,6 @@ pub enum ExpansionApplication {
 }
 
 impl RenderState {
-    pub fn new() -> Self {
-        Self {
-            windows: HashMap::new(),
-            renderer: None,
-            idle_polls: 0,
-            idle_expansion: 0,
-        }
-    }
-
-    pub fn note_interaction(&mut self) {
-        self.idle_polls = 0;
-        self.idle_expansion = 0;
-    }
-
     /// Applies completed wrapping work to the authoritative map already owned
     /// by a window. Generation/config mismatches are stale and discarded.
     pub fn apply_display_map_expansion(
@@ -149,21 +141,6 @@ impl RenderState {
                 })
             })
             .collect()
-    }
-
-    /// Advances bounded idle prefetch and reports whether an idle frame is
-    /// needed. Called once per 50 ms terminal poll timeout.
-    pub fn advance_idle(&mut self) -> bool {
-        if self.idle_expansion >= MAX_IDLE_EXPANSION {
-            return false;
-        }
-        self.idle_polls = self.idle_polls.saturating_add(1);
-        if self.idle_polls < IDLE_POLLS_PER_STEP {
-            return false;
-        }
-        self.idle_polls = 0;
-        self.idle_expansion = (self.idle_expansion + IDLE_EXPANSION_STEP).min(MAX_IDLE_EXPANSION);
-        true
     }
 }
 
@@ -316,12 +293,6 @@ pub fn render_with_scheme(
             rect
         };
 
-        let wrap_width = if projection.wrap {
-            Some(view_rect.width as u32)
-        } else {
-            None
-        };
-
         let scroll_top = projection.scroll_top;
         let viewport_height = view_rect.height as u32;
         let margin = 128;
@@ -330,6 +301,33 @@ pub fn render_with_scheme(
             .saturating_add(viewport_height)
             .saturating_add(margin);
         let row_count = projection.snapshot.row_count();
+
+        // Compute gutter width so that horizontal scroll and line wrap account for it
+        let number_width = (row_count.max(1) as f64).log10().ceil().max(4.0) as usize;
+        let gutter_width: u16 = if let Some(win) = editor.window(projection.window) {
+            let opts = win.options();
+            let mut w: u16 = 0;
+            if opts.foldcolumn > 0 {
+                w = w.saturating_add(opts.foldcolumn as u16);
+            }
+            if opts.signcolumn == "yes" {
+                w = w.saturating_add(2);
+            }
+            if opts.number || opts.relativenumber {
+                w = w.saturating_add(number_width as u16 + 1);
+            }
+            w
+        } else {
+            0
+        };
+        let effective_text_width = view_rect.width.saturating_sub(gutter_width);
+
+        let wrap_width = if projection.wrap {
+            Some(effective_text_width as u32)
+        } else {
+            None
+        };
+
         let initial_window = (start_row.min(row_count))..(end_row.min(row_count));
 
         // Get or create cache entry
@@ -372,7 +370,7 @@ pub fn render_with_scheme(
 
         if let Some(win) = editor.windows_mut().get_mut(projection.window) {
             win.set_viewport_height(view_rect.height as u32);
-            win.set_viewport_width(view_rect.width as u32);
+            win.set_viewport_width(effective_text_width as u32);
         }
 
         let rebuild = should_rebuild(
@@ -883,7 +881,7 @@ pub fn render_with_scheme(
 
             let cursor_visible = projection.is_current
                 && cursor_display_pos.row < view_rect.height as u32
-                && cursor_display_pos.column < view_rect.width as u32;
+                && cursor_display_pos.column < effective_text_width as u32;
 
             let cursor = Some(TextCursor {
                 position: cursor_display_pos,
@@ -947,7 +945,7 @@ pub fn render_with_scheme(
                         max_width = len;
                     }
                 }
-                if max_width > view_rect.width as u32 {
+                if max_width > effective_text_width as u32 {
                     let track_style =
                         scheme
                             .get_style("ScrollbarTrack")
@@ -969,7 +967,7 @@ pub fn render_with_scheme(
                     let cursor_style = scheme.get_style("ScrollbarCursor").cloned();
 
                     let total_cols = max_width;
-                    let visible_cols_clamped = (view_rect.width as u32).min(total_cols);
+                    let visible_cols_clamped = (effective_text_width as u32).min(total_cols);
                     let first_visible_col_clamped =
                         (projection.leftcol).min(total_cols.saturating_sub(visible_cols_clamped));
                     let cursor_col_clamped =

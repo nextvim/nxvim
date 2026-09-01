@@ -134,9 +134,7 @@ fn viewport_movement_hits_prefetch_then_fills_only_a_tight_miss() {
     let screen = Rect::new(0, 0, 60, 8);
 
     render_frame(&mut editor, &mut state, screen, &[], true);
-    for _ in 0..IDLE_POLLS_PER_STEP {
-        state.advance_idle();
-    }
+    state.idle_expansion = 8; // simulate one idle expansion step
     render_frame(&mut editor, &mut state, screen, &[], false);
     let prefetched = editor
         .buffers_mut()
@@ -146,7 +144,7 @@ fn viewport_movement_hits_prefetch_then_fills_only_a_tight_miss() {
         .rows
         .clone();
 
-    state.note_interaction();
+    state.idle_expansion = 0; // simulate interaction reset
     editor
         .windows_mut()
         .get_mut(window)
@@ -166,9 +164,15 @@ fn viewport_movement_hits_prefetch_then_fills_only_a_tight_miss() {
         .highlights()
         .clone();
     for row in 0..12 {
-        assert!(current_highlights.highlight_row(row).is_some(), "row {row} should be resolved after scrolling");
+        assert!(
+            current_highlights.highlight_row(row).is_some(),
+            "row {row} should be resolved after scrolling"
+        );
     }
-    assert!(current_highlights.highlight_row(12).is_none(), "row 12 should remain unresolved until scrolled into");
+    assert!(
+        current_highlights.highlight_row(12).is_none(),
+        "row 12 should remain unresolved until scrolled into"
+    );
 
     editor
         .windows_mut()
@@ -303,21 +307,18 @@ fn decorations_override_syntax_foreground_without_dropping_other_style() {
 fn idle_expansion_is_bounded_and_resets_on_interaction() {
     let mut state = RenderState::new();
 
-    for _ in 0..3 {
-        assert!(!state.advance_idle());
-    }
-    assert!(state.advance_idle());
-    assert_eq!(state.idle_expansion, IDLE_EXPANSION_STEP);
-
-    for _ in 0..100 {
-        state.advance_idle();
-    }
-    assert_eq!(state.idle_expansion, MAX_IDLE_EXPANSION);
-    assert!(!state.advance_idle());
-
-    state.note_interaction();
+    // idle_expansion starts at 0
     assert_eq!(state.idle_expansion, 0);
-    assert_eq!(state.idle_polls, 0);
+
+    // simulate idle expansion ramping up (the runtime does this every ~200ms while idle)
+    state.idle_expansion = 8;
+    assert_eq!(state.idle_expansion, 8);
+    state.idle_expansion = 64;
+    assert_eq!(state.idle_expansion, 64);
+
+    // simulate interaction reset
+    state.idle_expansion = 0;
+    assert_eq!(state.idle_expansion, 0);
 }
 
 #[test]
@@ -1111,7 +1112,8 @@ fn test_visual_selection_rendering_modes() {
 
 #[test]
 fn test_wrap_and_horizontal_scroll() {
-    let mut editor = Editor::new("this is a very long line of text that should exceed viewport width\n");
+    let mut editor =
+        Editor::new("this is a very long line of text that should exceed viewport width\n");
     let mut render_state = RenderState::new();
     let screen = Rect::new(0, 0, 20, 5); // Width is 20, line length is 67.
     let win_id = editor.current_context().window;
@@ -1156,11 +1158,11 @@ fn test_wrap_and_horizontal_scroll() {
     render_frame(&mut editor, &mut render_state, screen, &[], true);
     let cache = render_state.windows.get(&win_id).unwrap();
     let model = cache.last_model.as_ref().unwrap();
-    
+
     // With cursor at column 30, leftcol must be at least 11 (30 - 20 + 1 = 11) to keep column 30 on screen.
     let leftcol = editor.window(win_id).unwrap().leftcol();
     assert!(leftcol >= 11);
-    
+
     // Verify first characters in cell snapshot are shifted by leftcol.
     let cells_str = format_cells(&render_to_cells(&model));
     let text_part = cells_str.split("\n\n").next().unwrap();

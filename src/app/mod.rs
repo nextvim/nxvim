@@ -271,8 +271,17 @@ impl App {
             &self.colorscheme,
         )?;
 
-        view_sync::schedule_display_map_expansions(&mut self.services, render_state);
         Ok(())
+    }
+
+    /// Spawn display-map expansion tasks for windows that have missing rows.
+    /// Intended to be called from the runtime idle poll loop, gated by
+    /// `RenderState::advance_idle()`.
+    pub(crate) fn schedule_display_map_expansions(
+        &mut self,
+        render_state: &mut crate::view::RenderState,
+    ) {
+        view_sync::schedule_display_map_expansions(&mut self.services, render_state);
     }
 
     pub fn prompt(&self) -> &CommandPrompt {
