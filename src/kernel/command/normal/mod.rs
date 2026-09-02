@@ -2,6 +2,7 @@
 //! (`RESCUE.md` Rule 3) — `motions`/`operators` today, `text_objects`/... as
 //! later milestones add them.
 
+pub mod folds;
 pub mod marks_and_jumps;
 pub mod motions;
 pub mod operators;
@@ -27,6 +28,9 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         }
         Action::MoveUp { count, select } => motions::move_up(editor, ctx.window, count, select),
         Action::MoveDown { count, select } => motions::move_down(editor, ctx.window, count, select),
+        action @ (Action::Fold { .. } | Action::Unfold { .. }) => {
+            folds::dispatch(editor, ctx.window, action)
+        }
         Action::SetToInsert => super::insert::enter(editor),
         Action::SetToReplace => super::insert::enter_replace(editor, ctx.window, false),
         Action::SetToVirtualReplace => super::insert::enter_replace(editor, ctx.window, true),

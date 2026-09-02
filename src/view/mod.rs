@@ -418,6 +418,9 @@ pub fn render_with_scheme(
         }
 
         cache.display_map.set_wrap_width(wrap_width);
+        cache
+            .display_map
+            .fold(projection.folds.clone(), projection.snapshot.clone());
 
         if let Some(win) = editor.windows_mut().get_mut(projection.window) {
             win.set_viewport_height(view_rect.height as u32);
@@ -1031,7 +1034,7 @@ pub fn render_with_scheme(
                 None
             };
 
-            let model = TextViewModel {
+            let mut model = TextViewModel {
                 viewport_width: view_rect.width,
                 viewport_height: view_rect.height,
                 rows,
@@ -1041,6 +1044,7 @@ pub fn render_with_scheme(
                 hscrollbar,
                 default_style: Style::default(),
             };
+            model.bake_decorations();
 
             debug_assert!(
                 model.validate().is_ok(),

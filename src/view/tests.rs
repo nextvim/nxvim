@@ -14,8 +14,10 @@ use vim_ui::renderer::ScreenBuffer;
 fn render_to_cells(model: &TextViewModel) -> ScreenBuffer {
     let mut renderer = BufferedRenderer::new(model.viewport_width, model.viewport_height);
     let mut text_view = TextView::new();
-    text_view.set_model(model.clone());
+    let mut model = model.clone();
+    model.bake_decorations();
     let rect = Rect::new(0, 0, model.viewport_width, model.viewport_height);
+    text_view.set_model(model);
     text_view
         .draw(rect, &mut renderer)
         .expect("drawing into an in-memory buffer never fails");
@@ -320,11 +322,13 @@ fn rust_syntax_reaches_the_cell_grid_for_a_real_viewport() {
     render_frame(&mut editor, &mut state, Rect::new(0, 0, 40, 8), &[], true);
 
     let model = state.windows[&window].last_model.as_ref().unwrap();
+    assert!(model.decorations.is_empty());
     assert!(
         model
-            .decorations
+            .rows
             .iter()
-            .any(|decoration| decoration.priority == 0)
+            .flat_map(|row| &row.spans)
+            .any(|span| span.style.fg.is_some())
     );
     let cells = render_to_cells(model);
     assert_ne!(cells.cells[0].fg, Color::Reset);
@@ -426,6 +430,7 @@ fn test_view_model_validation_and_caching() {
         buffer: buf_id,
         snapshot: snapshot.into_inner(), // Get the inner text::BufferSnapshot
         selections: selections.clone(),
+        folds: Vec::new(),
         is_current: true,
         scroll_top: 0,
         leftcol: 0,
@@ -491,6 +496,7 @@ fn test_view_model_validation_and_caching() {
         buffer: new_buf_id,
         snapshot: new_buffer.snapshot().into_inner(),
         selections: selections.clone(),
+        folds: Vec::new(),
         is_current: true,
         scroll_top: 0,
         leftcol: 0,
@@ -560,6 +566,7 @@ fn empty_projection(window: WindowId, buffer: BufferId, is_current: bool) -> Win
         buffer,
         snapshot: buf.snapshot().into_inner(),
         selections,
+        folds: Vec::new(),
         is_current,
         scroll_top: 0,
         leftcol: 0,
@@ -1095,19 +1102,13 @@ fn test_visual_selection_rendering_modes() {
         });
 
         render_frame(&mut editor, &mut render_state, screen, &[], true);
-        let cache = render_state.windows.get(&win_id).unwrap();
-        let model = cache.last_model.as_ref().unwrap();
-        let selections = model
-            .decorations
-            .iter()
-            .filter(|decoration| decoration.priority == 100)
-            .collect::<Vec<_>>();
-        assert_eq!(selections.len(), 1);
-        let dec = selections[0];
-        assert_eq!(dec.start.row, 0);
-        assert_eq!(dec.start.column, 2);
-        assert_eq!(dec.end.row, 0);
-        assert_eq!(dec.end.column, 7);
+        let model = render_state.windows[&win_id].last_model.as_ref().unwrap();
+        let cells = render_to_cells(model);
+        assert_eq!(cells.cells[1].bg, Color::Reset);
+        for column in 2..7 {
+            assert_ne!(cells.cells[column].bg, Color::Reset);
+        }
+        assert_eq!(cells.cells[7].bg, Color::Reset);
     }
 
     // 2. Line-wise Visual Mode: select whole lines 1 & 2
@@ -1126,20 +1127,17 @@ fn test_visual_selection_rendering_modes() {
         });
 
         render_frame(&mut editor, &mut render_state, screen, &[], true);
-        let cache = render_state.windows.get(&win_id).unwrap();
-        let model = cache.last_model.as_ref().unwrap();
-        let selections = model
-            .decorations
-            .iter()
-            .filter(|decoration| decoration.priority == 100)
-            .collect::<Vec<_>>();
-        assert_eq!(selections.len(), 1);
-        let dec = selections[0];
-        assert_eq!(dec.start.row, 0);
-        assert_eq!(dec.start.column, 0);
-        assert_eq!(dec.end.row, 1);
-        // Line-wise selection spans to end of line 2 (which is 8 characters long: "line two")
-        assert_eq!(dec.end.column, 8);
+        let model = render_state.windows[&win_id].last_model.as_ref().unwrap();
+        let cells = render_to_cells(model);
+        for row in 0..2 {
+            for column in 0..8 {
+                assert_ne!(
+                    cells.cells[row * screen.width as usize + column].bg,
+                    Color::Reset
+                );
+            }
+        }
+        assert_eq!(cells.cells[2 * screen.width as usize].bg, Color::Reset);
     }
 
     // 3. Block-wise Visual Mode: select columns 1 to 3 on lines 1 & 2
@@ -1166,26 +1164,21 @@ fn test_visual_selection_rendering_modes() {
         });
 
         render_frame(&mut editor, &mut render_state, screen, &[], true);
-        let cache = render_state.windows.get(&win_id).unwrap();
-        let model = cache.last_model.as_ref().unwrap();
-        // Block-wise mode should produce a selection decoration on each line.
-        let selections = model
-            .decorations
-            .iter()
-            .filter(|decoration| decoration.priority == 100)
-            .collect::<Vec<_>>();
-        assert_eq!(selections.len(), 2);
-        let dec1 = selections[0];
-        let dec2 = selections[1];
-        assert_eq!(dec1.start.row, 0);
-        assert_eq!(dec1.start.column, 1);
-        assert_eq!(dec1.end.row, 0);
-        assert_eq!(dec1.end.column, 4);
-
-        assert_eq!(dec2.start.row, 1);
-        assert_eq!(dec2.start.column, 1);
-        assert_eq!(dec2.end.row, 1);
-        assert_eq!(dec2.end.column, 4);
+        let model = render_state.windows[&win_id].last_model.as_ref().unwrap();
+        let cells = render_to_cells(model);
+        for row in 0..2 {
+            assert_eq!(cells.cells[row * screen.width as usize].bg, Color::Reset);
+            for column in 1..4 {
+                assert_ne!(
+                    cells.cells[row * screen.width as usize + column].bg,
+                    Color::Reset
+                );
+            }
+            assert_eq!(
+                cells.cells[row * screen.width as usize + 4].bg,
+                Color::Reset
+            );
+        }
     }
 }
 

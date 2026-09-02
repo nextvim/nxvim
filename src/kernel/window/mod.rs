@@ -10,7 +10,7 @@
 pub mod tabpage;
 
 use std::collections::HashMap;
-use text::{Anchor, Selection, SelectionGoal};
+use text::{Anchor, BufferSnapshot, Point, Selection, SelectionGoal, ToOffset};
 use vim_buffer::{Buffer, BufferId, SelectionId, SelectionSet};
 
 use crate::kernel::ids::WindowId;
@@ -22,6 +22,13 @@ pub enum WindowType {
     Normal,
     Quickfix,
     LocationList,
+}
+
+/// A closed fold tracked with anchors so edits before it move the fold safely.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoldRange {
+    pub start: Anchor,
+    pub end: Anchor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,6 +55,7 @@ pub struct Window {
     window_type: WindowType,
     location_list: Vec<QuickfixItem>,
     location_list_index: usize,
+    folds: Vec<FoldRange>,
 }
 
 impl Window {
@@ -78,6 +86,7 @@ impl Window {
             window_type: WindowType::Normal,
             location_list: Vec::new(),
             location_list_index: 0,
+            folds: Vec::new(),
         }
     }
 
@@ -94,7 +103,10 @@ impl Window {
     }
 
     pub fn set_buffer(&mut self, buffer_id: BufferId) {
-        self.buffer = buffer_id;
+        if self.buffer != buffer_id {
+            self.folds.clear();
+            self.buffer = buffer_id;
+        }
     }
 
     pub fn options(&self) -> &WindowOptions {
@@ -206,6 +218,45 @@ impl Window {
 
     pub fn set_location_list_index(&mut self, index: usize) {
         self.location_list_index = index;
+    }
+
+    pub fn folds(&self) -> &[FoldRange] {
+        &self.folds
+    }
+
+    pub fn folds_mut(&mut self) -> &mut Vec<FoldRange> {
+        &mut self.folds
+    }
+
+    pub fn display_folds(&self, buffer: &BufferSnapshot) -> Vec<display_map::Fold> {
+        self.folds
+            .iter()
+            .filter_map(|fold| {
+                let start = Point::from(buffer.summary_for_anchor(&fold.start));
+                let end = Point::from(buffer.summary_for_anchor(&fold.end));
+                (start < end).then_some(display_map::Fold { start, end })
+            })
+            .collect()
+    }
+
+    pub fn remove_folds_affected_by_edit(
+        &mut self,
+        old_buffer: &BufferSnapshot,
+        new_buffer: &BufferSnapshot,
+        edited_start: usize,
+        edited_end: usize,
+    ) {
+        self.folds.retain(|fold| {
+            let old_start = fold.start.to_offset(old_buffer);
+            let old_end = fold.end.to_offset(old_buffer);
+            let new_start = fold.start.to_offset(new_buffer);
+            let new_end = fold.end.to_offset(new_buffer);
+            let span_changed =
+                old_end.saturating_sub(old_start) != new_end.saturating_sub(new_start);
+            let intersects = edited_end >= new_start.saturating_sub(1)
+                && edited_start <= new_end.saturating_add(1);
+            !(span_changed || intersects)
+        });
     }
 }
 

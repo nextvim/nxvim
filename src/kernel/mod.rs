@@ -129,7 +129,14 @@ impl Editor {
     pub fn execute_with_register(&mut self, action: Action, register: Option<char>) -> Outcome {
         self.pending_register = register;
         let ctx = self.current;
+        let before = self
+            .buffer(ctx.buffer)
+            .map(|buffer| buffer.snapshot().into_inner());
+        let previous_heads = self.cursor_offsets(ctx.window);
+        let dispatched_action = action.clone();
         let outcome = command::dispatch(self, ctx, action);
+        self.remove_edited_folds(before.as_ref(), &outcome);
+        command::normal::folds::snap_cursors(self, ctx.window, &dispatched_action, &previous_heads);
         self.pending_register = None;
         self.primed_clipboard_register = None;
         outcome
@@ -170,7 +177,53 @@ impl Editor {
     /// and admitted by the kernel.
     pub fn submit_command_line(&mut self, line: &str) -> Outcome {
         let ctx = self.current;
-        command::ex::admit(self, ctx, line)
+        let before = self
+            .buffer(ctx.buffer)
+            .map(|buffer| buffer.snapshot().into_inner());
+        let outcome = command::ex::admit(self, ctx, line);
+        self.remove_edited_folds(before.as_ref(), &outcome);
+        outcome
+    }
+
+    fn cursor_offsets(&self, window: WindowId) -> HashMap<usize, usize> {
+        let Some(window) = self.window(window) else {
+            return HashMap::new();
+        };
+        if window.folds().is_empty() {
+            return HashMap::new();
+        }
+        let Some(buffer) = self.buffer(window.buffer_id()) else {
+            return HashMap::new();
+        };
+        window
+            .selections()
+            .selections
+            .iter()
+            .map(|selection| {
+                (
+                    selection.id,
+                    buffer.as_text_buffer().offset_for_anchor(&selection.head()),
+                )
+            })
+            .collect()
+    }
+
+    fn remove_edited_folds(&mut self, before: Option<&text::BufferSnapshot>, outcome: &Outcome) {
+        let outcome::RedrawInvalidation::Range { buffer, range } = outcome.invalidation else {
+            return;
+        };
+        let Some(before) = before else { return };
+        let Some(after) = self
+            .buffer(buffer)
+            .map(|buffer| buffer.snapshot().into_inner())
+        else {
+            return;
+        };
+        for (_, window) in self.windows.iter_mut() {
+            if window.buffer_id() == buffer {
+                window.remove_folds_affected_by_edit(before, &after, range.start.0, range.end.0);
+            }
+        }
     }
 
     pub fn mode(&self) -> Mode {

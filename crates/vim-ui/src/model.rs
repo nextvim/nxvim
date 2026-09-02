@@ -1,4 +1,5 @@
 use crate::Style;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// A position in the already-laid-out viewport grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -112,6 +113,76 @@ pub struct TextViewModel {
 }
 
 impl TextViewModel {
+    /// Composes projection-layer decorations into final styled row spans.
+    ///
+    /// Decoration columns are terminal-cell offsets in the text plane (the
+    /// gutter is excluded). After this method returns, drawing is linear in the
+    /// number of visible characters and spans; no decoration work remains for
+    /// the renderer. Calling it more than once is harmless.
+    pub fn bake_decorations(&mut self) {
+        if self.decorations.is_empty() {
+            return;
+        }
+
+        // Stable sorting preserves insertion order for equal-priority layers.
+        self.decorations
+            .sort_by_key(|decoration| decoration.priority);
+
+        for (row_index, row) in self.rows.iter_mut().enumerate() {
+            let row_index = row_index as u32;
+            let gutter_width = row
+                .gutter
+                .as_ref()
+                .map_or(0, |gutter| gutter.text.width() as u32);
+            let row_width = (self.viewport_width as u32).saturating_sub(gutter_width);
+            let row_decorations = self
+                .decorations
+                .iter()
+                .filter(|decoration| {
+                    decoration.start.row <= row_index && decoration.end.row >= row_index
+                })
+                .collect::<Vec<_>>();
+
+            let source_spans = std::mem::take(&mut row.spans);
+            let mut baked = Vec::<TextSpan>::new();
+            let mut column = 0u32;
+
+            for source in source_spans {
+                for character in source.text.chars() {
+                    let width = character.width().unwrap_or(1) as u32;
+                    if column >= row_width || column.saturating_add(width) > row_width {
+                        column = row_width;
+                        break;
+                    }
+                    let position = DisplayPosition {
+                        row: row_index,
+                        column,
+                    };
+                    let style = composed_style(source.style, position, &row_decorations);
+                    push_styled_character(&mut baked, character, style);
+                    column = column.saturating_add(width);
+                }
+                if column >= row_width {
+                    break;
+                }
+            }
+
+            while column < row_width {
+                let position = DisplayPosition {
+                    row: row_index,
+                    column,
+                };
+                let style = composed_style(row.fill_style, position, &row_decorations);
+                push_styled_character(&mut baked, ' ', style);
+                column += 1;
+            }
+
+            row.spans = baked;
+        }
+
+        self.decorations.clear();
+    }
+
     pub fn validate(&self) -> Result<(), TextModelError> {
         if self.rows.len() > self.viewport_height as usize {
             return Err(TextModelError::TooManyRows {
@@ -167,6 +238,28 @@ impl TextViewModel {
             }
         }
         Ok(())
+    }
+}
+
+fn composed_style(
+    base: Style,
+    position: DisplayPosition,
+    decorations: &[&DisplayDecoration],
+) -> Style {
+    decorations.iter().fold(base, |style, decoration| {
+        if position >= decoration.start && position < decoration.end {
+            style.apply(decoration.style)
+        } else {
+            style
+        }
+    })
+}
+
+fn push_styled_character(spans: &mut Vec<TextSpan>, character: char, style: Style) {
+    if let Some(span) = spans.last_mut().filter(|span| span.style == style) {
+        span.text.push(character);
+    } else {
+        spans.push(TextSpan::new(character.to_string(), style));
     }
 }
 
@@ -277,6 +370,50 @@ mod text_model_tests {
     #[test]
     fn validates_a_rich_window_text_snapshot() {
         assert_eq!(model().validate(), Ok(()));
+    }
+
+    #[test]
+    fn bakes_cross_row_decorations_into_coalesced_text_and_fill_spans() {
+        let mut model = model();
+        let mut low = Style::default();
+        low.fg = Some(crate::Color::Red);
+        let mut high = Style::default();
+        high.bg = Some(crate::Color::Blue);
+        model.decorations = vec![
+            DisplayDecoration {
+                start: DisplayPosition { row: 0, column: 3 },
+                end: DisplayPosition { row: 1, column: 1 },
+                style: low,
+                priority: 0,
+            },
+            DisplayDecoration {
+                start: DisplayPosition { row: 0, column: 4 },
+                end: DisplayPosition { row: 0, column: 6 },
+                style: high,
+                priority: 10,
+            },
+        ];
+
+        model.bake_decorations();
+
+        assert!(model.decorations.is_empty());
+        assert_eq!(
+            model.rows[0]
+                .spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fn ", "m", "ai", "n()        "]
+        );
+        assert_eq!(model.rows[0].spans[1].style.fg, Some(crate::Color::Red));
+        assert_eq!(model.rows[0].spans[2].style.fg, Some(crate::Color::Red));
+        assert_eq!(model.rows[0].spans[2].style.bg, Some(crate::Color::Blue));
+        assert_eq!(model.rows[1].spans[0].text, " ");
+        assert_eq!(model.rows[1].spans[0].style.fg, Some(crate::Color::Red));
+
+        let once = model.clone();
+        model.bake_decorations();
+        assert_eq!(model, once);
     }
 
     #[test]

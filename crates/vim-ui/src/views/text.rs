@@ -1,5 +1,4 @@
-use crate::Style;
-use crate::model::{DisplayDecoration, DisplayPosition, ScrollbarModel, TextViewModel};
+use crate::model::{ScrollbarModel, TextViewModel};
 use crate::rect::Rect;
 use crate::renderer::Renderer;
 use crate::window::View;
@@ -20,7 +19,8 @@ impl TextView {
         Self { model: None }
     }
 
-    pub fn set_model(&mut self, model: TextViewModel) {
+    pub fn set_model(&mut self, mut model: TextViewModel) {
+        model.bake_decorations();
         self.model = Some(model);
     }
 
@@ -34,9 +34,6 @@ impl View for TextView {
         let Some(model) = &self.model else {
             return Ok(());
         };
-
-        let mut decorations = model.decorations.clone();
-        decorations.sort_by_key(|d| d.priority);
 
         let height = area.height.min(model.viewport_height);
         let width = area.width.min(model.viewport_width);
@@ -53,86 +50,25 @@ impl View for TextView {
                 continue;
             }
 
-            let mut cells = vec![(' ', row.fill_style); width as usize];
-            let mut cell_idx = 0usize;
-
+            let mut used = 0usize;
             if let Some(gutter) = &row.gutter {
-                for ch in gutter.text.chars() {
-                    let ch_w = ch.width().unwrap_or(1);
-                    if cell_idx + ch_w > width as usize {
-                        break;
-                    }
-                    cells[cell_idx] = (ch, gutter.style);
-                    for i in 1..ch_w {
-                        cells[cell_idx + i] = ('\0', gutter.style);
-                    }
-                    cell_idx += ch_w;
-                }
+                renderer.set_style(gutter.style)?;
+                let text = take_width(&gutter.text, width as usize);
+                used += text.width();
+                renderer.print(&text)?;
             }
-
-            let mut text_col = 0usize;
             for span in &row.spans {
-                for ch in span.text.chars() {
-                    let ch_w = ch.width().unwrap_or(1);
-                    let pos = DisplayPosition {
-                        row: viewport_row as u32,
-                        column: text_col as u32,
-                    };
-                    let mut char_style = span.style;
-
-                    for decoration in &decorations {
-                        if pos >= decoration.start && pos < decoration.end {
-                            char_style = char_style.apply(decoration.style);
-                        }
-                    }
-
-                    if cell_idx < width as usize {
-                        if cell_idx + ch_w <= width as usize {
-                            cells[cell_idx] = (ch, char_style);
-                            for i in 1..ch_w {
-                                cells[cell_idx + i] = ('\0', char_style);
-                            }
-                        }
-                        cell_idx += ch_w;
-                    }
-                    text_col += ch_w;
+                if used >= width as usize {
+                    break;
                 }
+                renderer.set_style(span.style)?;
+                let text = take_width(&span.text, width as usize - used);
+                used += text.width();
+                renderer.print(&text)?;
             }
-
-            while cell_idx < width as usize {
-                let pos = DisplayPosition {
-                    row: viewport_row as u32,
-                    column: text_col as u32,
-                };
-                let mut fill_style = row.fill_style;
-                for decoration in &decorations {
-                    if pos >= decoration.start && pos < decoration.end {
-                        fill_style = fill_style.apply(decoration.style);
-                    }
-                }
-                cells[cell_idx] = (' ', fill_style);
-                cell_idx += 1;
-                text_col += 1;
-            }
-
-            let mut current_style = cells[0].1;
-            let mut run = String::new();
-            for (ch, style) in cells {
-                if style != current_style {
-                    if !run.is_empty() {
-                        renderer.set_style(current_style)?;
-                        renderer.print(&run)?;
-                        run.clear();
-                    }
-                    current_style = style;
-                }
-                if ch != '\0' {
-                    run.push(ch);
-                }
-            }
-            if !run.is_empty() {
-                renderer.set_style(current_style)?;
-                renderer.print(&run)?;
+            if used < width as usize {
+                renderer.set_style(row.fill_style)?;
+                renderer.print(&" ".repeat(width as usize - used))?;
             }
 
             draw_scrollbar(renderer, area, model.scrollbar, viewport_row, height)?;
