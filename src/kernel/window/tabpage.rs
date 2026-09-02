@@ -147,7 +147,9 @@ impl Layout {
                     (false, None)
                 }
             }
-            Layout::Split { children, weights, .. } => {
+            Layout::Split {
+                children, weights, ..
+            } => {
                 let mut remove_idx = None;
                 for (i, child) in children.iter().enumerate() {
                     if let Layout::Leaf(win_id) = child {
@@ -189,7 +191,11 @@ impl Layout {
                                 }
                                 if !sub_c.is_empty() {
                                     children.insert(i, sub_c.remove(0));
-                                    let w = if !sub_w.is_empty() { sub_w.remove(0) } else { 100 };
+                                    let w = if !sub_w.is_empty() {
+                                        sub_w.remove(0)
+                                    } else {
+                                        100
+                                    };
                                     weights.insert(i, w);
                                 }
                             }
@@ -232,9 +238,16 @@ impl Layout {
     pub fn adjust_weight(&mut self, active_win: WindowId, axis: Axis, delta: i32) -> bool {
         match self {
             Layout::Leaf(_) => false,
-            Layout::Split { axis: split_axis, children, weights } => {
+            Layout::Split {
+                axis: split_axis,
+                children,
+                weights,
+            } => {
                 if *split_axis == axis {
-                    if let Some(idx) = children.iter().position(|child| child.contains_window(active_win)) {
+                    if let Some(idx) = children
+                        .iter()
+                        .position(|child| child.contains_window(active_win))
+                    {
                         let current_weight = weights.get(idx).copied().unwrap_or(100) as i32;
                         let neighbor_idx = if idx + 1 < children.len() {
                             idx + 1
@@ -243,7 +256,8 @@ impl Layout {
                         } else {
                             return false;
                         };
-                        let neighbor_weight = weights.get(neighbor_idx).copied().unwrap_or(100) as i32;
+                        let neighbor_weight =
+                            weights.get(neighbor_idx).copied().unwrap_or(100) as i32;
                         let min_weight = 10;
                         let actual_delta = if delta > 0 {
                             let available = (neighbor_weight - min_weight).max(0);
@@ -272,7 +286,9 @@ impl Layout {
     pub fn equalize_weights(&mut self) {
         match self {
             Layout::Leaf(_) => {}
-            Layout::Split { children, weights, .. } => {
+            Layout::Split {
+                children, weights, ..
+            } => {
                 for w in weights.iter_mut() {
                     *w = 100;
                 }

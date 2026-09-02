@@ -420,7 +420,11 @@ pub fn parse_scopes_cancellable(
     highlighter: Option<&Highlighter>,
     colorscheme: &vim_colorscheme::ColorScheme,
     mut is_cancelled: impl FnMut() -> bool,
-) -> Option<(Vec<HighlightedRow>, Vec<ParseStateCheckpoint>, BTreeSet<u32>)> {
+) -> Option<(
+    Vec<HighlightedRow>,
+    Vec<ParseStateCheckpoint>,
+    BTreeSet<u32>,
+)> {
     let map_differently = true;
     let syntax_set = syntax_set();
     let syntax = file_path
@@ -560,7 +564,10 @@ pub fn parse_scopes_cancellable(
                         return None;
                     }
                 }
-                rows.push(HighlightedRow { row, spans: Vec::new() });
+                rows.push(HighlightedRow {
+                    row,
+                    spans: Vec::new(),
+                });
                 unresolved_rows.insert(row);
             }
         } else {
@@ -736,12 +743,9 @@ pub fn highlight_run(
         state.unresolved_rows.split_off(&lowest);
     }
 
-    let visible_all_resolved = (visible_start..=visible_end).all(|row| {
-        state.rows.contains_key(&row) && !state.unresolved_rows.contains(&row)
-    });
-    let expanded_all_parsed = (row_start..=row_end).all(|row| {
-        state.rows.contains_key(&row)
-    });
+    let visible_all_resolved = (visible_start..=visible_end)
+        .all(|row| state.rows.contains_key(&row) && !state.unresolved_rows.contains(&row));
+    let expanded_all_parsed = (row_start..=row_end).all(|row| state.rows.contains_key(&row));
 
     if visible_all_resolved && expanded_all_parsed {
         state.published_snapshot = Some(snapshot.clone());

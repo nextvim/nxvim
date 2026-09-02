@@ -118,6 +118,85 @@ fn format_cells(buffer: &ScreenBuffer) -> String {
 }
 
 #[test]
+fn decoration_crossing_wrapped_viewport_top_is_clipped_in_order() {
+    let (start, end) =
+        display_range_in_viewport(DisplayPoint::new(9, 30), DisplayPoint::new(10, 5), 10, 8, 0)
+            .unwrap();
+
+    assert_eq!(start, DisplayPosition { row: 0, column: 0 });
+    assert_eq!(end, DisplayPosition { row: 0, column: 5 });
+}
+
+#[test]
+fn vertical_scroll_maps_buffer_rows_to_wrapped_display_rows() {
+    let text = (0..160)
+        .map(|row| format!("row {row}: {}\n", "x".repeat(80)))
+        .collect::<String>();
+    let path = std::env::temp_dir().join(format!(
+        "nxvim-wrapped-scroll-{}.txt",
+        rand::random::<u64>()
+    ));
+    std::fs::write(&path, text).unwrap();
+    let mut editor = Editor::open(std::slice::from_ref(&path));
+    editor.submit_command_line("set hscrollbar");
+    let window = editor.current_context().window;
+    editor.execute(Action::MoveDown {
+        count: 105,
+        select: false,
+    });
+    editor
+        .windows_mut()
+        .get_mut(window)
+        .unwrap()
+        .set_scroll_top(100);
+
+    let mut state = RenderState::new();
+    let screen = Rect::new(0, 0, 40, 10);
+    render_frame(&mut editor, &mut state, screen, &[], true);
+
+    for _ in 0..40 {
+        editor.execute(Action::ScrollLineDown { count: 1 });
+        render_frame(
+            &mut editor,
+            &mut state,
+            screen,
+            &[RedrawInvalidation::CurrentWindow],
+            false,
+        );
+    }
+
+    let cache = &state.windows[&window];
+    assert!(cache.display_map.scroll_y > 100);
+    let cursor = cache.last_model.as_ref().unwrap().cursor.as_ref().unwrap();
+    assert!(cursor.visible);
+    assert!(cursor.position.row < 10);
+    for _ in 0..100 {
+        editor.execute(Action::MoveDown {
+            count: 1,
+            select: false,
+        });
+        render_frame(
+            &mut editor,
+            &mut state,
+            screen,
+            &[RedrawInvalidation::CurrentWindow],
+            false,
+        );
+        let cursor = state.windows[&window]
+            .last_model
+            .as_ref()
+            .unwrap()
+            .cursor
+            .as_ref()
+            .unwrap();
+        assert!(cursor.visible);
+        assert!(cursor.position.row < 10);
+    }
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn viewport_movement_hits_prefetch_then_fills_only_a_tight_miss() {
     let text = (0..160)
         .map(|row| format!("let value_{row} = {row};\n"))

@@ -343,7 +343,7 @@ impl DisplayMap {
         let cursor_row = display_cursor.row() as i32;
         let cursor_col = display_cursor.column() as i32;
 
-        let visible_rows = (screen_rows - 1)
+        let visible_rows = screen_rows
             .saturating_sub(self.margin_top as i32)
             .saturating_sub(self.margin_bottom as i32)
             .max(0);
@@ -574,21 +574,36 @@ impl DisplaySnapshot {
 
     /// Returns the range of buffer points covered by a display row.
     pub fn buffer_range_for_display_row(&self, display_row: u32) -> std::ops::Range<Point> {
-        let start = self.display_point_to_point(DisplayPoint::new(display_row, 0));
-        let end =
-            self.display_point_to_point(DisplayPoint::new(display_row, self.line_len(display_row)));
-        start..end
+        self.try_buffer_range_for_display_row(display_row)
+            .expect("accessed cold display-map region")
+    }
+
+    pub fn try_buffer_range_for_display_row(
+        &self,
+        display_row: u32,
+    ) -> Option<std::ops::Range<Point>> {
+        let start = self.try_display_point_to_point(DisplayPoint::new(display_row, 0))?;
+        let end = self.try_display_point_to_point(DisplayPoint::new(
+            display_row,
+            self.line_len(display_row),
+        ))?;
+        Some(start..end)
     }
 
     /// Returns the text for a given display row, with any tabs expanded to
     /// spaces up to the next tab stop.
     pub fn line_text(&self, display_row: u32) -> String {
+        self.try_line_text(display_row)
+            .expect("accessed cold display-map region")
+    }
+
+    pub fn try_line_text(&self, display_row: u32) -> Option<String> {
         let start_folded = self
             .wrap_snapshot
-            .from_wrap_point(WrapPoint::new(display_row, 0));
+            .try_from_wrap_point(WrapPoint::new(display_row, 0))?;
         let end_folded = self
             .wrap_snapshot
-            .from_wrap_point(WrapPoint::new(display_row, self.line_len(display_row)));
+            .try_from_wrap_point(WrapPoint::new(display_row, self.line_len(display_row)))?;
         // `start_folded..end_folded` is a raw buffer range (it may still
         // contain literal tab bytes); expand them into spaces for rendering.
         // `WrapMap` already accounted for their width when deciding wrap
@@ -598,7 +613,7 @@ impl DisplaySnapshot {
             .folded_buffer()
             .text_for_range(start_folded..end_folded)
             .collect::<String>();
-        self.tab_map.expand_text(&raw, 0)
+        Some(self.tab_map.expand_text(&raw, 0))
     }
 
     /// Converts a buffer point into tab-expanded coordinates within its row.
@@ -783,7 +798,7 @@ mod tests {
 
         map.scroll_to_cursor(DisplayPoint::new(99_999, 7), 24, 80);
 
-        assert_eq!(map.scroll_y, 99_977);
+        assert_eq!(map.scroll_y, 99_976);
         assert_eq!(map.scroll_x, 0);
     }
 

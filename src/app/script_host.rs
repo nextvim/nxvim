@@ -1,9 +1,9 @@
-use std::sync::{Arc, Mutex, mpsc};
-use std::path::PathBuf;
-use vim_script::host::{Host, HostFuture, HostRequest, CommandRequest};
-use vim_script::runtime::{RuntimeError, RuntimeErrorKind, Value, RuntimeResult};
 use crate::app::request::AppRequest;
 use crate::script::EditorState;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, mpsc};
+use vim_script::host::{CommandRequest, Host, HostFuture, HostRequest};
+use vim_script::runtime::{RuntimeError, RuntimeErrorKind, RuntimeResult, Value};
 
 pub struct ActiveHost {
     pub sender: mpsc::Sender<AppRequest>,
@@ -12,10 +12,7 @@ pub struct ActiveHost {
 
 impl ActiveHost {
     pub fn new(sender: mpsc::Sender<AppRequest>, state: Arc<Mutex<EditorState>>) -> Self {
-        Self {
-            sender,
-            state,
-        }
+        Self { sender, state }
     }
 }
 
@@ -24,7 +21,11 @@ fn expect_arity(request: &HostRequest, expected: usize) -> Result<(), RuntimeErr
         return Err(RuntimeError::coded(
             "E119",
             RuntimeErrorKind::ArityError,
-            format!("expected {} arguments, got {}", expected, request.arguments.len()),
+            format!(
+                "expected {} arguments, got {}",
+                expected,
+                request.arguments.len()
+            ),
         ));
     }
     Ok(())
@@ -169,8 +170,8 @@ fn getline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
             Ok(Value::String(std::sync::Arc::from("")))
         } else {
             let start = snapshot.point_to_offset(text::Point::new(start_row, 0));
-            let end = snapshot
-                .point_to_offset(text::Point::new(start_row, snapshot.line_len(start_row)));
+            let end =
+                snapshot.point_to_offset(text::Point::new(start_row, snapshot.line_len(start_row)));
             let line_text: String = snapshot.text_for_range(start..end).collect();
             Ok(Value::String(std::sync::Arc::from(line_text)))
         }
@@ -276,15 +277,13 @@ impl Host for ActiveHost {
                 "echo" | "message" | "echomsg" => {
                     expect_arity(&request, 1)?;
                     let message = request.arguments[0].to_string();
-                    sender
-                        .send(AppRequest::ShowMessage(message))
-                        .map_err(|_| {
-                            RuntimeError::coded(
-                                "E_HOST",
-                                RuntimeErrorKind::HostError,
-                                "editor command queue is closed",
-                            )
-                        })?;
+                    sender.send(AppRequest::ShowMessage(message)).map_err(|_| {
+                        RuntimeError::coded(
+                            "E_HOST",
+                            RuntimeErrorKind::HostError,
+                            "editor command queue is closed",
+                        )
+                    })?;
                     Ok(Value::Null)
                 }
                 name => Err(RuntimeError::coded(
@@ -299,11 +298,13 @@ impl Host for ActiveHost {
     fn call_sync(&self, request: HostRequest) -> Option<RuntimeResult<Value>> {
         let state = match self.state.lock() {
             Ok(s) => s,
-            Err(_) => return Some(Err(RuntimeError::coded(
-                "E605",
-                RuntimeErrorKind::HostError,
-                "editor state lock is poisoned",
-            ))),
+            Err(_) => {
+                return Some(Err(RuntimeError::coded(
+                    "E605",
+                    RuntimeErrorKind::HostError,
+                    "editor state lock is poisoned",
+                )));
+            }
         };
 
         match request.function.as_str() {
@@ -321,15 +322,13 @@ impl Host for ActiveHost {
         Box::pin(async move {
             match request.command.name.as_str() {
                 "quit" => {
-                    sender
-                        .send(AppRequest::Quit)
-                        .map_err(|_| {
-                            RuntimeError::coded(
-                                "E_HOST",
-                                RuntimeErrorKind::HostError,
-                                "editor command queue is closed",
-                            )
-                        })?;
+                    sender.send(AppRequest::Quit).map_err(|_| {
+                        RuntimeError::coded(
+                            "E_HOST",
+                            RuntimeErrorKind::HostError,
+                            "editor command queue is closed",
+                        )
+                    })?;
                     Ok(Value::Null)
                 }
                 "source" => {

@@ -111,17 +111,56 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         ),
         Action::NextTab { count } => windows::next_tab(editor, count),
         Action::PreviousTab { count } => windows::previous_tab(editor, count),
-        Action::ResizeLeft => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Left, 1),
-        Action::ResizeRight => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Right, 1),
-        Action::ResizeUp => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Up, 1),
-        Action::ResizeDown => windows::resize_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Down, 1),
+        Action::ResizeLeft => windows::resize_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Left,
+            1,
+        ),
+        Action::ResizeRight => windows::resize_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Right,
+            1,
+        ),
+        Action::ResizeUp => windows::resize_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Up,
+            1,
+        ),
+        Action::ResizeDown => windows::resize_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Down,
+            1,
+        ),
         Action::ResizeEqual => windows::resize_equal(editor, ctx),
-        Action::MoveWindowLeft => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Left),
-        Action::MoveWindowRight => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Right),
-        Action::MoveWindowUp => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Up),
-        Action::MoveWindowDown => windows::move_window(editor, ctx, crate::kernel::window::tabpage::NavigationDirection::Down),
+        Action::MoveWindowLeft => windows::move_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Left,
+        ),
+        Action::MoveWindowRight => windows::move_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Right,
+        ),
+        Action::MoveWindowUp => windows::move_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Up,
+        ),
+        Action::MoveWindowDown => windows::move_window(
+            editor,
+            ctx,
+            crate::kernel::window::tabpage::NavigationDirection::Down,
+        ),
         Action::CarriageReturn => {
-            let win_type = editor.window(ctx.window).map(|w| w.window_type()).unwrap_or(crate::kernel::window::WindowType::Normal);
+            let win_type = editor
+                .window(ctx.window)
+                .map(|w| w.window_type())
+                .unwrap_or(crate::kernel::window::WindowType::Normal);
             match win_type {
                 crate::kernel::window::WindowType::Quickfix => {
                     let current_row = if let Some(win) = editor.window(ctx.window) {

@@ -112,11 +112,7 @@ pub fn resize_equal(editor: &mut Editor, _ctx: CommandContext) -> Outcome {
     Outcome::default()
 }
 
-pub fn move_window(
-    editor: &mut Editor,
-    ctx: CommandContext,
-    dir: NavigationDirection,
-) -> Outcome {
+pub fn move_window(editor: &mut Editor, ctx: CommandContext, dir: NavigationDirection) -> Outcome {
     let active_win = ctx.window;
     let tab = editor.tabs_mut().active_mut();
     tab.move_window(active_win, dir);

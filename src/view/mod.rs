@@ -84,7 +84,9 @@ impl RenderState {
         if let Some(cache) = self.windows.get_mut(&window) {
             if cache.buffer == buffer {
                 return if cache.display_map.apply_expansion(expansion).is_ok() {
-                    cache.last_model = None;
+                    // Expansion requests only fill missing rows outside the exact
+                    // hot viewport. Applying one must not evict an otherwise
+                    // reusable viewport model and start a rebuild loop.
                     ExpansionApplication::Updated
                 } else {
                     ExpansionApplication::Discarded
@@ -131,7 +133,15 @@ impl RenderState {
         self.windows
             .iter()
             .filter_map(|(&window, cache)| {
-                let center = cache.display_map.scroll_y;
+                // `nearest_missing_range` operates in buffer-row coordinates;
+                // `scroll_y` is a display row and diverges when wrapping/folds
+                // are active. Keep expansion adjacent to the foreground window.
+                let center = cache
+                    .display_map
+                    .buffer_window
+                    .start
+                    .saturating_add(cache.display_map.buffer_window.end)
+                    / 2;
                 let rows = cache.display_map.nearest_missing_range(center, 512)?;
                 let input = cache.display_map.expansion_input(rows)?;
                 Some(DisplayMapRequest {
@@ -159,12 +169,54 @@ fn visible_buffer_rows(
     let mut last = None;
 
     for display_row in start..end {
-        let range = snapshot.buffer_range_for_display_row(display_row);
+        let Some(range) = snapshot.try_buffer_range_for_display_row(display_row) else {
+            break;
+        };
         first = Some(first.map_or(range.start.row, |row: u32| row.min(range.start.row)));
         last = Some(last.map_or(range.end.row, |row: u32| row.max(range.end.row)));
     }
 
     first.zip(last).map(|(first, last)| first..=last)
+}
+
+fn display_range_in_viewport(
+    start: DisplayPoint,
+    end: DisplayPoint,
+    scroll_y: u32,
+    visible_rows: u32,
+    leftcol: u32,
+) -> Option<(DisplayPosition, DisplayPosition)> {
+    let (start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    let viewport_end = scroll_y.saturating_add(visible_rows);
+    if end.row() < scroll_y || start.row() >= viewport_end {
+        return None;
+    }
+
+    let start = if start.row() < scroll_y {
+        DisplayPosition { row: 0, column: 0 }
+    } else {
+        DisplayPosition {
+            row: start.row() - scroll_y,
+            column: start.column().saturating_sub(leftcol),
+        }
+    };
+    let end = if end.row() >= viewport_end {
+        DisplayPosition {
+            row: visible_rows,
+            column: 0,
+        }
+    } else {
+        DisplayPosition {
+            row: end.row() - scroll_y,
+            column: end.column().saturating_sub(leftcol),
+        }
+    };
+
+    (end >= start).then_some((start, end))
 }
 
 fn should_rebuild(
@@ -295,11 +347,10 @@ pub fn render_with_scheme(
 
         let scroll_top = projection.scroll_top;
         let viewport_height = view_rect.height as u32;
-        let margin = 128;
-        let start_row = scroll_top.saturating_sub(margin);
-        let end_row = scroll_top
-            .saturating_add(viewport_height)
-            .saturating_add(margin);
+        // Only exact-map rows needed for the next frame on the render thread.
+        // Additional coverage is filled by the display-map background worker.
+        let start_row = scroll_top;
+        let end_row = scroll_top.saturating_add(viewport_height);
         let row_count = projection.snapshot.row_count();
 
         // Compute gutter width so that horizontal scroll and line wrap account for it
@@ -382,34 +433,9 @@ pub fn render_with_scheme(
         );
 
         if !rebuild && idle_expansion > 0 {
-            let scroll_top_display_row = projection.scroll_top;
-            let start_buffer_row = cache
-                .display_map
-                .snapshot()
-                .try_buffer_row_for_display_row(scroll_top_display_row)
-                .unwrap_or(scroll_top_display_row);
-
-            let viewport_height = view_rect.height as u32;
-            let end_buffer_row = cache
-                .display_map
-                .snapshot()
-                .try_buffer_row_for_display_row(scroll_top_display_row + viewport_height)
-                .unwrap_or(scroll_top_display_row + viewport_height);
-
-            let total_margin = 128 + idle_expansion;
-            let expanded_start = start_buffer_row.saturating_sub(total_margin);
-            let expanded_end = end_buffer_row.saturating_add(total_margin);
-            let buffer_row_count = projection.snapshot.row_count();
-            let expanded_window =
-                (expanded_start.min(buffer_row_count))..(expanded_end.min(buffer_row_count));
-
-            let current_window = cache.display_map.buffer_window.clone();
-            if expanded_window != current_window {
-                cache
-                    .display_map
-                    .sync_hot_window(projection.snapshot.clone(), expanded_window);
-            }
-
+            // Do not grow the exact display-map window here: doing so computes
+            // all missing wrap transforms synchronously and duplicates the work
+            // scheduled by `display_map_requests()` on the background worker.
             let snapshot = cache.display_map.snapshot();
             if let Some(visible_rows) = visible_buffer_rows(&snapshot, view_rect.height as u32) {
                 if let Some(analysis) = editor.buffers_mut().analysis_mut(projection.buffer) {
@@ -429,24 +455,14 @@ pub fn render_with_scheme(
         }
 
         let model = if rebuild {
-            // Sync display map with projection snapshot and viewport rows
-            let scroll_top_display_row = projection.scroll_top;
-            let start_buffer_row = cache
-                .display_map
-                .snapshot()
-                .try_buffer_row_for_display_row(scroll_top_display_row)
-                .unwrap_or(scroll_top_display_row);
-
+            // `scroll_top` is a buffer row; synchronize that buffer region before
+            // converting it to the display row consumed by `DisplayMap`.
             let viewport_height = view_rect.height as u32;
-            let end_buffer_row = cache
-                .display_map
-                .snapshot()
-                .try_buffer_row_for_display_row(scroll_top_display_row + viewport_height)
-                .unwrap_or(scroll_top_display_row + viewport_height);
-
-            let margin = 128;
-            let start_row = start_buffer_row.saturating_sub(margin);
-            let end_row = end_buffer_row.saturating_add(margin);
+            // Foreground work is restricted to rows required by this frame.
+            // `display_map_requests()` expands exact coverage around this hot
+            // window asynchronously while the runtime is idle.
+            let start_row = projection.scroll_top;
+            let end_row = projection.scroll_top.saturating_add(viewport_height);
             let buffer_row_count = projection.snapshot.row_count();
             let hot_window = (start_row.min(buffer_row_count))..(end_row.min(buffer_row_count));
 
@@ -454,8 +470,13 @@ pub fn render_with_scheme(
                 .display_map
                 .sync_hot_window(projection.snapshot.clone(), hot_window);
 
-            // Update display map's scroll from the window's authoritative scroll top/leftcol
-            cache.display_map.scroll_y = projection.scroll_top;
+            // The window owns scrolling in buffer coordinates; the display map
+            // renders in display coordinates (which diverge under wrapping/folds).
+            cache.display_map.scroll_y = cache
+                .display_map
+                .snapshot()
+                .point_to_display_point(Point::new(projection.scroll_top, 0))
+                .row();
             cache.display_map.scroll_x = projection.leftcol;
 
             // Convert selections
@@ -467,7 +488,25 @@ pub fn render_with_scheme(
             let display_cursor = cache
                 .display_map
                 .snapshot()
-                .point_to_display_point(head_point);
+                .try_point_to_display_point(head_point)
+                // An explicitly scrolled window may keep its cursor outside the
+                // hot viewport. Do not synchronously map the cold gap merely to
+                // construct an invisible cursor.
+                .unwrap_or_else(|| DisplayPoint::new(head_point.row, head_point.column));
+
+            // If the editor considers the cursor visible in buffer coordinates,
+            // keep it visible in the actual wrapped display-row viewport too.
+            // An explicitly scrolled viewport may intentionally leave the cursor
+            // outside this range and must not be pulled back to it.
+            let buffer_viewport_end = projection.scroll_top.saturating_add(viewport_height);
+            if head_point.row >= projection.scroll_top && head_point.row < buffer_viewport_end {
+                cache.display_map.scroll_to_cursor(
+                    display_cursor,
+                    view_rect.height as i32,
+                    effective_text_width as i32,
+                );
+                cache.display_map.scroll_x = projection.leftcol;
+            }
 
             let snapshot = cache.display_map.snapshot();
             let syntax_rows = if let Some(visible_rows) =
@@ -526,7 +565,9 @@ pub fn render_with_scheme(
                     break;
                 }
 
-                let mut line_text = snapshot.line_text(display_row);
+                let Some(mut line_text) = snapshot.try_line_text(display_row) else {
+                    break;
+                };
                 let leftcol_offset = if projection.wrap {
                     0
                 } else {
@@ -632,8 +673,15 @@ pub fn render_with_scheme(
                     if !projection.wrap && end.column() <= leftcol_offset {
                         continue;
                     }
-                    let start_col = start.column().saturating_sub(leftcol_offset);
-                    let end_col = end.column().saturating_sub(leftcol_offset);
+                    let Some((start, end)) = display_range_in_viewport(
+                        start,
+                        end,
+                        scroll_y,
+                        visible_rows,
+                        leftcol_offset,
+                    ) else {
+                        continue;
+                    };
 
                     let mut style = Style::default();
                     style.fg = Some(vim_ui::Color::Rgb(
@@ -642,14 +690,8 @@ pub fn render_with_scheme(
                         span.foreground[2],
                     ));
                     decorations.push(DisplayDecoration {
-                        start: DisplayPosition {
-                            row: start.row().saturating_sub(scroll_y),
-                            column: start_col,
-                        },
-                        end: DisplayPosition {
-                            row: end.row().saturating_sub(scroll_y),
-                            column: end_col,
-                        },
+                        start,
+                        end,
                         style,
                         priority: 0,
                     });
@@ -1023,68 +1065,6 @@ pub fn render_with_scheme(
         // so the `BufferedRenderer`'s cell diff, not this loop, decides
         text_view.draw(view_rect, &mut renderer)?;
 
-        let hscrollbar = if let Some(win) = editor.window(projection.window) {
-            win.options().hscrollbar
-        } else {
-            false
-        };
-        if hscrollbar {
-            let snapshot = cache.display_map.snapshot();
-            let mut max_len = 0;
-            for r in 0..snapshot.row_count() {
-                let len = snapshot.line_text(r).chars().count();
-                if len > max_len {
-                    max_len = len;
-                }
-            }
-            let total_cols = max_len as u32;
-            let visible_cols = view_rect.width as u32;
-            let scroll_x = snapshot.scroll_x as u32;
-
-            if total_cols > visible_cols && visible_cols > 0 {
-                let thumb_width = ((visible_cols as f32 / total_cols as f32) * visible_cols as f32)
-                    .round()
-                    .max(1.0) as u32;
-                let travel = visible_cols.saturating_sub(thumb_width);
-                let scrollable = total_cols.saturating_sub(visible_cols);
-                let thumb_start = if scrollable == 0 {
-                    0
-                } else {
-                    ((scroll_x as f32 / scrollable as f32) * travel as f32).round() as u32
-                };
-
-                let track_style =
-                    scheme
-                        .get_style("ScrollbarTrack")
-                        .cloned()
-                        .unwrap_or_else(|| Style {
-                            bg: Some(vim_colorscheme::Color::DarkGrey),
-                            ..Default::default()
-                        });
-
-                let thumb_style =
-                    scheme
-                        .get_style("ScrollbarThumb")
-                        .cloned()
-                        .unwrap_or_else(|| Style {
-                            bg: Some(vim_colorscheme::Color::Grey),
-                            ..Default::default()
-                        });
-
-                let y = view_rect.y + view_rect.height.saturating_sub(1);
-                for col in 0..view_rect.width {
-                    let is_thumb =
-                        col as u32 >= thumb_start && (col as u32) < thumb_start + thumb_width;
-                    let style = if is_thumb { thumb_style } else { track_style };
-                    let x = view_rect.x + col;
-                    if let Some(mut cell) = renderer.get_cell(x, y) {
-                        cell.bg = style.bg.unwrap_or(vim_colorscheme::Color::Reset);
-                        let _ = renderer.set_cell(x, y, cell);
-                    }
-                }
-            }
-        }
-
         if has_statusline {
             let status_y = rect.y + rect.height.saturating_sub(1);
             let status_style = scheme.get_style("StatusLine").cloned().unwrap_or_default();
@@ -1145,16 +1125,23 @@ pub fn render_with_scheme(
                 let head_point = proj
                     .snapshot
                     .offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
-                let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window) {
-                    cache
-                        .display_map
-                        .snapshot()
-                        .point_to_display_point(head_point)
-                } else {
-                    DisplayPoint::new(head_point.row, head_point.column)
-                };
+                let (display_cursor, scroll_y) =
+                    if let Some(cache) = render_state.windows.get(&proj.window) {
+                        (
+                            cache
+                                .display_map
+                                .snapshot()
+                                .point_to_display_point(head_point),
+                            cache.display_map.scroll_y,
+                        )
+                    } else {
+                        (
+                            DisplayPoint::new(head_point.row, head_point.column),
+                            proj.scroll_top,
+                        )
+                    };
                 let cursor_display_pos = DisplayPosition {
-                    row: display_cursor.row().saturating_sub(proj.scroll_top),
+                    row: display_cursor.row().saturating_sub(scroll_y),
                     column: display_cursor.column(),
                 };
                 let temp_cursor = TextCursor {

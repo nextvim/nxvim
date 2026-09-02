@@ -19,7 +19,11 @@ fn compute_layout_recursive(layout: &Layout, rect: Rect, results: &mut HashMap<W
         Layout::Leaf(win_id) => {
             results.insert(*win_id, rect);
         }
-        Layout::Split { axis, children, weights } => {
+        Layout::Split {
+            axis,
+            children,
+            weights,
+        } => {
             if children.is_empty() {
                 return;
             }
