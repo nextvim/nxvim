@@ -48,6 +48,10 @@ pub struct App {
     script_rx: std::sync::mpsc::Receiver<AppRequest>,
     services: services::Services,
     source_depth: usize,
+    command_history: Vec<String>,
+    search_history: Vec<String>,
+    history_index: Option<usize>,
+    history_temp: String,
 }
 
 impl App {
@@ -82,6 +86,10 @@ impl App {
             script_rx: rx,
             services: services::Services::new(),
             source_depth: 0,
+            command_history: Vec::new(),
+            search_history: Vec::new(),
+            history_index: None,
+            history_temp: String::new(),
         }
     }
 
@@ -265,6 +273,7 @@ impl App {
             render_state,
             status,
             prompt,
+            prompt.map(|_| self.prompt.cursor()),
             screen,
             pending,
             force_full,
@@ -290,6 +299,15 @@ impl App {
 
     pub fn handle_action(&mut self, action: Action, register: Option<char>) -> Outcome {
         let _ = self.script.update_state(&self.editor);
+        if matches!(
+            action,
+            Action::SetToCommand
+                | Action::SetToCommandSearchForward
+                | Action::SetToCommandSearchBackward
+        ) {
+            self.history_index = None;
+            self.history_temp.clear();
+        }
         if register == Some('+') || register == Some('*') {
             let reg_name = if register == Some('*') {
                 vim_clipboard::RegisterName::Selection
@@ -360,6 +378,68 @@ impl App {
         outcome
     }
 
+    fn active_history(&self) -> &[String] {
+        match self.editor.mode() {
+            crate::kernel::mode::Mode::Command(
+                crate::kernel::mode::CommandKind::SearchForward
+                | crate::kernel::mode::CommandKind::SearchBackward,
+            ) => &self.search_history,
+            _ => &self.command_history,
+        }
+    }
+
+    fn history_previous(&mut self) {
+        let len = self.active_history().len();
+        if len == 0 {
+            return;
+        }
+        let index = match self.history_index {
+            None => {
+                self.history_temp = self.prompt.text().to_owned();
+                len - 1
+            }
+            Some(index) => index.saturating_sub(1),
+        };
+        let text = self.active_history()[index].clone();
+        self.history_index = Some(index);
+        self.prompt.set_text(text);
+    }
+
+    fn history_next(&mut self) {
+        let Some(index) = self.history_index else {
+            return;
+        };
+        let len = self.active_history().len();
+        if index + 1 < len {
+            let next = index + 1;
+            let text = self.active_history()[next].clone();
+            self.history_index = Some(next);
+            self.prompt.set_text(text);
+        } else {
+            self.history_index = None;
+            self.prompt.set_text(self.history_temp.clone());
+        }
+    }
+
+    fn record_history(&mut self, mode: crate::kernel::mode::Mode, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        let history = match mode {
+            crate::kernel::mode::Mode::Command(
+                crate::kernel::mode::CommandKind::SearchForward
+                | crate::kernel::mode::CommandKind::SearchBackward,
+            ) => &mut self.search_history,
+            crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::Ex) => {
+                &mut self.command_history
+            }
+            _ => return,
+        };
+        if history.last().is_none_or(|previous| previous != line) {
+            history.push(line.to_owned());
+        }
+    }
+
     pub fn handle_raw_key(&mut self, raw_key: input::RawKey) -> Outcome {
         let _ = self.script.update_state(&self.editor);
         if self.editor.has_pending_substitute() {
@@ -405,8 +485,42 @@ impl App {
                 self.prompt.backspace();
                 Outcome::default()
             }
+            input::RawKey::Delete => {
+                self.prompt.delete();
+                Outcome::default()
+            }
+            input::RawKey::Left { select } => {
+                self.prompt.move_left(select);
+                Outcome::default()
+            }
+            input::RawKey::Right { select } => {
+                self.prompt.move_right(select);
+                Outcome::default()
+            }
+            input::RawKey::Home { select } => {
+                self.prompt.move_home(select);
+                Outcome::default()
+            }
+            input::RawKey::End { select } => {
+                self.prompt.move_end(select);
+                Outcome::default()
+            }
+            input::RawKey::Up => {
+                self.history_previous();
+                Outcome::default()
+            }
+            input::RawKey::Down => {
+                self.history_next();
+                Outcome::default()
+            }
+            // Command-line buffers are deliberately single-line: Vim's
+            // InsertNewLine equivalent submits instead of mutating the buffer.
             input::RawKey::Enter => {
+                let mode = self.editor.mode();
                 let line = self.prompt.take();
+                self.record_history(mode, &line);
+                self.history_index = None;
+                self.history_temp.clear();
                 let mut outcome = self.handle_submitted_line(&line);
 
                 // Return the editor to Normal mode via Clear
@@ -422,6 +536,8 @@ impl App {
             }
             input::RawKey::Escape => {
                 self.prompt.clear();
+                self.history_index = None;
+                self.history_temp.clear();
                 // Esc back to Normal mode via Clear
                 self.editor.execute(Action::Clear)
             }
@@ -988,6 +1104,30 @@ mod tests {
 
         let resolved = r3.unwrap();
         assert_eq!(resolved.action, Action::InsertText("∞".to_string()));
+    }
+
+    #[test]
+    fn command_line_history_is_separate_and_restores_draft() {
+        let mut app = App::new("");
+        use crate::kernel::mode::{CommandKind, Mode};
+
+        app.record_history(Mode::Command(CommandKind::Ex), "write");
+        app.record_history(Mode::Command(CommandKind::Ex), "write");
+        app.record_history(Mode::Command(CommandKind::SearchForward), "needle");
+        assert_eq!(app.command_history, ["write"]);
+        assert_eq!(app.search_history, ["needle"]);
+
+        app.editor.set_mode(Mode::Command(CommandKind::Ex));
+        app.prompt.set_text("draft".into());
+        app.history_previous();
+        assert_eq!(app.prompt.text(), "write");
+        app.history_next();
+        assert_eq!(app.prompt.text(), "draft");
+
+        app.editor
+            .set_mode(Mode::Command(CommandKind::SearchBackward));
+        app.history_previous();
+        assert_eq!(app.prompt.text(), "needle");
     }
 
     #[test]

@@ -263,6 +263,7 @@ pub fn render(
         render_state,
         status,
         prompt,
+        prompt.map(str::len),
         screen,
         pending,
         force_full,
@@ -276,6 +277,7 @@ pub fn render_with_scheme(
     render_state: &mut RenderState,
     status: &str,
     prompt: Option<&str>,
+    prompt_cursor: Option<usize>,
     screen: Rect,
     pending: &[RedrawInvalidation],
     force_full: bool,
@@ -1113,7 +1115,8 @@ pub fn render_with_scheme(
         let visible = pad_or_truncate(&display, screen.width as usize);
         renderer.print(&visible)?;
         renderer.show_cursor(
-            (1 + prompt_text.len()).min(screen.width.saturating_sub(1) as usize) as u16,
+            (1 + prompt_cursor.unwrap_or(prompt_text.len()))
+                .min(screen.width.saturating_sub(1) as usize) as u16,
             status_row,
             CursorShape::Block,
         )?;

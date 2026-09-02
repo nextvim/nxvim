@@ -189,6 +189,13 @@ impl InputTranslator {
 pub enum RawKey {
     Char(char),
     Backspace,
+    Delete,
+    Left { select: bool },
+    Right { select: bool },
+    Home { select: bool },
+    End { select: bool },
+    Up,
+    Down,
     Enter,
     Escape,
 }
@@ -199,6 +206,21 @@ pub fn translate_raw(event: &Event) -> Option<RawKey> {
         Event::Key(key_event) if key_event.kind != KeyEventKind::Release => match key_event.code {
             CKey::Char(ch) => Some(RawKey::Char(ch)),
             CKey::Backspace => Some(RawKey::Backspace),
+            CKey::Delete => Some(RawKey::Delete),
+            CKey::Left => Some(RawKey::Left {
+                select: key_event.modifiers.contains(CMod::SHIFT),
+            }),
+            CKey::Right => Some(RawKey::Right {
+                select: key_event.modifiers.contains(CMod::SHIFT),
+            }),
+            CKey::Home => Some(RawKey::Home {
+                select: key_event.modifiers.contains(CMod::SHIFT),
+            }),
+            CKey::End => Some(RawKey::End {
+                select: key_event.modifiers.contains(CMod::SHIFT),
+            }),
+            CKey::Up => Some(RawKey::Up),
+            CKey::Down => Some(RawKey::Down),
             CKey::Enter => Some(RawKey::Enter),
             CKey::Esc => Some(RawKey::Escape),
             _ => None,
