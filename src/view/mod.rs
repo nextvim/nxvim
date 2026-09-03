@@ -559,6 +559,75 @@ pub fn render_with_scheme(
             let cursor_row = head_point.row;
             let number_width = (buffer_row_count.max(1) as f64).log10().ceil().max(4.0) as usize;
 
+            // Pre-compile search regex and resolve search range if hlsearch is enabled
+            let mut search_regex = None;
+            let mut resolved_search_range = None;
+            let mut search_style = Style::default();
+            if editor.global_options().hlsearch {
+                if let Some(search_reg) = editor
+                    .registers()
+                    .get(crate::kernel::buffer::registers::RegisterName::Search)
+                {
+                    let search_pattern = &search_reg.text;
+                    if !search_pattern.is_empty() {
+                        let compile_opts = vim_regex::CompileOptions {
+                            editor: vim_regex::EditorOptions {
+                                ignore_case: editor.global_options().ignorecase,
+                                smart_case: false,
+                                ..vim_regex::EditorOptions::default()
+                            },
+                            ..vim_regex::CompileOptions::default()
+                        };
+                        if let Ok(regex) = vim_regex::Regex::compile(search_pattern, compile_opts) {
+                            search_style =
+                                scheme.get_style("Search").cloned().unwrap_or_else(|| {
+                                    let mut style = Style::default();
+                                    style.fg = Some(vim_ui::Color::Black);
+                                    style.bg = Some(vim_ui::Color::Yellow);
+                                    style
+                                });
+                            resolved_search_range = if let Some(range) =
+                                editor.peeked_search_range()
+                            {
+                                let ctx = crate::kernel::command::CommandContext {
+                                    buffer: projection.buffer,
+                                    window: projection.window,
+                                    tab: crate::kernel::ids::TabPageId::new(1),
+                                };
+                                let current_row =
+                                    if let Some(win) = editor.window(projection.window) {
+                                        let head = win.selections().primary().head();
+                                        if let Some(buf) = editor.buffer(projection.buffer) {
+                                            let pt: text::Point =
+                                                buf.as_text_buffer().summary_for_anchor(&head);
+                                            pt.row
+                                        } else {
+                                            0
+                                        }
+                                    } else {
+                                        0
+                                    };
+                                let max_row = if let Some(buf) = editor.buffer(projection.buffer) {
+                                    buf.as_text_buffer().row_count().saturating_sub(1)
+                                } else {
+                                    0
+                                };
+                                crate::kernel::command::ex::resolve_range(
+                                    editor,
+                                    ctx,
+                                    &Some(range.clone()),
+                                    current_row,
+                                    max_row,
+                                )
+                            } else {
+                                None
+                            };
+                            search_regex = Some(regex);
+                        }
+                    }
+                }
+            }
+
             // Build TextViewModel
             let mut rows = Vec::new();
             let scroll_y = snapshot.scroll_y;
@@ -645,7 +714,51 @@ pub fn render_with_scheme(
                     None
                 };
 
-                let spans = vec![TextSpan::new(line_text, Style::default())];
+                let mut spans = vec![TextSpan::new(line_text.clone(), Style::default())];
+                if let Some(ref regex) = search_regex {
+                    let in_search_range = if let Some((start, end)) = resolved_search_range {
+                        if let Some(brow) = buffer_row {
+                            let line = brow + 1;
+                            line >= start && line <= end
+                        } else {
+                            false
+                        }
+                    } else {
+                        true
+                    };
+
+                    if in_search_range {
+                        if let Some(sub_text) = editor.peeked_substitute_text() {
+                            use vim_buffer::TextSearch;
+                            let matches = line_text.find_pattern(regex);
+                            if !matches.is_empty() {
+                                let mut new_spans = Vec::new();
+                                let mut last_idx = 0usize;
+                                for (byte_start, match_len, _) in matches {
+                                    if byte_start > last_idx {
+                                        new_spans.push(TextSpan::new(
+                                            line_text[last_idx..byte_start].to_string(),
+                                            Style::default(),
+                                        ));
+                                    }
+                                    new_spans.push(TextSpan::new(
+                                        sub_text.to_string(),
+                                        search_style.clone(),
+                                    ));
+                                    last_idx = byte_start + match_len;
+                                }
+                                if last_idx < line_text.len() {
+                                    new_spans.push(TextSpan::new(
+                                        line_text[last_idx..].to_string(),
+                                        Style::default(),
+                                    ));
+                                }
+                                spans = new_spans;
+                            }
+                        }
+                    }
+                }
+
                 rows.push(DisplayRow {
                     buffer_row,
                     kind,
@@ -798,94 +911,75 @@ pub fn render_with_scheme(
 
             // Search highlights
             let mut search_decorations = Vec::new();
-            if editor.global_options().hlsearch {
-                if let Some(search_reg) = editor
-                    .registers()
-                    .get(crate::kernel::buffer::registers::RegisterName::Search)
-                {
-                    let search_pattern = &search_reg.text;
-                    if !search_pattern.is_empty() {
-                        let compile_opts = vim_regex::CompileOptions {
-                            editor: vim_regex::EditorOptions {
-                                ignore_case: editor.global_options().ignorecase,
-                                smart_case: false,
-                                ..vim_regex::EditorOptions::default()
-                            },
-                            ..vim_regex::CompileOptions::default()
-                        };
-                        if let Ok(regex) = vim_regex::Regex::compile(search_pattern, compile_opts) {
-                            let search_style =
-                                scheme.get_style("Search").cloned().unwrap_or_else(|| {
-                                    let mut style = Style::default();
-                                    style.fg = Some(vim_ui::Color::Black);
-                                    style.bg = Some(vim_ui::Color::Yellow);
-                                    style
-                                });
-
-                            let scroll_y = snapshot.scroll_y;
-                            let visible_rows = snapshot.visible_rows.min(view_rect.height as u32);
-                            let mut visible_buffer_rows = std::collections::BTreeSet::new();
-                            for i in 0..visible_rows {
-                                let display_row = scroll_y + i;
-                                if display_row < snapshot.row_count() {
-                                    if let Some(brow) =
-                                        snapshot.try_buffer_row_for_display_row(display_row)
-                                    {
-                                        visible_buffer_rows.insert(brow);
-                                    }
-                                }
+            if editor.peeked_substitute_text().is_none() {
+                if let Some(ref regex) = search_regex {
+                    let scroll_y = snapshot.scroll_y;
+                    let visible_rows = snapshot.visible_rows.min(view_rect.height as u32);
+                    let mut visible_buffer_rows = std::collections::BTreeSet::new();
+                    for i in 0..visible_rows {
+                        let display_row = scroll_y + i;
+                        if display_row < snapshot.row_count() {
+                            if let Some(brow) = snapshot.try_buffer_row_for_display_row(display_row)
+                            {
+                                visible_buffer_rows.insert(brow);
                             }
+                        }
+                    }
 
-                            let buffer_snapshot = snapshot.buffer_snapshot();
-                            for brow in visible_buffer_rows {
-                                let line_len = buffer_snapshot.line_len(brow);
-                                let line_text: String = buffer_snapshot
-                                    .text_for_range(
-                                        text::Point::new(brow, 0)..text::Point::new(brow, line_len),
+                    let buffer_snapshot = snapshot.buffer_snapshot();
+                    for brow in visible_buffer_rows {
+                        if let Some((start, end)) = resolved_search_range {
+                            let line = brow + 1;
+                            if line < start || line > end {
+                                continue;
+                            }
+                        }
+
+                        let line_len = buffer_snapshot.line_len(brow);
+                        let line_text: String = buffer_snapshot
+                            .text_for_range(
+                                text::Point::new(brow, 0)..text::Point::new(brow, line_len),
+                            )
+                            .collect();
+
+                        use vim_buffer::TextSearch;
+                        let matches = line_text.find_pattern(regex);
+                        for (byte_start, match_len, _) in matches {
+                            let start_pt = text::Point::new(brow, byte_start as u32);
+                            let end_pt = text::Point::new(brow, (byte_start + match_len) as u32);
+                            if let (Some(d_start), Some(d_end)) = (
+                                snapshot.try_point_to_display_point(start_pt),
+                                snapshot.try_point_to_display_point(end_pt),
+                            ) {
+                                let (start_pos, end_pos) = if d_end >= d_start {
+                                    (
+                                        DisplayPosition {
+                                            row: d_start.row().saturating_sub(scroll_y),
+                                            column: d_start.column(),
+                                        },
+                                        DisplayPosition {
+                                            row: d_end.row().saturating_sub(scroll_y),
+                                            column: d_end.column(),
+                                        },
                                     )
-                                    .collect();
-
-                                use vim_buffer::TextSearch;
-                                let matches = line_text.find_pattern(&regex);
-                                for (byte_start, match_len, _) in matches {
-                                    let start_pt = text::Point::new(brow, byte_start as u32);
-                                    let end_pt =
-                                        text::Point::new(brow, (byte_start + match_len) as u32);
-                                    if let (Some(d_start), Some(d_end)) = (
-                                        snapshot.try_point_to_display_point(start_pt),
-                                        snapshot.try_point_to_display_point(end_pt),
-                                    ) {
-                                        let (start_pos, end_pos) = if d_end >= d_start {
-                                            (
-                                                DisplayPosition {
-                                                    row: d_start.row().saturating_sub(scroll_y),
-                                                    column: d_start.column(),
-                                                },
-                                                DisplayPosition {
-                                                    row: d_end.row().saturating_sub(scroll_y),
-                                                    column: d_end.column(),
-                                                },
-                                            )
-                                        } else {
-                                            (
-                                                DisplayPosition {
-                                                    row: d_end.row().saturating_sub(scroll_y),
-                                                    column: d_end.column(),
-                                                },
-                                                DisplayPosition {
-                                                    row: d_start.row().saturating_sub(scroll_y),
-                                                    column: d_start.column(),
-                                                },
-                                            )
-                                        };
-                                        search_decorations.push(DisplayDecoration {
-                                            start: start_pos,
-                                            end: end_pos,
-                                            style: search_style,
-                                            priority: 50,
-                                        });
-                                    }
-                                }
+                                } else {
+                                    (
+                                        DisplayPosition {
+                                            row: d_end.row().saturating_sub(scroll_y),
+                                            column: d_end.column(),
+                                        },
+                                        DisplayPosition {
+                                            row: d_start.row().saturating_sub(scroll_y),
+                                            column: d_start.column(),
+                                        },
+                                    )
+                                };
+                                search_decorations.push(DisplayDecoration {
+                                    start: start_pos,
+                                    end: end_pos,
+                                    style: search_style.clone(),
+                                    priority: 50,
+                                });
                             }
                         }
                     }

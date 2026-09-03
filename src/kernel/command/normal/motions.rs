@@ -12,7 +12,7 @@ use crate::kernel::{
     outcome::{Outcome, RedrawInvalidation},
     window::Window,
 };
-use text::ToPoint;
+use text::{Point, ToPoint};
 
 pub fn moved(editor: &mut Editor, window: WindowId, select: bool) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
@@ -504,41 +504,78 @@ pub fn scroll_backward(editor: &mut Editor, window: WindowId, count: u32) -> Out
     window_redraw()
 }
 
-pub fn center_cursor_line(editor: &mut Editor, window: WindowId) -> Outcome {
-    let (win, buffer) = editor.window_and_buffer_mut(window);
-    let head_row = win
+fn get_display_snapshot_and_cursor(
+    win: &Window,
+    buffer: &vim_buffer::Buffer,
+) -> (display_map::DisplaySnapshot, Point) {
+    let head_point = win
         .selections()
         .primary()
         .head()
-        .to_point(buffer.as_text_buffer())
-        .row;
+        .to_point(buffer.as_text_buffer());
+    let row_count = buffer.as_text_buffer().row_count();
+    let number_width = (row_count.max(1) as f64).log10().ceil().max(4.0) as usize;
+    let mut gutter_width: u32 = 0;
+    let opts = win.options();
+    if opts.foldcolumn > 0 {
+        gutter_width = gutter_width.saturating_add(opts.foldcolumn as u32);
+    }
+    if opts.signcolumn == "yes" {
+        gutter_width = gutter_width.saturating_add(2);
+    }
+    if opts.number || opts.relativenumber {
+        gutter_width = gutter_width.saturating_add(number_width as u32 + 1);
+    }
+    let effective_text_width = win.viewport_width().saturating_sub(gutter_width);
+    let wrap_width = if opts.wrap {
+        Some(effective_text_width.max(1))
+    } else {
+        None
+    };
+
+    let snapshot = buffer.snapshot().into_inner();
+    let folds = win.display_folds(&snapshot);
+    let mut map = display_map::DisplayMap::new(snapshot.clone(), wrap_width);
+    map.fold(folds, snapshot);
+    (map.snapshot(), head_point)
+}
+
+pub fn center_cursor_line(editor: &mut Editor, window: WindowId) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let (display_snapshot, head_point) = get_display_snapshot_and_cursor(win, buffer);
+
+    let line_start_display_row = display_snapshot
+        .point_to_display_point(Point::new(head_point.row, 0))
+        .row();
     let height = win.viewport_height().max(1);
-    win.set_scroll_top(head_row.saturating_sub(height / 2));
+    let target_scroll_y = line_start_display_row.saturating_sub(height / 2);
+    let new_scroll_top = display_snapshot.buffer_row_for_display_row(target_scroll_y);
+    win.set_scroll_top(new_scroll_top);
     window_redraw()
 }
 
 pub fn cursor_line_top(editor: &mut Editor, window: WindowId) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
-    let head_row = win
-        .selections()
-        .primary()
-        .head()
-        .to_point(buffer.as_text_buffer())
-        .row;
-    win.set_scroll_top(head_row);
+    let (display_snapshot, head_point) = get_display_snapshot_and_cursor(win, buffer);
+
+    let line_start_display_row = display_snapshot
+        .point_to_display_point(Point::new(head_point.row, 0))
+        .row();
+    let new_scroll_top = display_snapshot.buffer_row_for_display_row(line_start_display_row);
+    win.set_scroll_top(new_scroll_top);
     window_redraw()
 }
 
 pub fn cursor_line_bottom(editor: &mut Editor, window: WindowId) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
-    let head_row = win
-        .selections()
-        .primary()
-        .head()
-        .to_point(buffer.as_text_buffer())
-        .row;
+    let (display_snapshot, head_point) = get_display_snapshot_and_cursor(win, buffer);
+
+    let display_cursor = display_snapshot.point_to_display_point(head_point);
+    let cursor_display_row = display_cursor.row();
     let height = win.viewport_height().max(1);
-    win.set_scroll_top(head_row.saturating_add(1).saturating_sub(height));
+    let target_scroll_y = cursor_display_row.saturating_add(1).saturating_sub(height);
+    let new_scroll_top = display_snapshot.buffer_row_for_display_row(target_scroll_y);
+    win.set_scroll_top(new_scroll_top);
     window_redraw()
 }
 

@@ -445,6 +445,7 @@ impl App {
         if self.editor.has_pending_substitute() {
             let outcome = match raw_key {
                 input::RawKey::Char(ch) => {
+                    let ch = ch.to_ascii_lowercase();
                     if "ynaql".contains(ch) {
                         self.editor.handle_substitute_confirm(ch)
                     } else {
@@ -569,11 +570,14 @@ impl App {
                     kind: crate::kernel::buffer::registers::RegisterKind::Character,
                 },
             );
+            self.editor.set_peeked_search_range(None);
+            self.editor.set_peeked_substitute_text(None);
             outcome.invalidation = crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
         } else if matches!(
             mode,
             crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::Ex)
         ) {
+            let mut range_set = false;
             if let Some(cmd) = crate::kernel::command::ex::parse(self.prompt.text()) {
                 if cmd.name == "s" || cmd.name == "substitute" {
                     if let Ok(args) =
@@ -586,11 +590,36 @@ impl App {
                                 kind: crate::kernel::buffer::registers::RegisterKind::Character,
                             },
                         );
+                        if let Some(r) = cmd.range {
+                            self.editor.set_peeked_search_range(Some(r));
+                        } else {
+                            self.editor.set_peeked_search_range(Some(
+                                vim_script::ast::CommandRange {
+                                    start: vim_script::ast::Address::Current,
+                                    end: None,
+                                    separator: None,
+                                },
+                            ));
+                        }
+                        if args.replacement_resolved {
+                            self.editor
+                                .set_peeked_substitute_text(Some(args.replacement));
+                        } else {
+                            self.editor.set_peeked_substitute_text(None);
+                        }
+                        range_set = true;
                         outcome.invalidation =
                             crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
                     }
                 }
             }
+            if !range_set {
+                self.editor.set_peeked_search_range(None);
+                self.editor.set_peeked_substitute_text(None);
+            }
+        } else {
+            self.editor.set_peeked_search_range(None);
+            self.editor.set_peeked_substitute_text(None);
         }
 
         outcome

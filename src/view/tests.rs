@@ -1240,3 +1240,171 @@ fn test_wrap_and_horizontal_scroll() {
     let text_part = cells_str.split("\n\n").next().unwrap();
     assert!(text_part.starts_with("ery long line of te"));
 }
+
+#[test]
+fn test_peeked_search_highlight_range() {
+    let mut render_state = RenderState::new();
+    let mut editor = Editor::new("next world\nrust nextvim\nnext row\n");
+    let win_id = editor.current_context().window;
+
+    // Set the search pattern
+    editor.registers_mut().set(
+        crate::kernel::buffer::registers::RegisterName::Search,
+        crate::kernel::buffer::registers::Register {
+            text: "next".to_string(),
+            kind: crate::kernel::buffer::registers::RegisterKind::Character,
+        },
+    );
+
+    // Set the peeked search range: line 2 and relative +1 line (equivalent to lines 2 to 3)
+    let range = vim_script::ast::CommandRange {
+        start: vim_script::ast::Address::Line(2),
+        end: Some(vim_script::ast::Address::Offset {
+            base: Box::new(vim_script::ast::Address::Current),
+            amount: 1,
+        }),
+        separator: Some(vim_script::ast::RangeSeparator::Comma),
+    };
+    editor.set_peeked_search_range(Some(range));
+
+    // Render the frame to populate our cache and models
+    let screen = Rect::new(0, 0, 80, 24);
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+
+    // Retrieve cache
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+
+    // Check baked character backgrounds on each row:
+    let char_bgs = |row: &DisplayRow| -> Vec<Option<vim_ui::Color>> {
+        row.spans
+            .iter()
+            .flat_map(|s| std::iter::repeat(s.style.bg).take(s.text.chars().count()))
+            .collect()
+    };
+
+    // Row 1: "rust nextvim" -> line 2, in range -> "next" (indices 5..9) is highlighted
+    let bgs_1 = char_bgs(&model.rows[1]);
+    let search_highlight_color = bgs_1[5];
+    assert!(
+        search_highlight_color.is_some(),
+        "Search highlight color should be set"
+    );
+    assert_eq!(bgs_1[6], search_highlight_color);
+    assert_eq!(bgs_1[7], search_highlight_color);
+    assert_eq!(bgs_1[8], search_highlight_color);
+
+    // Row 0: "next world" -> line 1, not in search range -> no highlights
+    let bgs_0 = char_bgs(&model.rows[0]);
+    // The first 4 characters are "next" - they must not have the search highlight color
+    assert_ne!(bgs_0[0], search_highlight_color);
+    assert_ne!(bgs_0[1], search_highlight_color);
+    assert_ne!(bgs_0[2], search_highlight_color);
+    assert_ne!(bgs_0[3], search_highlight_color);
+
+    // Row 2: "next row" -> line 3, in range -> "next" (indices 0..4) is highlighted
+    let bgs_2 = char_bgs(&model.rows[2]);
+    assert_eq!(bgs_2[0], search_highlight_color);
+    assert_eq!(bgs_2[1], search_highlight_color);
+    assert_eq!(bgs_2[2], search_highlight_color);
+    assert_eq!(bgs_2[3], search_highlight_color);
+}
+
+#[test]
+fn test_peeked_substitute_rendering() {
+    let mut render_state = RenderState::new();
+    let mut editor = Editor::new("next world\nrust nextvim\nnext row\n");
+    let win_id = editor.current_context().window;
+
+    // Set search register
+    editor.registers_mut().set(
+        crate::kernel::buffer::registers::RegisterName::Search,
+        crate::kernel::buffer::registers::Register {
+            text: "next".to_string(),
+            kind: crate::kernel::buffer::registers::RegisterKind::Character,
+        },
+    );
+
+    // Set the peeked search range: lines 2 to 3
+    let range = vim_script::ast::CommandRange {
+        start: vim_script::ast::Address::Line(2),
+        end: Some(vim_script::ast::Address::Line(3)),
+        separator: None,
+    };
+    editor.set_peeked_search_range(Some(range));
+
+    // Set the peeked substitute text
+    editor.set_peeked_substitute_text(Some("rust".to_string()));
+
+    // Render frame
+    let screen = Rect::new(0, 0, 80, 24);
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+
+    // Retrieve cache
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+
+    // Row 0: "next world" -> line 1, not in search range -> untouched original text
+    let row0 = &model.rows[0];
+    assert_eq!(row0.spans[0].text, "next world");
+
+    // Row 1: "rust nextvim" -> line 2, in range -> "next" replaced with "rust" -> "rust rustvim"
+    let row1 = &model.rows[1];
+    assert_eq!(row1.spans[0].text, "rust ");
+    assert_eq!(row1.spans[1].text, "rust");
+    assert_eq!(row1.spans[2].text, "vim");
+
+    // Row 2: "next row" -> line 3, in range -> "next" replaced with "rust" -> "rust row"
+    let row2 = &model.rows[2];
+    assert_eq!(row2.spans[0].text, "rust");
+    assert_eq!(row2.spans[1].text, " row");
+}
+
+#[test]
+fn test_unranged_peeked_substitute_rendering() {
+    let mut render_state = RenderState::new();
+    let mut editor = Editor::new("next world\nrust nextvim\nnext row\n");
+    let win_id = editor.current_context().window;
+
+    // Simulate unranged substitute command peeking (like :s/next/rust/):
+    // Set search pattern
+    editor.registers_mut().set(
+        crate::kernel::buffer::registers::RegisterName::Search,
+        crate::kernel::buffer::registers::Register {
+            text: "next".to_string(),
+            kind: crate::kernel::buffer::registers::RegisterKind::Character,
+        },
+    );
+
+    // Unranged command range (defaults to Address::Current)
+    let range = vim_script::ast::CommandRange {
+        start: vim_script::ast::Address::Current,
+        end: None,
+        separator: None,
+    };
+    editor.set_peeked_search_range(Some(range));
+
+    // Set peeked substitute text
+    editor.set_peeked_substitute_text(Some("rust".to_string()));
+
+    // Render frame
+    let screen = Rect::new(0, 0, 80, 24);
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+
+    // Retrieve cache
+    let cache = render_state.windows.get(&win_id).unwrap();
+    let model = cache.last_model.as_ref().unwrap();
+
+    // Row 0: "next world" -> line 1, current line -> "next" replaced with "rust" -> "rust world"
+    let row0 = &model.rows[0];
+    assert_eq!(row0.spans[0].text, "rust");
+    assert_eq!(row0.spans[1].text, " world");
+
+    // Row 1: "rust nextvim" -> line 2, not current line -> untouched original text
+    let row1 = &model.rows[1];
+    assert_eq!(row1.spans[0].text, "rust nextvim");
+
+    // Row 2: "next row" -> line 3, not current line -> untouched original text
+    let row2 = &model.rows[2];
+    assert_eq!(row2.spans[0].text, "next row");
+}

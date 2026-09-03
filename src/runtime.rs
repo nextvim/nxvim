@@ -134,7 +134,8 @@ pub fn run(
             continue;
         }
 
-        let is_command_mode = app.editor().mode().is_command();
+        let is_command_mode =
+            app.editor().mode().is_command() || app.editor().has_pending_substitute();
         if is_command_mode {
             if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
                 let outcome = app.handle_raw_key(raw_key);

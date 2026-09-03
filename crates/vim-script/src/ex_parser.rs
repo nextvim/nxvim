@@ -494,4 +494,12 @@ mod tests {
         );
         assert_eq!(parsed.command.name, "write");
     }
+
+    #[test]
+    fn parses_1_2d() {
+        let parsed = ExLineParser::new(SourceId(0), "1,2d", 0).parse();
+        println!("parsed: {:?}", parsed);
+        let p = parsed.unwrap();
+        assert_eq!(p.command.name, "d");
+    }
 }

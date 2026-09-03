@@ -20,6 +20,7 @@ pub struct SubstituteArgs {
     pub pattern: String,
     pub replacement: String,
     pub flags: String,
+    pub replacement_resolved: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +56,7 @@ pub fn parse_substitute(args: &str) -> Result<SubstituteArgs, String> {
                 pattern: String::new(),
                 replacement: String::new(),
                 flags: String::new(),
+                replacement_resolved: true,
             });
         }
         Some(c) if is_valid_delimiter(c) => c,
@@ -87,6 +89,7 @@ pub fn parse_substitute(args: &str) -> Result<SubstituteArgs, String> {
             pattern,
             replacement: String::new(),
             flags: String::new(),
+            replacement_resolved: false,
         });
     }
 
@@ -123,6 +126,7 @@ pub fn parse_substitute(args: &str) -> Result<SubstituteArgs, String> {
         pattern,
         replacement,
         flags,
+        replacement_resolved: true,
     })
 }
 
@@ -618,6 +622,7 @@ mod tests {
                 pattern: "foo".to_string(),
                 replacement: "bar".to_string(),
                 flags: "g".to_string(),
+                replacement_resolved: true,
             }
         );
         assert_eq!(
@@ -626,6 +631,7 @@ mod tests {
                 pattern: "foo".to_string(),
                 replacement: "bar".to_string(),
                 flags: "gc".to_string(),
+                replacement_resolved: true,
             }
         );
         assert_eq!(
@@ -634,6 +640,7 @@ mod tests {
                 pattern: "foo/baz".to_string(),
                 replacement: "bar".to_string(),
                 flags: "".to_string(),
+                replacement_resolved: true,
             }
         );
         assert_eq!(
@@ -642,6 +649,7 @@ mod tests {
                 pattern: "".to_string(),
                 replacement: "".to_string(),
                 flags: "".to_string(),
+                replacement_resolved: true,
             }
         );
     }

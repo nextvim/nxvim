@@ -48,6 +48,8 @@ pub struct Editor {
     pub(crate) pending_register: Option<char>,
     pub(crate) primed_clipboard_register: Option<String>,
     pub(crate) pending_substitute: Option<command::substitute::PendingSubstitute>,
+    pub(crate) peeked_search_range: Option<vim_script::ast::CommandRange>,
+    pub(crate) peeked_substitute_text: Option<String>,
     pub(crate) quickfix_list: Vec<window::QuickfixItem>,
     pub(crate) quickfix_index: usize,
 }
@@ -115,6 +117,8 @@ impl Editor {
             pending_register: None,
             primed_clipboard_register: None,
             pending_substitute: None,
+            peeked_search_range: None,
+            peeked_substitute_text: None,
             quickfix_list: Vec::new(),
             quickfix_index: 0,
         }
@@ -230,6 +234,22 @@ impl Editor {
         self.mode
     }
 
+    pub fn peeked_search_range(&self) -> Option<&vim_script::ast::CommandRange> {
+        self.peeked_search_range.as_ref()
+    }
+
+    pub fn set_peeked_search_range(&mut self, range: Option<vim_script::ast::CommandRange>) {
+        self.peeked_search_range = range;
+    }
+
+    pub fn peeked_substitute_text(&self) -> Option<&str> {
+        self.peeked_substitute_text.as_deref()
+    }
+
+    pub fn set_peeked_substitute_text(&mut self, text: Option<String>) {
+        self.peeked_substitute_text = text;
+    }
+
     pub fn current_context(&self) -> CommandContext {
         self.current
     }
@@ -310,6 +330,10 @@ impl Editor {
     // directly (RESCUE.md Rule 4.8 / Skeleton Criteria for Completion).
 
     pub(crate) fn set_mode(&mut self, mode: Mode) {
+        if !matches!(mode, Mode::Command(crate::kernel::mode::CommandKind::Ex)) {
+            self.peeked_search_range = None;
+            self.peeked_substitute_text = None;
+        }
         self.mode = mode;
     }
 
@@ -516,6 +540,81 @@ mod tests {
         editor.execute(Action::ScrollHalfPageUp { count: 1 });
         assert_eq!(cursor(&editor), Point::new(0, 0));
         assert_eq!(editor.window(window).expect("live window").scroll_top(), 0);
+    }
+
+    #[test]
+    fn zt_zz_zb_under_folds_and_wraps() {
+        let mut editor = Editor::new("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+        let window = editor.current_context().window;
+
+        // Set viewport height to 4.
+        {
+            let win = editor.windows_mut().get_mut(window).expect("live window");
+            win.set_viewport_height(4);
+            win.set_viewport_width(80);
+        }
+
+        // Test basic zt (top) with cursor at row 5.
+        editor.execute(Action::MoveDown {
+            count: 5,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(5, 0));
+
+        editor.execute(Action::CursorLineTop);
+        assert_eq!(editor.window(window).unwrap().scroll_top(), 5);
+
+        // Test basic zz (center) with cursor at row 5.
+        // height = 4. height / 2 = 2.
+        // target_scroll_y = 5 - 2 = 3.
+        editor.execute(Action::CenterCursorLine);
+        assert_eq!(editor.window(window).unwrap().scroll_top(), 3);
+
+        // Test basic zb (bottom) with cursor at row 5.
+        // height = 4. cursor is at 5.
+        // target_scroll_y = 5 + 1 - 4 = 2.
+        editor.execute(Action::CursorLineBottom);
+        assert_eq!(editor.window(window).unwrap().scroll_top(), 2);
+
+        // Now let's fold rows 1 to 3.
+        // Visual display rows will be:
+        // row 0 -> display 0
+        // row 1..3 -> hidden under fold on display 1
+        // row 4 -> display 2
+        // row 5 -> display 3
+        {
+            let buffer = editor.current_buffer();
+            let anchor_start = buffer.as_text_buffer().anchor_before(Point::new(1, 0));
+            let anchor_end = buffer.as_text_buffer().anchor_after(Point::new(3, 1));
+            let win = editor.windows_mut().get_mut(window).expect("live window");
+            win.folds_mut().push(crate::kernel::window::FoldRange {
+                start: anchor_start,
+                end: anchor_end,
+            });
+        }
+
+        // Cursor is still at row 5.
+        // Let's compute its display row:
+        // row 0: 1 line -> display 0
+        // fold row 1-3: 1 line -> display 1
+        // row 4: 1 line -> display 2
+        // row 5: 1 line -> display 3
+        // So head_point row 5 has line_start_display_row = 3.
+        //
+        // 1. zt (top): target_scroll_y = 3.
+        // scroll_top should map display row 3 back to buffer row 5.
+        editor.execute(Action::CursorLineTop);
+        assert_eq!(editor.window(window).unwrap().scroll_top(), 5);
+
+        // 2. zz (center): target_scroll_y = 3 - 2 = 1.
+        // scroll_top should map display row 1 back to buffer row 1 (the start of the fold).
+        editor.execute(Action::CenterCursorLine);
+        assert_eq!(editor.window(window).unwrap().scroll_top(), 1);
+
+        // 3. zb (bottom): target_scroll_y = 3 + 1 - 4 = 0.
+        // scroll_top should map display row 0 back to buffer row 0.
+        editor.execute(Action::CursorLineBottom);
+        assert_eq!(editor.window(window).unwrap().scroll_top(), 0);
     }
 
     /// `;`/`,` repeat the last `f`/`F`/`t`/`T` search — `;` the same
@@ -1152,6 +1251,12 @@ mod tests {
             RedrawInvalidation::Range { .. }
         ));
 
+        // Short command name range delete
+        let mut editor_short = Editor::new("line1\nline2\nline3\nline4");
+        let outcome_short = editor_short.submit_command_line("2,3d");
+        assert_eq!(text_of(&editor_short), "line1\nline4");
+        assert!(outcome_short.mutated);
+
         // 2. An unknown command is a no-op Outcome
         let mut editor = Editor::new("line1\nline2");
         let outcome = editor.submit_command_line("unknown");
@@ -1178,6 +1283,42 @@ mod tests {
         let outcome = editor.execute(Action::Clear);
         assert_eq!(editor.mode(), Mode::Normal);
         assert!(outcome.mode_changed);
+    }
+
+    #[test]
+    fn range_only_jump_smoke_test() {
+        // 1. :10 jumps to line 10
+        let mut editor = Editor::new("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12");
+        editor.submit_command_line("10");
+        assert_eq!(cursor(&editor).row, 9); // 0-indexed row 9 = line 10
+
+        // 2. :+5 jumps 5 lines down from current position
+        editor.submit_command_line("+5");
+        assert_eq!(cursor(&editor).row, 14.min(11)); // row 14 capped at last row (11)
+
+        // 3. :-3 jumps 3 lines up from current position
+        editor.submit_command_line("12");
+        assert_eq!(cursor(&editor).row, 11); // line 12 = row 11
+        editor.submit_command_line("-3");
+        assert_eq!(cursor(&editor).row, 8); // row 11 - 3 = row 8 (line 9)
+
+        // 4. :10,20 range jumps to line 10 (start of range)
+        editor.submit_command_line("10,20");
+        assert_eq!(cursor(&editor).row, 9); // line 10 = row 9
+
+        // 5. :1 jumps to first line
+        editor.submit_command_line("1");
+        assert_eq!(cursor(&editor).row, 0);
+
+        // 6. :$ jumps to last line
+        editor.submit_command_line("$");
+        assert_eq!(cursor(&editor).row, 11); // last line = row 11
+
+        // 7. Empty command with no range is a no-op
+        let mut editor2 = Editor::new("a\nb\nc");
+        let outcome = editor2.submit_command_line("");
+        assert!(!outcome.mutated);
+        assert_eq!(cursor(&editor2).row, 0); // still at start
     }
 
     #[test]

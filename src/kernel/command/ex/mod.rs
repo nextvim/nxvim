@@ -62,7 +62,7 @@ pub fn exit(editor: &mut Editor) -> Outcome {
 }
 
 pub fn parse(line: &str) -> Option<ExCommand> {
-    ExLineParser::new(SourceId(0), line, 0)
+    ExLineParser::new(SourceId(0), line.trim(), 0)
         .parse()
         .ok()
         .map(|p| p.command)
@@ -77,7 +77,41 @@ pub fn admit(editor: &mut Editor, ctx: CommandContext, line: &str) -> Outcome {
     }
 }
 
-pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExCommand) -> Outcome {
+fn resolve_canonical_command_name(name: &str) -> String {
+    for spec in crate::script::commands::COMMAND_SPECS {
+        if spec.name == name {
+            return spec.name.to_string();
+        }
+    }
+    for spec in crate::script::commands::COMMAND_SPECS {
+        for &(alias, _) in spec.aliases {
+            if alias == name {
+                return spec.name.to_string();
+            }
+        }
+    }
+    let mut matches = Vec::new();
+    for spec in crate::script::commands::COMMAND_SPECS {
+        if name.len() >= spec.minimum_abbreviation && spec.name.starts_with(name) {
+            matches.push(spec.name);
+        } else {
+            for &(alias, min_abbr) in spec.aliases {
+                if name.len() >= min_abbr && alias.starts_with(name) {
+                    matches.push(spec.name);
+                    break;
+                }
+            }
+        }
+    }
+    if matches.len() == 1 {
+        matches[0].to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCommand) -> Outcome {
+    command.name = resolve_canonical_command_name(&command.name);
     match command.name.as_str() {
         "delete" => {
             let current_row = if let Some(win) = editor.window(ctx.window) {
@@ -980,6 +1014,47 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, command: ExComman
             let opts = parse_sort_options(command.bang, &command.arguments);
             execute_sort_lines(editor, ctx, start_line, end_line, opts)
         }
+        "" => {
+            // Range-only command: jump to the specified line(s)
+            // e.g. :10 jumps to line 10, :+5 jumps 5 lines down, :-3 jumps 3 lines up,
+            // :10,+10 jumps to line 10
+            if command.range.is_none() {
+                return Outcome::default();
+            }
+
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+
+            let (start_line, _end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
+
+            // Jump to the start of the range (1-based line number -> 0-based row)
+            let target_row = start_line.saturating_sub(1).min(max_row);
+            set_cursor_to_row(editor, ctx.window, ctx.buffer, target_row);
+            Outcome {
+                invalidation: RedrawInvalidation::CurrentWindow,
+                ..Outcome::default()
+            }
+        }
         _ => Outcome::default(),
     }
 }
@@ -1033,6 +1108,7 @@ fn set_cursor_to_row(
                 reversed: false,
                 goal: SelectionGoal::None,
             });
+            win.scroll_to_line(target_row);
         }
     }
 }
@@ -1064,6 +1140,7 @@ fn set_cursor_to_row_first_non_blank(
                 reversed: false,
                 goal: SelectionGoal::None,
             });
+            win.scroll_to_line(target_row);
         }
     }
 }
@@ -1361,7 +1438,7 @@ fn resolve_address(
     }
 }
 
-fn resolve_range(
+pub(crate) fn resolve_range(
     editor: &Editor,
     ctx: CommandContext,
     range: &Option<CommandRange>,
@@ -1377,7 +1454,9 @@ fn resolve_range(
     }
     let start_line = resolve_address(editor, ctx, &range.start, current_row, max_row)?;
     let end_line = match &range.end {
-        Some(end_addr) => resolve_address(editor, ctx, end_addr, current_row, max_row)?,
+        Some(end_addr) => {
+            resolve_address(editor, ctx, end_addr, start_line.saturating_sub(1), max_row)?
+        }
         None => start_line,
     };
     Some((start_line, end_line))

@@ -180,6 +180,9 @@ impl<'a> Parser<'a> {
             TokenKind::Identifier(_) if self.looks_like_ex_command() => {
                 StmtKind::ExCommand(self.ex_command()?)
             }
+            _ if self.source.is_some() && self.looks_like_range_ex_command() => {
+                StmtKind::ExCommand(self.ex_command()?)
+            }
             _ => StmtKind::Expression(self.expression(0)?),
         };
         let end = self.previous().span.end;
@@ -895,6 +898,33 @@ impl<'a> Parser<'a> {
         )
     }
 
+    fn looks_like_range_ex_command(&self) -> bool {
+        match &self.current().kind {
+            TokenKind::Dot | TokenKind::Comma | TokenKind::Semicolon => true,
+            TokenKind::Operator(Operator::Remainder) => true, // %
+            TokenKind::Integer(_) => {
+                if let Some(next) = self.tokens.get(self.cursor + 1) {
+                    matches!(
+                        next.kind,
+                        TokenKind::Comma
+                            | TokenKind::Semicolon
+                            | TokenKind::Identifier(_)
+                            | TokenKind::Newline
+                            | TokenKind::EndOfFile
+                            | TokenKind::Operator(Operator::Add | Operator::Subtract)
+                    )
+                } else {
+                    true
+                }
+            }
+            TokenKind::Operator(Operator::Add | Operator::Subtract) => {
+                // Statements starting with + or - are range-only jump commands in Vim
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn looks_like_assignment(&self) -> bool {
         self.tokens.get(self.cursor + 1).is_some_and(|token| {
             matches!(
@@ -1128,7 +1158,7 @@ mod tests {
             "lexer diagnostics: {:?}",
             tokens.diagnostics
         );
-        Parser::new(&tokens.tokens).parse()
+        Parser::new_with_source(&tokens.tokens, source).parse()
     }
 
     #[test]
@@ -1220,6 +1250,23 @@ mod tests {
         assert!(matches!(statements[0].kind, StmtKind::ExCommand(_)));
         assert!(matches!(statements[1].kind, StmtKind::ExCommand(_)));
         assert!(matches!(statements[2].kind, StmtKind::Finish));
+    }
+
+    #[test]
+    fn parses_range_ex_commands() {
+        let output = parse("1,2d\n");
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+
+        let output2 = parse("500\n");
+        assert!(output2.diagnostics.is_empty(), "{:?}", output2.diagnostics);
+        let StmtKind::ExCommand(cmd) = &output2.program.as_ref().unwrap().statements[0].kind else {
+            panic!("expected ex command");
+        };
+        assert_eq!(cmd.name, "");
+        assert!(cmd.range.is_some());
+
+        let output3 = parse("+5\n");
+        assert!(output3.diagnostics.is_empty(), "{:?}", output3.diagnostics);
     }
 
     #[test]
