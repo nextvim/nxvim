@@ -236,6 +236,274 @@ fn should_rebuild(
         })
 }
 
+fn build_syntax_decorations(
+    snapshot: &display_map::DisplaySnapshot,
+    syntax_rows: &HashMap<u32, Vec<textmate::HighlightSpan>>,
+    scroll_y: u32,
+    visible_rows: u32,
+    wrap: bool,
+    leftcol: u32,
+    decorations: &mut Vec<DisplayDecoration>,
+) {
+    for (buffer_row, spans) in syntax_rows {
+        for span in spans {
+            let Some(start) =
+                snapshot.try_point_to_display_point(Point::new(*buffer_row, span.start_column))
+            else {
+                continue;
+            };
+            let Some(end) =
+                snapshot.try_point_to_display_point(Point::new(*buffer_row, span.end_column))
+            else {
+                continue;
+            };
+            let leftcol_offset = if wrap { 0 } else { leftcol };
+            if !wrap && end.column() <= leftcol_offset {
+                continue;
+            }
+            let Some((start, end)) =
+                display_range_in_viewport(start, end, scroll_y, visible_rows, leftcol_offset)
+            else {
+                continue;
+            };
+
+            let mut style = Style::default();
+            style.fg = Some(vim_ui::Color::Rgb(
+                span.foreground[0],
+                span.foreground[1],
+                span.foreground[2],
+            ));
+            decorations.push(DisplayDecoration {
+                start,
+                end,
+                style,
+                priority: 0,
+            });
+        }
+    }
+}
+
+fn build_selection_decorations(
+    snapshot: &display_map::DisplaySnapshot,
+    projection: &crate::app::view_sync::WindowProjection,
+    scroll_y: u32,
+    selected_style: Style,
+    decorations: &mut Vec<DisplayDecoration>,
+) {
+    for sel in &projection.selections.selections {
+        let start_pt = projection
+            .snapshot
+            .offset_to_point(sel.start.to_offset(&projection.snapshot));
+        let end_pt = projection
+            .snapshot
+            .offset_to_point(sel.end.to_offset(&projection.snapshot));
+
+        let mut ranges = Vec::new();
+        match projection.visual_kind {
+            Some(VisualKind::Line) => {
+                let start_row = start_pt.row.min(end_pt.row);
+                let end_row = start_pt.row.max(end_pt.row);
+                let s_pt = Point::new(start_row, 0);
+                let e_pt = Point::new(end_row, projection.snapshot.line_len(end_row));
+                ranges.push((s_pt, e_pt));
+            }
+            Some(VisualKind::Block) => {
+                let row_start = start_pt.row.min(end_pt.row);
+                let row_end = start_pt.row.max(end_pt.row);
+                let col_start = start_pt.column.min(end_pt.column);
+                let col_end = start_pt.column.max(end_pt.column) + 1;
+                for r in row_start..=row_end {
+                    let line_len = projection.snapshot.line_len(r);
+                    let s_col = col_start.min(line_len);
+                    let e_col = col_end.min(line_len);
+                    ranges.push((Point::new(r, s_col), Point::new(r, e_col)));
+                }
+            }
+            _ => {
+                if projection.visual_kind.is_some() {
+                    let (low, mut high) = if start_pt <= end_pt {
+                        (start_pt, end_pt)
+                    } else {
+                        (end_pt, start_pt)
+                    };
+                    let line_len = projection.snapshot.line_len(high.row);
+                    if high.column < line_len {
+                        high.column += 1;
+                    }
+                    ranges.push((low, high));
+                } else {
+                    ranges.push((start_pt, end_pt));
+                }
+            }
+        }
+
+        for (s_pt, e_pt) in ranges {
+            if let (Some(d_start), Some(d_end)) = (
+                snapshot.try_point_to_display_point(s_pt),
+                snapshot.try_point_to_display_point(e_pt),
+            ) {
+                let leftcol_offset = if projection.wrap {
+                    0
+                } else {
+                    projection.leftcol
+                };
+                // Ensure proper orientation for DisplaySelection (validate checks end >= start)
+                let (start_pos, end_pos) = if d_end >= d_start {
+                    (
+                        DisplayPosition {
+                            row: d_start.row().saturating_sub(scroll_y),
+                            column: d_start.column().saturating_sub(leftcol_offset),
+                        },
+                        DisplayPosition {
+                            row: d_end.row().saturating_sub(scroll_y),
+                            column: d_end.column().saturating_sub(leftcol_offset),
+                        },
+                    )
+                } else {
+                    (
+                        DisplayPosition {
+                            row: d_end.row().saturating_sub(scroll_y),
+                            column: d_end.column().saturating_sub(leftcol_offset),
+                        },
+                        DisplayPosition {
+                            row: d_start.row().saturating_sub(scroll_y),
+                            column: d_start.column().saturating_sub(leftcol_offset),
+                        },
+                    )
+                };
+
+                decorations.push(DisplayDecoration {
+                    start: start_pos,
+                    end: end_pos,
+                    style: selected_style,
+                    priority: 100,
+                });
+            }
+        }
+    }
+}
+
+fn build_search_decorations(
+    snapshot: &display_map::DisplaySnapshot,
+    editor: &crate::kernel::Editor,
+    search_regex: &Option<vim_regex::Regex>,
+    resolved_search_range: Option<(u32, u32)>,
+    search_style: &Style,
+    scroll_y: u32,
+    visible_rows: u32,
+    decorations: &mut Vec<DisplayDecoration>,
+) {
+    if editor.peeked_substitute_text().is_some() {
+        return;
+    }
+    let Some(regex) = search_regex else {
+        return;
+    };
+
+    let mut visible_buffer_rows = std::collections::BTreeSet::new();
+    for i in 0..visible_rows {
+        let display_row = scroll_y + i;
+        if display_row < snapshot.row_count() {
+            if let Some(brow) = snapshot.try_buffer_row_for_display_row(display_row) {
+                visible_buffer_rows.insert(brow);
+            }
+        }
+    }
+
+    let buffer_snapshot = snapshot.buffer_snapshot();
+    for brow in visible_buffer_rows {
+        if let Some((start, end)) = resolved_search_range {
+            let line = brow + 1;
+            if line < start || line > end {
+                continue;
+            }
+        }
+
+        let line_len = buffer_snapshot.line_len(brow);
+        let line_text: String = buffer_snapshot
+            .text_for_range(text::Point::new(brow, 0)..text::Point::new(brow, line_len))
+            .collect();
+
+        use vim_buffer::TextSearch;
+        let matches = line_text.find_pattern(regex);
+        for (byte_start, match_len, _) in matches {
+            let start_pt = text::Point::new(brow, byte_start as u32);
+            let end_pt = text::Point::new(brow, (byte_start + match_len) as u32);
+            if let (Some(d_start), Some(d_end)) = (
+                snapshot.try_point_to_display_point(start_pt),
+                snapshot.try_point_to_display_point(end_pt),
+            ) {
+                let (start_pos, end_pos) = if d_end >= d_start {
+                    (
+                        DisplayPosition {
+                            row: d_start.row().saturating_sub(scroll_y),
+                            column: d_start.column(),
+                        },
+                        DisplayPosition {
+                            row: d_end.row().saturating_sub(scroll_y),
+                            column: d_end.column(),
+                        },
+                    )
+                } else {
+                    (
+                        DisplayPosition {
+                            row: d_end.row().saturating_sub(scroll_y),
+                            column: d_end.column(),
+                        },
+                        DisplayPosition {
+                            row: d_start.row().saturating_sub(scroll_y),
+                            column: d_start.column(),
+                        },
+                    )
+                };
+                decorations.push(DisplayDecoration {
+                    start: start_pos,
+                    end: end_pos,
+                    style: search_style.clone(),
+                    priority: 50,
+                });
+            }
+        }
+    }
+}
+
+fn build_cursorline_decoration(
+    editor: &crate::kernel::Editor,
+    projection: &crate::app::view_sync::WindowProjection,
+    display_cursor: DisplayPoint,
+    scroll_y: u32,
+    viewport_height: u32,
+    viewport_width: u32,
+    scheme: &ColorScheme,
+    decorations: &mut Vec<DisplayDecoration>,
+) {
+    if let Some(win) = editor.window(projection.window) {
+        if win.options().cursorline {
+            let cursor_row_in_viewport = display_cursor.row().saturating_sub(scroll_y);
+            if cursor_row_in_viewport < viewport_height {
+                let cursorline_style =
+                    scheme.get_style("CursorLine").cloned().unwrap_or_else(|| {
+                        let mut style = Style::default();
+                        style.bg = Some(vim_ui::Color::Rgb(40, 40, 40));
+                        style
+                    });
+                decorations.push(DisplayDecoration {
+                    start: DisplayPosition {
+                        row: cursor_row_in_viewport,
+                        column: 0,
+                    },
+                    end: DisplayPosition {
+                        row: cursor_row_in_viewport,
+                        column: viewport_width,
+                    },
+                    style: cursorline_style,
+                    priority: 10,
+                });
+            }
+        }
+    }
+}
+
 /// Renders all windows in the active tab page according to the layout tree
 /// and projection state.
 ///
@@ -283,7 +551,6 @@ pub fn render_with_scheme(
     force_full: bool,
     scheme: &ColorScheme,
 ) -> io::Result<()> {
-    use text::ToOffset;
     let projections = crate::app::view_sync::project(editor);
     let laststatus = editor.global_options().laststatus;
     let ruler = editor.global_options().ruler;
@@ -485,7 +752,6 @@ pub fn render_with_scheme(
             cache.display_map.scroll_x = projection.leftcol;
 
             // Convert selections
-            use text::ToOffset;
             let primary_sel = projection.selections.primary();
             let head_point = projection
                 .snapshot
@@ -771,248 +1037,46 @@ pub fn render_with_scheme(
             // Syntax is a low-priority decoration over unchanged display text.
             // TextView composes all decoration layers in priority order.
             let mut decorations = Vec::new();
-            for (buffer_row, spans) in &syntax_rows {
-                for span in spans {
-                    let Some(start) = snapshot
-                        .try_point_to_display_point(Point::new(*buffer_row, span.start_column))
-                    else {
-                        continue;
-                    };
-                    let Some(end) = snapshot
-                        .try_point_to_display_point(Point::new(*buffer_row, span.end_column))
-                    else {
-                        continue;
-                    };
-                    let leftcol_offset = if projection.wrap {
-                        0
-                    } else {
-                        projection.leftcol
-                    };
-                    if !projection.wrap && end.column() <= leftcol_offset {
-                        continue;
-                    }
-                    let Some((start, end)) = display_range_in_viewport(
-                        start,
-                        end,
-                        scroll_y,
-                        visible_rows,
-                        leftcol_offset,
-                    ) else {
-                        continue;
-                    };
 
-                    let mut style = Style::default();
-                    style.fg = Some(vim_ui::Color::Rgb(
-                        span.foreground[0],
-                        span.foreground[1],
-                        span.foreground[2],
-                    ));
-                    decorations.push(DisplayDecoration {
-                        start,
-                        end,
-                        style,
-                        priority: 0,
-                    });
-                }
-            }
+            build_syntax_decorations(
+                &snapshot,
+                &syntax_rows,
+                scroll_y,
+                visible_rows,
+                projection.wrap,
+                projection.leftcol,
+                &mut decorations,
+            );
 
-            // Higher-priority semantic overlays.
-            for sel in &projection.selections.selections {
-                let start_pt = projection
-                    .snapshot
-                    .offset_to_point(sel.start.to_offset(&projection.snapshot));
-                let end_pt = projection
-                    .snapshot
-                    .offset_to_point(sel.end.to_offset(&projection.snapshot));
+            build_selection_decorations(
+                &snapshot,
+                projection,
+                scroll_y,
+                selected_style,
+                &mut decorations,
+            );
 
-                let mut ranges = Vec::new();
-                match projection.visual_kind {
-                    Some(VisualKind::Line) => {
-                        let start_row = start_pt.row.min(end_pt.row);
-                        let end_row = start_pt.row.max(end_pt.row);
-                        let s_pt = Point::new(start_row, 0);
-                        let e_pt = Point::new(end_row, projection.snapshot.line_len(end_row));
-                        ranges.push((s_pt, e_pt));
-                    }
-                    Some(VisualKind::Block) => {
-                        let row_start = start_pt.row.min(end_pt.row);
-                        let row_end = start_pt.row.max(end_pt.row);
-                        let col_start = start_pt.column.min(end_pt.column);
-                        let col_end = start_pt.column.max(end_pt.column) + 1;
-                        for r in row_start..=row_end {
-                            let line_len = projection.snapshot.line_len(r);
-                            let s_col = col_start.min(line_len);
-                            let e_col = col_end.min(line_len);
-                            ranges.push((Point::new(r, s_col), Point::new(r, e_col)));
-                        }
-                    }
-                    _ => {
-                        if projection.visual_kind.is_some() {
-                            let (low, mut high) = if start_pt <= end_pt {
-                                (start_pt, end_pt)
-                            } else {
-                                (end_pt, start_pt)
-                            };
-                            let line_len = projection.snapshot.line_len(high.row);
-                            if high.column < line_len {
-                                high.column += 1;
-                            }
-                            ranges.push((low, high));
-                        } else {
-                            ranges.push((start_pt, end_pt));
-                        }
-                    }
-                }
+            build_search_decorations(
+                &snapshot,
+                editor,
+                &search_regex,
+                resolved_search_range,
+                &search_style,
+                scroll_y,
+                visible_rows,
+                &mut decorations,
+            );
 
-                for (s_pt, e_pt) in ranges {
-                    if let (Some(d_start), Some(d_end)) = (
-                        snapshot.try_point_to_display_point(s_pt),
-                        snapshot.try_point_to_display_point(e_pt),
-                    ) {
-                        let leftcol_offset = if projection.wrap {
-                            0
-                        } else {
-                            projection.leftcol
-                        };
-                        // Ensure proper orientation for DisplaySelection (validate checks end >= start)
-                        let (start_pos, end_pos) = if d_end >= d_start {
-                            (
-                                DisplayPosition {
-                                    row: d_start.row().saturating_sub(scroll_y),
-                                    column: d_start.column().saturating_sub(leftcol_offset),
-                                },
-                                DisplayPosition {
-                                    row: d_end.row().saturating_sub(scroll_y),
-                                    column: d_end.column().saturating_sub(leftcol_offset),
-                                },
-                            )
-                        } else {
-                            (
-                                DisplayPosition {
-                                    row: d_end.row().saturating_sub(scroll_y),
-                                    column: d_end.column().saturating_sub(leftcol_offset),
-                                },
-                                DisplayPosition {
-                                    row: d_start.row().saturating_sub(scroll_y),
-                                    column: d_start.column().saturating_sub(leftcol_offset),
-                                },
-                            )
-                        };
-
-                        decorations.push(DisplayDecoration {
-                            start: start_pos,
-                            end: end_pos,
-                            style: selected_style,
-                            priority: 100,
-                        });
-                    }
-                }
-            }
-
-            // Search highlights
-            let mut search_decorations = Vec::new();
-            if editor.peeked_substitute_text().is_none() {
-                if let Some(ref regex) = search_regex {
-                    let scroll_y = snapshot.scroll_y;
-                    let visible_rows = snapshot.visible_rows.min(view_rect.height as u32);
-                    let mut visible_buffer_rows = std::collections::BTreeSet::new();
-                    for i in 0..visible_rows {
-                        let display_row = scroll_y + i;
-                        if display_row < snapshot.row_count() {
-                            if let Some(brow) = snapshot.try_buffer_row_for_display_row(display_row)
-                            {
-                                visible_buffer_rows.insert(brow);
-                            }
-                        }
-                    }
-
-                    let buffer_snapshot = snapshot.buffer_snapshot();
-                    for brow in visible_buffer_rows {
-                        if let Some((start, end)) = resolved_search_range {
-                            let line = brow + 1;
-                            if line < start || line > end {
-                                continue;
-                            }
-                        }
-
-                        let line_len = buffer_snapshot.line_len(brow);
-                        let line_text: String = buffer_snapshot
-                            .text_for_range(
-                                text::Point::new(brow, 0)..text::Point::new(brow, line_len),
-                            )
-                            .collect();
-
-                        use vim_buffer::TextSearch;
-                        let matches = line_text.find_pattern(regex);
-                        for (byte_start, match_len, _) in matches {
-                            let start_pt = text::Point::new(brow, byte_start as u32);
-                            let end_pt = text::Point::new(brow, (byte_start + match_len) as u32);
-                            if let (Some(d_start), Some(d_end)) = (
-                                snapshot.try_point_to_display_point(start_pt),
-                                snapshot.try_point_to_display_point(end_pt),
-                            ) {
-                                let (start_pos, end_pos) = if d_end >= d_start {
-                                    (
-                                        DisplayPosition {
-                                            row: d_start.row().saturating_sub(scroll_y),
-                                            column: d_start.column(),
-                                        },
-                                        DisplayPosition {
-                                            row: d_end.row().saturating_sub(scroll_y),
-                                            column: d_end.column(),
-                                        },
-                                    )
-                                } else {
-                                    (
-                                        DisplayPosition {
-                                            row: d_end.row().saturating_sub(scroll_y),
-                                            column: d_end.column(),
-                                        },
-                                        DisplayPosition {
-                                            row: d_start.row().saturating_sub(scroll_y),
-                                            column: d_start.column(),
-                                        },
-                                    )
-                                };
-                                search_decorations.push(DisplayDecoration {
-                                    start: start_pos,
-                                    end: end_pos,
-                                    style: search_style.clone(),
-                                    priority: 50,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            decorations.extend(search_decorations);
-
-            // Cursorline decoration
-            if let Some(win) = editor.window(projection.window) {
-                if win.options().cursorline {
-                    let cursor_row_in_viewport = display_cursor.row().saturating_sub(scroll_y);
-                    if cursor_row_in_viewport < view_rect.height as u32 {
-                        let cursorline_style =
-                            scheme.get_style("CursorLine").cloned().unwrap_or_else(|| {
-                                let mut style = Style::default();
-                                style.bg = Some(vim_ui::Color::Rgb(40, 40, 40));
-                                style
-                            });
-                        decorations.push(DisplayDecoration {
-                            start: DisplayPosition {
-                                row: cursor_row_in_viewport,
-                                column: 0,
-                            },
-                            end: DisplayPosition {
-                                row: cursor_row_in_viewport,
-                                column: view_rect.width as u32,
-                            },
-                            style: cursorline_style,
-                            priority: 10,
-                        });
-                    }
-                }
-            }
+            build_cursorline_decoration(
+                editor,
+                projection,
+                display_cursor,
+                scroll_y,
+                view_rect.height as u32,
+                view_rect.width as u32,
+                scheme,
+                &mut decorations,
+            );
 
             // Cursor
             let cursor_display_pos = DisplayPosition {
