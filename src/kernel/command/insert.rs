@@ -63,6 +63,12 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::MoveDown { count, select } => {
             super::normal::motions::move_down(editor, ctx.window, count, select)
         }
+        Action::MovePageUp { count, select } => {
+            super::normal::motions::move_page_up(editor, ctx.window, count, select)
+        }
+        Action::MovePageDown { count, select } => {
+            super::normal::motions::move_page_down(editor, ctx.window, count, select)
+        }
         // `Esc` in Insert mode resolves to `Action::Clear`, not
         // `Action::SetToNormal` (see `vim_input::Keymap::vim_defaults`'s
         // `insert_actions` table) — `vim_input::Resolver` treats both as

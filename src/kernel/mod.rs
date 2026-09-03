@@ -435,7 +435,7 @@ mod tests {
     use super::*;
     use crate::kernel::mode::VisualKind;
     use crate::kernel::outcome::Effect;
-    use text::Point;
+    use text::{Point, ToPoint};
 
     fn cursor(editor: &Editor) -> Point {
         let head = editor.current_window().selections().primary().head();
@@ -540,6 +540,56 @@ mod tests {
         editor.execute(Action::ScrollHalfPageUp { count: 1 });
         assert_eq!(cursor(&editor), Point::new(0, 0));
         assert_eq!(editor.window(window).expect("live window").scroll_top(), 0);
+    }
+
+    #[test]
+    fn move_page_down_and_up_move_viewport_and_cursor() {
+        let mut editor = Editor::new("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n");
+        let window = editor.current_context().window;
+        {
+            let win = editor.windows_mut().get_mut(window).expect("live window");
+            win.set_viewport_height(6);
+        }
+
+        // viewport_height = 6, step is (6 - 2) * 1 = 4.
+        editor.execute(Action::MovePageDown {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(4, 0));
+        assert_eq!(editor.window(window).expect("live window").scroll_top(), 4);
+
+        editor.execute(Action::MovePageUp {
+            count: 1,
+            select: false,
+        });
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert_eq!(editor.window(window).expect("live window").scroll_top(), 0);
+
+        // Test MovePageDown with select = true
+        editor.execute(Action::MovePageDown {
+            count: 1,
+            select: true,
+        });
+        assert_eq!(cursor(&editor), Point::new(4, 0));
+        let selection = editor
+            .window(window)
+            .expect("live window")
+            .selections()
+            .primary();
+        // Since we did a visual/selected movement, let's verify that the selection covers row 0 to 4.
+        assert_eq!(
+            selection
+                .head()
+                .to_point(editor.current_buffer().as_text_buffer()),
+            Point::new(4, 0)
+        );
+        assert_eq!(
+            selection
+                .tail()
+                .to_point(editor.current_buffer().as_text_buffer()),
+            Point::new(0, 0)
+        );
     }
 
     #[test]

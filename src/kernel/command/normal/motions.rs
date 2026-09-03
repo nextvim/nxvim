@@ -453,9 +453,15 @@ pub fn scroll_line_up(editor: &mut Editor, window: WindowId, count: u32) -> Outc
     window_redraw()
 }
 
-/// Shared by `Ctrl-d`/`Ctrl-u`/`Ctrl-f`/`Ctrl-b`: unlike `Ctrl-e`/`Ctrl-y`,
+/// Shared by `Ctrl-d`/`Ctrl-u`/`Ctrl-f`/`Ctrl-b`/`PageUp`/`PageDown`: unlike `Ctrl-e`/`Ctrl-y`,
 /// these always move both the viewport and the cursor by `step` lines.
-fn scroll_and_follow_cursor(win: &mut Window, buffer: &vim_buffer::Buffer, step: u32, down: bool) {
+fn scroll_and_follow_cursor(
+    win: &mut Window,
+    buffer: &vim_buffer::Buffer,
+    step: u32,
+    down: bool,
+    select: bool,
+) {
     let new_scroll = scrolled_top(win, buffer, step, down);
     win.set_scroll_top(new_scroll);
 
@@ -472,35 +478,49 @@ fn scroll_and_follow_cursor(win: &mut Window, buffer: &vim_buffer::Buffer, step:
         head_row.saturating_sub(step)
     };
     win.selections_mut()
-        .move_to_line(false, new_cursor_row + 1, buffer.as_text_buffer());
+        .move_to_line(select, new_cursor_row + 1, buffer.as_text_buffer());
     win.scroll_to_line(new_cursor_row);
 }
 
 pub fn scroll_half_page_down(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let step = (win.viewport_height().max(1) / 2) * count;
-    scroll_and_follow_cursor(win, buffer, step, true);
+    scroll_and_follow_cursor(win, buffer, step, true, false);
     window_redraw()
 }
 
 pub fn scroll_half_page_up(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let step = (win.viewport_height().max(1) / 2) * count;
-    scroll_and_follow_cursor(win, buffer, step, false);
+    scroll_and_follow_cursor(win, buffer, step, false, false);
     window_redraw()
 }
 
 pub fn scroll_forward(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let step = win.viewport_height().max(1).saturating_sub(2) * count;
-    scroll_and_follow_cursor(win, buffer, step, true);
+    scroll_and_follow_cursor(win, buffer, step, true, false);
     window_redraw()
 }
 
 pub fn scroll_backward(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let step = win.viewport_height().max(1).saturating_sub(2) * count;
-    scroll_and_follow_cursor(win, buffer, step, false);
+    scroll_and_follow_cursor(win, buffer, step, false, false);
+    window_redraw()
+}
+
+pub fn move_page_up(editor: &mut Editor, window: WindowId, count: u32, select: bool) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let step = win.viewport_height().max(1).saturating_sub(2) * count;
+    scroll_and_follow_cursor(win, buffer, step, false, select);
+    window_redraw()
+}
+
+pub fn move_page_down(editor: &mut Editor, window: WindowId, count: u32, select: bool) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let step = win.viewport_height().max(1).saturating_sub(2) * count;
+    scroll_and_follow_cursor(win, buffer, step, true, select);
     window_redraw()
 }
 
@@ -535,7 +555,27 @@ fn get_display_snapshot_and_cursor(
 
     let snapshot = buffer.snapshot().into_inner();
     let folds = win.display_folds(&snapshot);
-    let mut map = display_map::DisplayMap::new(snapshot.clone(), wrap_width);
+
+    // Optimize: only exact-map a small window around the cursor row in folded coordinates.
+    let fold_map = display_map::fold_map::FoldMap::new(&snapshot, folds.clone());
+    let folded_cursor_point = fold_map.to_folded_point(head_point);
+    let folded_cursor_row = folded_cursor_point.row;
+
+    let height = win.viewport_height().max(1);
+    let margin = height * 4;
+    let start_folded_row = folded_cursor_row.saturating_sub(margin);
+    let end_folded_row = folded_cursor_row.saturating_add(margin);
+
+    let start_original_row = fold_map
+        .from_folded_point(Point::new(start_folded_row, 0))
+        .row;
+    let end_original_row = fold_map
+        .from_folded_point(Point::new(end_folded_row, 0))
+        .row;
+    let buffer_window = start_original_row..end_original_row.max(start_original_row + 1);
+
+    let mut map =
+        display_map::DisplayMap::new_windowed(snapshot.clone(), wrap_width, buffer_window);
     map.fold(folds, snapshot);
     (map.snapshot(), head_point)
 }
@@ -545,11 +585,14 @@ pub fn center_cursor_line(editor: &mut Editor, window: WindowId) -> Outcome {
     let (display_snapshot, head_point) = get_display_snapshot_and_cursor(win, buffer);
 
     let line_start_display_row = display_snapshot
-        .point_to_display_point(Point::new(head_point.row, 0))
-        .row();
+        .try_point_to_display_point(Point::new(head_point.row, 0))
+        .map(|dp| dp.row())
+        .unwrap_or(0);
     let height = win.viewport_height().max(1);
     let target_scroll_y = line_start_display_row.saturating_sub(height / 2);
-    let new_scroll_top = display_snapshot.buffer_row_for_display_row(target_scroll_y);
+    let new_scroll_top = display_snapshot
+        .try_buffer_row_for_display_row(target_scroll_y)
+        .unwrap_or(head_point.row);
     win.set_scroll_top(new_scroll_top);
     window_redraw()
 }
@@ -559,9 +602,12 @@ pub fn cursor_line_top(editor: &mut Editor, window: WindowId) -> Outcome {
     let (display_snapshot, head_point) = get_display_snapshot_and_cursor(win, buffer);
 
     let line_start_display_row = display_snapshot
-        .point_to_display_point(Point::new(head_point.row, 0))
-        .row();
-    let new_scroll_top = display_snapshot.buffer_row_for_display_row(line_start_display_row);
+        .try_point_to_display_point(Point::new(head_point.row, 0))
+        .map(|dp| dp.row())
+        .unwrap_or(0);
+    let new_scroll_top = display_snapshot
+        .try_buffer_row_for_display_row(line_start_display_row)
+        .unwrap_or(head_point.row);
     win.set_scroll_top(new_scroll_top);
     window_redraw()
 }
@@ -570,11 +616,15 @@ pub fn cursor_line_bottom(editor: &mut Editor, window: WindowId) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(window);
     let (display_snapshot, head_point) = get_display_snapshot_and_cursor(win, buffer);
 
-    let display_cursor = display_snapshot.point_to_display_point(head_point);
+    let display_cursor = display_snapshot
+        .try_point_to_display_point(head_point)
+        .unwrap_or_else(|| display_map::DisplayPoint::new(0, 0));
     let cursor_display_row = display_cursor.row();
     let height = win.viewport_height().max(1);
     let target_scroll_y = cursor_display_row.saturating_add(1).saturating_sub(height);
-    let new_scroll_top = display_snapshot.buffer_row_for_display_row(target_scroll_y);
+    let new_scroll_top = display_snapshot
+        .try_buffer_row_for_display_row(target_scroll_y)
+        .unwrap_or(head_point.row);
     win.set_scroll_top(new_scroll_top);
     window_redraw()
 }

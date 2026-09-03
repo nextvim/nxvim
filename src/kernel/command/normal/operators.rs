@@ -118,6 +118,8 @@ fn classify_motion(action: &Action) -> MotionKind {
     match action {
         Action::MoveUp { .. }
         | Action::MoveDown { .. }
+        | Action::MovePageUp { .. }
+        | Action::MovePageDown { .. }
         | Action::MoveToStartOfDocument { .. }
         | Action::MoveToEndOfDocument { .. }
         | Action::MoveToLine { .. }
@@ -301,6 +303,16 @@ fn motion_target(
         )),
         Action::MoveUp { .. } => Some(vertical_target(from, text_buffer, repeats, true)),
         Action::MoveDown { .. } => Some(vertical_target(from, text_buffer, repeats, false)),
+        Action::MovePageUp { count, .. } => {
+            let win = editor.window(window)?;
+            let step = win.viewport_height().max(1).saturating_sub(2) * count;
+            Some(vertical_target(from, text_buffer, step, true))
+        }
+        Action::MovePageDown { count, .. } => {
+            let win = editor.window(window)?;
+            let step = win.viewport_height().max(1).saturating_sub(2) * count;
+            Some(vertical_target(from, text_buffer, step, false))
+        }
         Action::MoveToScreenTop { .. } => {
             let win = editor.window(window)?;
             Some(from.move_to_line(false, win.scroll_top() + 1, text_buffer))

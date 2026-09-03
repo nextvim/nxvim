@@ -28,6 +28,12 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         }
         Action::MoveUp { count, select } => motions::move_up(editor, ctx.window, count, select),
         Action::MoveDown { count, select } => motions::move_down(editor, ctx.window, count, select),
+        Action::MovePageUp { count, select } => {
+            motions::move_page_up(editor, ctx.window, count, select)
+        }
+        Action::MovePageDown { count, select } => {
+            motions::move_page_down(editor, ctx.window, count, select)
+        }
         action @ (Action::Fold { .. } | Action::Unfold { .. }) => {
             folds::dispatch(editor, ctx.window, action)
         }

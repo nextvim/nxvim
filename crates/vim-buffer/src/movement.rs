@@ -336,7 +336,7 @@ impl Motions for Selection<Anchor> {
             id: self.id,
             start: new_head,
             end: if anchor { self.tail() } else { new_head },
-            reversed: false,
+            reversed: true,
             goal: SelectionGoal::None,
         }
     }
