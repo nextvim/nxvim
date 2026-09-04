@@ -180,6 +180,12 @@ pub fn run(
                         pending_invalidations.push(outcome.invalidation);
                     }
                 }
+                crate::app::request::AppRequest::FeedKeys { keys, mode } => {
+                    let outcome = app.execute_feedkeys(&keys, &mode);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
             }
         }
 
@@ -201,4 +207,43 @@ pub fn run(
         pending_invalidations.clear();
         force_full = false;
     }
+}
+
+/// Runs the application headlessly without TUI rendering for test suite execution.
+pub fn run_headless(app: &mut App) -> io::Result<i32> {
+    loop {
+        if let Some(request) = app.take_request() {
+            match request {
+                crate::app::request::AppRequest::Quit => break,
+                crate::app::request::AppRequest::ShowMessage(msg) => {
+                    println!("{msg}");
+                }
+                crate::app::request::AppRequest::ExecuteEx(cmd) => {
+                    app.execute_ex_command(cmd);
+                }
+                crate::app::request::AppRequest::Source(path) => {
+                    app.execute_source(&path);
+                }
+                crate::app::request::AppRequest::FeedKeys { keys, mode } => {
+                    app.execute_feedkeys(&keys, &mode);
+                }
+            }
+        } else {
+            let outcome = app.dispatch_script_requests();
+            if app.take_request().is_none()
+                && !outcome.mutated
+                && outcome.invalidation == RedrawInvalidation::None
+            {
+                break;
+            }
+        }
+    }
+
+    if let Ok(metadata) = std::fs::metadata("test.log") {
+        if metadata.len() > 0 {
+            return Ok(1);
+        }
+    }
+
+    Ok(0)
 }

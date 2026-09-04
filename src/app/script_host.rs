@@ -286,6 +286,31 @@ impl Host for ActiveHost {
                     })?;
                     Ok(Value::Null)
                 }
+                "feedkeys" => {
+                    if request.arguments.is_empty() {
+                        return Err(RuntimeError::coded(
+                            "E119",
+                            RuntimeErrorKind::ArityError,
+                            "feedkeys expects at least 1 argument",
+                        ));
+                    }
+                    let keys = request.arguments[0].to_string();
+                    let mode = if request.arguments.len() > 1 {
+                        request.arguments[1].to_string()
+                    } else {
+                        "m".to_string()
+                    };
+                    sender
+                        .send(AppRequest::FeedKeys { keys, mode })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    Ok(Value::Integer(0))
+                }
                 name => Err(RuntimeError::coded(
                     "E117",
                     RuntimeErrorKind::NameError,

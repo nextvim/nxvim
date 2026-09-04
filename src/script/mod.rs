@@ -153,6 +153,11 @@ impl ScriptHost {
             Arity::Exact(2),
             vec![Capability::BufferRead],
         );
+        runtime.register_function(
+            "feedkeys",
+            Arity::Range { min: 1, max: 2 },
+            vec![Capability::Editor],
+        );
 
         for spec in commands::COMMAND_SPECS {
             runtime.register_command(CommandDefinition::from(spec));

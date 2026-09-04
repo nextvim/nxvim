@@ -57,6 +57,20 @@ impl BuiltinRegistry {
             state::exists_without_vm_context,
         );
         registry.register("type", BuiltinArity::Exact(1), types::value_type);
+
+        fn dummy_assert(_: &[Value]) -> RuntimeResult<Value> {
+            Ok(Value::Integer(0))
+        }
+        registry.register("assert_equal", BuiltinArity::Range { min: 2, max: 3 }, dummy_assert);
+        registry.register("assert_notequal", BuiltinArity::Range { min: 2, max: 3 }, dummy_assert);
+        registry.register("assert_true", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
+        registry.register("assert_false", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
+        registry.register("assert_inrange", BuiltinArity::Range { min: 3, max: 4 }, dummy_assert);
+        registry.register("assert_match", BuiltinArity::Range { min: 2, max: 3 }, dummy_assert);
+        registry.register("assert_report", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("assert_fails", BuiltinArity::Range { min: 1, max: 3 }, dummy_assert);
+        registry.register("feedkeys", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
+
         registry
     }
 

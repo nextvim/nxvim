@@ -161,6 +161,23 @@ impl InputTranslator {
         }
     }
 
+    pub fn feed_key_with_buffer_public(
+        &mut self,
+        key: Key,
+        current_buffer: Option<u64>,
+    ) -> Option<ResolvedAction> {
+        self.feed_key_with_buffer(key, current_buffer)
+    }
+
+    pub fn feed_key_noremap(
+        &mut self,
+        key: Key,
+        _current_buffer: Option<u64>,
+    ) -> Option<ResolvedAction> {
+        let outcome = self.resolver.feed(key, &self.keymap);
+        self.handle_outcome(outcome, None)
+    }
+
     fn feed_key_with_buffer(&mut self, key: Key, buffer: Option<u64>) -> Option<ResolvedAction> {
         let outcome = match &self.mappings {
             Some(mappings) => {

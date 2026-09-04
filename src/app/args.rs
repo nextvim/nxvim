@@ -15,6 +15,8 @@ pub struct Args {
     pub post_config_cmds: Vec<String>,
     pub scripts: Vec<PathBuf>,
     pub paths: Vec<PathBuf>,
+    pub skip_config: bool,
+    pub headless: bool,
 }
 
 impl Args {
@@ -31,6 +33,8 @@ impl Args {
         let mut post_config_cmds = Vec::new();
         let mut scripts = Vec::new();
         let mut paths = Vec::new();
+        let mut skip_config = false;
+        let mut headless = false;
 
         let mut args_iter = iter.into_iter().peekable();
         while let Some(arg_os) = args_iter.next() {
@@ -58,6 +62,20 @@ impl Args {
                 }
             } else if arg.starts_with("-S") {
                 scripts.push(PathBuf::from(&arg["-S".len()..]));
+            } else if arg == "-u" {
+                if let Some(cfg_os) = args_iter.next() {
+                    let cfg = cfg_os.as_ref().to_string_lossy();
+                    if cfg.eq_ignore_ascii_case("NONE") {
+                        skip_config = true;
+                    }
+                }
+            } else if arg.starts_with("-u") {
+                let cfg = &arg["-u".len()..];
+                if cfg.eq_ignore_ascii_case("NONE") {
+                    skip_config = true;
+                }
+            } else if arg == "-g" || arg == "--headless" {
+                headless = true;
             } else if arg.starts_with('+') {
                 let cmd = if arg.len() > 1 { &arg[1..] } else { "$" };
                 post_config_cmds.push(cmd.to_string());
@@ -71,6 +89,8 @@ impl Args {
             post_config_cmds,
             scripts,
             paths,
+            skip_config,
+            headless,
         }
     }
 }
@@ -141,5 +161,18 @@ mod tests {
         assert!(parsed.pre_config_cmds.is_empty());
         assert!(parsed.post_config_cmds.is_empty());
         assert!(parsed.scripts.is_empty());
+        assert!(!parsed.skip_config);
+        assert!(!parsed.headless);
+    }
+
+    #[test]
+    fn test_skip_config_and_headless_flags() {
+        let parsed = Args::parse_from(["-u", "NONE", "-g"]);
+        assert!(parsed.skip_config);
+        assert!(parsed.headless);
+
+        let parsed2 = Args::parse_from(["-uNONE", "--headless"]);
+        assert!(parsed2.skip_config);
+        assert!(parsed2.headless);
     }
 }

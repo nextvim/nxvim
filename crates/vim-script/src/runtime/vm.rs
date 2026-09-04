@@ -139,8 +139,24 @@ impl Vm {
 
     pub fn with_globals(
         module: BytecodeModule,
-        globals: HashMap<String, Value>,
+        mut globals: HashMap<String, Value>,
     ) -> RuntimeResult<Self> {
+        globals
+            .entry("v:errors".to_string())
+            .or_insert_with(|| Value::List(Vec::new()));
+        globals
+            .entry("v:exception".to_string())
+            .or_insert_with(|| Value::String("".into()));
+        globals
+            .entry("v:errmsg".to_string())
+            .or_insert_with(|| Value::String("".into()));
+        globals
+            .entry("v:throwpoint".to_string())
+            .or_insert_with(|| Value::String("".into()));
+        globals
+            .entry("v:version".to_string())
+            .or_insert_with(|| Value::Integer(900));
+
         let module = Arc::new(module);
         let entrypoint = module.entrypoint;
         let prototype = module.function(entrypoint).ok_or_else(|| {
@@ -532,9 +548,14 @@ impl Vm {
             Instruction::CallNamed { name, argc } => {
                 let name = self.constant_string(&module, function_id, name)?;
                 let arguments = self.pop_many(argc as usize)?;
-                if self.builtins.contains(&name) || name == "exists" {
+                if (self.builtins.contains(&name) && name != "feedkeys")
+                    || name == "exists"
+                    || name.starts_with("assert_")
+                {
                     let result = if name == "exists" {
                         self.builtin_exists(&arguments)
+                    } else if name.starts_with("assert_") {
+                        self.builtin_assert(&name, &arguments)
                     } else {
                         self.builtins.call(&name, &arguments)
                     }
@@ -559,10 +580,13 @@ impl Vm {
                 self.stack.truncate(frame.stack_base);
                 self.exceptions
                     .retain(|exception| exception.frame_depth < self.frames.len());
-                if self.frames.is_empty() {
+                if let Some(parent) = self.frames.last_mut() {
+                    self.stack.push(value);
+                    let _ = parent;
+                } else {
+                    self.status = VmStatus::Completed(value.clone());
                     return Ok(StepOutcome::Completed(value));
                 }
-                self.push(value)?;
             }
             Instruction::MakeClosure { function, captures } => {
                 let values = self.pop_many(captures as usize)?;
@@ -646,6 +670,15 @@ impl Vm {
             }
             Instruction::Throw => {
                 let thrown = self.pop()?;
+                let exc_str = thrown.to_string();
+                self.globals.insert(
+                    "v:exception".into(),
+                    Value::String(Arc::from(exc_str.as_str())),
+                );
+                self.globals.insert(
+                    "v:errmsg".into(),
+                    Value::String(Arc::from(exc_str.as_str())),
+                );
                 if let Some(exception) = self.exceptions.pop() {
                     while self.frames.len() - 1 > exception.frame_depth {
                         self.frames.pop();
@@ -708,10 +741,16 @@ impl Vm {
             .code
             .as_deref()
             .map_or(String::new(), |code| format!("{code}: "));
-        self.stack.push(Value::String(Arc::from(format!(
-            "{prefix}{}",
-            error.message
-        ))));
+        let exc_str = format!("{prefix}{}", error.message);
+        self.globals.insert(
+            "v:exception".into(),
+            Value::String(Arc::from(exc_str.as_str())),
+        );
+        self.globals.insert(
+            "v:errmsg".into(),
+            Value::String(Arc::from(exc_str.as_str())),
+        );
+        self.stack.push(Value::String(Arc::from(exc_str)));
         frame.instruction_pointer = exception.handler_ip;
         Ok(true)
     }
@@ -726,8 +765,18 @@ impl Vm {
         let arguments = self.pop_many(argc as usize)?;
         let callee = self.pop()?;
         if let Value::Builtin(name) = &callee {
+            if name.as_ref() == "feedkeys" {
+                return Ok(Some(HostRequest {
+                    target: HostTarget::Global,
+                    function: "feedkeys".to_string(),
+                    arguments,
+                    context: self.host_context.clone(),
+                }));
+            }
             let result = if name.as_ref() == "exists" {
                 self.builtin_exists(&arguments)
+            } else if name.starts_with("assert_") {
+                self.builtin_assert(name, &arguments)
             } else {
                 self.builtins.call(name, &arguments)
             }
@@ -826,6 +875,264 @@ impl Vm {
             self.globals.contains_key(&runtime_name)
         };
         Ok(Value::Integer(i64::from(exists)))
+    }
+
+    pub fn add_v_error(&mut self, err: String) {
+        if let Some(Value::List(list)) = self.globals.get_mut("v:errors") {
+            list.push(Value::String(Arc::from(err)));
+        } else {
+            self.globals.insert(
+                "v:errors".to_string(),
+                Value::List(vec![Value::String(Arc::from(err))]),
+            );
+        }
+    }
+
+    fn builtin_assert(&mut self, name: &str, args: &[Value]) -> RuntimeResult<Value> {
+        let is_truthy = |val: &Value| -> bool {
+            match val {
+                Value::Bool(b) => *b,
+                Value::Integer(i) => *i != 0,
+                Value::Float(f) => *f != 0.0,
+                Value::String(s) => !s.is_empty(),
+                Value::List(l) => !l.is_empty(),
+                Value::Dictionary(d) => !d.is_empty(),
+                Value::Null => false,
+                _ => true,
+            }
+        };
+
+        let msg_prefix = |args: &[Value], idx: usize| -> String {
+            if args.len() > idx {
+                format!("{}: ", args[idx])
+            } else {
+                String::new()
+            }
+        };
+
+        match name {
+            "assert_equal" => {
+                if args.len() < 2 {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_equal expects at least 2 arguments",
+                    ));
+                }
+                let expected = &args[0];
+                let actual = &args[1];
+                if expected == actual {
+                    Ok(Value::Integer(0))
+                } else {
+                    let prefix = msg_prefix(args, 2);
+                    self.add_v_error(format!("{prefix}Expected {expected} but got {actual}"));
+                    Ok(Value::Integer(1))
+                }
+            }
+            "assert_notequal" => {
+                if args.len() < 2 {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_notequal expects at least 2 arguments",
+                    ));
+                }
+                let expected = &args[0];
+                let actual = &args[1];
+                if expected != actual {
+                    Ok(Value::Integer(0))
+                } else {
+                    let prefix = msg_prefix(args, 2);
+                    self.add_v_error(format!("{prefix}Expected not equal to {expected}"));
+                    Ok(Value::Integer(1))
+                }
+            }
+            "assert_true" => {
+                if args.is_empty() {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_true expects at least 1 argument",
+                    ));
+                }
+                let actual = &args[0];
+                if is_truthy(actual) {
+                    Ok(Value::Integer(0))
+                } else {
+                    let prefix = msg_prefix(args, 1);
+                    self.add_v_error(format!("{prefix}Expected True but got {actual}"));
+                    Ok(Value::Integer(1))
+                }
+            }
+            "assert_false" => {
+                if args.is_empty() {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_false expects at least 1 argument",
+                    ));
+                }
+                let actual = &args[0];
+                if !is_truthy(actual) {
+                    Ok(Value::Integer(0))
+                } else {
+                    let prefix = msg_prefix(args, 1);
+                    self.add_v_error(format!("{prefix}Expected False but got {actual}"));
+                    Ok(Value::Integer(1))
+                }
+            }
+            "assert_inrange" => {
+                if args.len() < 3 {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_inrange expects at least 3 arguments",
+                    ));
+                }
+                let lower = match &args[0] {
+                    Value::Integer(i) => *i,
+                    Value::Float(f) => *f as i64,
+                    _ => 0,
+                };
+                let upper = match &args[1] {
+                    Value::Integer(i) => *i,
+                    Value::Float(f) => *f as i64,
+                    _ => 0,
+                };
+                let actual = match &args[2] {
+                    Value::Integer(i) => *i,
+                    Value::Float(f) => *f as i64,
+                    _ => 0,
+                };
+                if actual >= lower && actual <= upper {
+                    Ok(Value::Integer(0))
+                } else {
+                    let prefix = msg_prefix(args, 3);
+                    self.add_v_error(format!(
+                        "{prefix}Expected range [{lower}, {upper}] but got {actual}"
+                    ));
+                    Ok(Value::Integer(1))
+                }
+            }
+            "assert_match" => {
+                if args.len() < 2 {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_match expects at least 2 arguments",
+                    ));
+                }
+                let pat_str = args[0].to_string();
+                let act_str = args[1].to_string();
+                let matched = if let Ok(regex) = vim_regex::Regex::compile(
+                    &pat_str,
+                    vim_regex::CompileOptions::default(),
+                ) {
+                    regex.find(&act_str).ok().flatten().is_some()
+                } else {
+                    act_str.contains(&pat_str)
+                };
+                if matched {
+                    Ok(Value::Integer(0))
+                } else {
+                    let prefix = msg_prefix(args, 2);
+                    self.add_v_error(format!(
+                        "{prefix}Pattern '{pat_str}' does not match '{act_str}'"
+                    ));
+                    Ok(Value::Integer(1))
+                }
+            }
+            "assert_report" => {
+                if args.is_empty() {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_report expects 1 argument",
+                    ));
+                }
+                let msg = args[0].to_string();
+                self.add_v_error(msg);
+                Ok(Value::Integer(1))
+            }
+            "assert_fails" => {
+                if args.is_empty() {
+                    return Err(self.error(
+                        RuntimeErrorKind::ArityError,
+                        "assert_fails expects at least 1 argument",
+                    ));
+                }
+                let cmd_str = args[0].to_string();
+                let expected_err = if args.len() > 1 && !matches!(args[1], Value::Null) {
+                    Some(args[1].to_string())
+                } else {
+                    None
+                };
+
+                let run_res = self.execute_sub_script(&cmd_str);
+                match run_res {
+                    Err(err) => {
+                        let err_msg = err.message.clone();
+                        if let Some(exp) = expected_err {
+                            if err_msg.contains(&exp) {
+                                Ok(Value::Integer(0))
+                            } else {
+                                let prefix = msg_prefix(args, 2);
+                                self.add_v_error(format!(
+                                    "{prefix}Expected error containing '{exp}' but got '{err_msg}'"
+                                ));
+                                Ok(Value::Integer(1))
+                            }
+                        } else {
+                            Ok(Value::Integer(0))
+                        }
+                    }
+                    Ok(_) => {
+                        let prefix = msg_prefix(args, 2);
+                        self.add_v_error(format!("{prefix}Expected command to fail: {cmd_str}"));
+                        Ok(Value::Integer(1))
+                    }
+                }
+            }
+            _ => Err(self.error(
+                RuntimeErrorKind::NameError,
+                format!("unknown assert function: {name}"),
+            )),
+        }
+    }
+
+    fn execute_sub_script(&mut self, code: &str) -> RuntimeResult<Value> {
+        use crate::compiler::Compiler;
+        use crate::lexer::Lexer;
+        use crate::parser::Parser;
+        use crate::resolver::{Resolver, ResolverConfig};
+        use crate::source::SourceId;
+
+        let lexed = Lexer::new(SourceId(0), code).lex();
+        if !lexed.diagnostics.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCommand,
+                format!("lexer error parsing '{code}'"),
+            ));
+        }
+        let parsed = Parser::new(&lexed.tokens).parse();
+        if !parsed.diagnostics.is_empty() || parsed.program.is_none() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCommand,
+                format!("syntax error parsing '{code}'"),
+            ));
+        }
+        let resolved = Resolver::new(ResolverConfig::default()).resolve(parsed.program.unwrap());
+        if !resolved.diagnostics.is_empty() || resolved.program.is_none() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCommand,
+                format!("resolver error resolving '{code}'"),
+            ));
+        }
+        let compiled = Compiler::new(&resolved.program.unwrap()).compile();
+        if !compiled.diagnostics.is_empty() || compiled.module.is_none() {
+            return Err(self.error(
+                RuntimeErrorKind::InvalidCommand,
+                format!("compiler error compiling '{code}'"),
+            ));
+        }
+        let mut sub_vm = Vm::with_globals(compiled.module.unwrap(), self.globals.clone())?;
+        sub_vm.host_context = self.host_context.clone();
+        let res = sub_vm.run();
+        self.globals = sub_vm.globals;
+        res
     }
 
     fn namespace_dictionary(&self, prefix: &str) -> Value {
@@ -1357,6 +1664,53 @@ mod tests {
             error
                 .message
                 .contains("requires a scheduler and host runtime")
+        );
+    }
+
+    #[test]
+    fn test_assertion_builtins_and_v_errors() {
+        let script = r#"
+call assert_equal(1, 1)
+call assert_equal(1, 2, 'custom msg')
+call assert_true(1)
+call assert_true(0, 'should fail')
+call assert_false(0)
+call assert_false(1, 'should fail false')
+call assert_inrange(1, 10, 5)
+call assert_inrange(1, 10, 20)
+call assert_match('^hello', 'hello world')
+call assert_match('^xyz', 'hello world')
+call assert_report('manual report')
+"#;
+        let vm = run(script).unwrap();
+        let errors = vm.globals.get("v:errors").unwrap();
+        if let Value::List(list) = errors {
+            assert_eq!(list.len(), 6);
+            assert!(list[0].to_string().contains("custom msg"));
+            assert!(list[1].to_string().contains("should fail"));
+            assert!(list[2].to_string().contains("should fail false"));
+            assert!(list[3].to_string().contains("Expected range [1, 10] but got 20"));
+            assert!(list[4].to_string().contains("Pattern '^xyz' does not match"));
+            assert_eq!(list[5].to_string(), "manual report");
+        } else {
+            panic!("v:errors is not a list");
+        }
+    }
+
+    #[test]
+    fn test_v_exception_and_v_errmsg() {
+        let script = r#"
+let caught = ''
+try
+  throw 'CustomException'
+catch
+  let caught = v:exception
+endtry
+"#;
+        let vm = run(script).unwrap();
+        assert_eq!(
+            vm.globals.get(":caught"),
+            Some(&Value::String(Arc::from("CustomException")))
         );
     }
 }

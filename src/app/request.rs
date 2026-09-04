@@ -6,4 +6,5 @@ pub enum AppRequest {
     ShowMessage(String),
     ExecuteEx(vim_script::ast::ExCommand),
     Source(std::path::PathBuf),
+    FeedKeys { keys: String, mode: String },
 }

@@ -39,6 +39,53 @@ fn merge_outcomes(combined: &mut Outcome, next: Outcome) {
     combined.events.extend(next.events);
 }
 
+pub fn parse_feedkeys_keys(input: &str) -> Vec<vim_input::Key> {
+    use vim_input::{Key, KeyCode, KeyPattern, KeySequence, Modifiers};
+
+    let mut keys = Vec::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '\\' && i + 1 < chars.len() && chars[i + 1] == '<' {
+            i += 1;
+            continue;
+        }
+        if ch == '\x1b' {
+            keys.push(Key::new(KeyCode::Escape, Modifiers::NONE));
+            i += 1;
+        } else if ch == '\r' || ch == '\n' {
+            keys.push(Key::new(KeyCode::Enter, Modifiers::NONE));
+            i += 1;
+        } else if ch == '\t' {
+            keys.push(Key::new(KeyCode::Tab, Modifiers::NONE));
+            i += 1;
+        } else if ch == '\x08' || ch == '\x7f' {
+            keys.push(Key::new(KeyCode::Backspace, Modifiers::NONE));
+            i += 1;
+        } else if ch == '<' {
+            let rest: String = chars[i..].iter().collect();
+            if let Ok(seq) = KeySequence::parse(&rest) {
+                if let Some(KeyPattern::Exact(k)) = seq.items.first() {
+                    keys.push(*k);
+                    if let Some(close_idx) = chars[i + 1..].iter().position(|c| *c == '>') {
+                        i += close_idx + 2;
+                        continue;
+                    }
+                }
+            }
+            keys.push(Key::char('<'));
+            i += 1;
+        } else {
+            keys.push(Key::char(ch));
+            i += 1;
+        }
+    }
+
+    keys
+}
+
 pub struct App {
     editor: Editor,
     prompt: CommandPrompt,
@@ -98,24 +145,27 @@ impl App {
         pre_config_cmds: &[String],
         post_config_cmds: &[String],
         scripts: &[std::path::PathBuf],
+        skip_config: bool,
     ) {
         for cmd in pre_config_cmds {
             self.execute_line(cmd);
         }
 
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        if let Some(home) = home {
-            let paths = [
-                home.join(".config/nxvim/init.vim"),
-                home.join(".nxvimrc"),
-                home.join(".nxvim/nxvimrc"),
-                home.join(".config/nxvim/nxvimrc"),
-            ];
+        if !skip_config {
+            let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+            if let Some(home) = home {
+                let paths = [
+                    home.join(".config/nxvim/init.vim"),
+                    home.join(".nxvimrc"),
+                    home.join(".nxvim/nxvimrc"),
+                    home.join(".config/nxvim/nxvimrc"),
+                ];
 
-            for path in &paths {
-                if path.exists() {
-                    self.execute_source(path);
-                    break;
+                for path in &paths {
+                    if path.exists() {
+                        self.execute_source(path);
+                        break;
+                    }
                 }
             }
         }
@@ -173,7 +223,7 @@ impl App {
     /// Drains commands emitted by the scripting host. Kernel mutations stay on
     /// the application thread; only terminal-facing requests are retained for
     /// the outer runtime loop.
-    fn dispatch_script_requests(&mut self) -> Outcome {
+    pub fn dispatch_script_requests(&mut self) -> Outcome {
         let mut combined = Outcome::default();
         while let Ok(request) = self.script_rx.try_recv() {
             let outcome = match request {
@@ -187,10 +237,54 @@ impl App {
                 }
                 AppRequest::ExecuteEx(command) => self.execute_ex_command(command),
                 AppRequest::Source(path) => self.execute_source(&path),
+                AppRequest::FeedKeys { keys, mode } => self.execute_feedkeys(&keys, &mode),
             };
             merge_outcomes(&mut combined, outcome);
         }
         combined
+    }
+
+    pub fn execute_feedkeys(&mut self, keys_str: &str, mode_flags: &str) -> Outcome {
+        let keys = parse_feedkeys_keys(keys_str);
+        let remap = !mode_flags.contains('n');
+        let mut translator = input::InputTranslator::with_mappings(self.shared_keymaps());
+        let mut combined_outcome = Outcome::default();
+
+        for key in keys {
+            translator.sync_mode(self.editor().mode());
+            translator.sync_recording(self.editor().macro_recorder.is_recording());
+
+            if self.editor().mode().is_command() {
+                let raw_key = match key.code {
+                    vim_input::KeyCode::Char(c) => crate::app::input::RawKey::Char(c),
+                    vim_input::KeyCode::Enter => crate::app::input::RawKey::Enter,
+                    vim_input::KeyCode::Escape => crate::app::input::RawKey::Escape,
+                    vim_input::KeyCode::Backspace => crate::app::input::RawKey::Backspace,
+                    vim_input::KeyCode::Tab => crate::app::input::RawKey::Char('\t'),
+                    vim_input::KeyCode::Up => crate::app::input::RawKey::Up,
+                    vim_input::KeyCode::Down => crate::app::input::RawKey::Down,
+                    vim_input::KeyCode::Left => crate::app::input::RawKey::Left { select: false },
+                    vim_input::KeyCode::Right => crate::app::input::RawKey::Right { select: false },
+                    _ => crate::app::input::RawKey::Char(' '),
+                };
+                let outcome = self.handle_raw_key(raw_key);
+                merge_outcomes(&mut combined_outcome, outcome);
+            } else {
+                let buf_id = self.editor().current_context().buffer.get();
+                let resolved_opt = if remap {
+                    translator.feed_key_with_buffer_public(key, Some(buf_id))
+                } else {
+                    translator.feed_key_noremap(key, Some(buf_id))
+                };
+
+                if let Some(resolved) = resolved_opt {
+                    let outcome = self.handle_action(resolved.action, resolved.register);
+                    merge_outcomes(&mut combined_outcome, outcome);
+                }
+            }
+        }
+
+        combined_outcome
     }
 
     pub fn editor(&self) -> &Editor {
@@ -1100,6 +1194,13 @@ mod tests {
         assert_eq!(text, "line2");
         assert!(outcome.mutated);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn feedkeys_simulates_keystrokes_synchronously() {
+        let mut app = App::new("hello\nworld");
+        app.execute_line("feedkeys('iTesting\\<Esc>', 'xt')");
+        assert_eq!(text_of(&app), "Testinghello\nworld");
     }
 
     #[test]
