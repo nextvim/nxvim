@@ -1351,10 +1351,30 @@ mod tests {
         win.selections_mut().selections.push(sel2);
         assert_eq!(win.selections().selections.len(), 2);
 
-        editor.execute(Action::Clear);
+        let outcome = editor.execute(Action::Clear);
 
         let win = editor.current_window();
         assert_eq!(win.selections().selections.len(), 1);
+        assert_eq!(outcome.invalidation, crate::kernel::outcome::RedrawInvalidation::CurrentWindow);
+    }
+
+    #[test]
+    fn test_select_similar() {
+        let mut editor = Editor::new("hello world hello");
+
+        // 1st SelectSimilar: selects the word "hello" under cursor (col 0 to 5)
+        editor.execute(Action::SelectSimilar);
+        let win = editor.current_window();
+        let (win, buffer) = editor.window_and_buffer_mut(editor.current_context().window);
+        let text_buf = buffer.as_text_buffer();
+        let primary = win.selections().primary();
+        assert_eq!(primary.start.to_point(text_buf).column, 0);
+        assert_eq!(primary.end.to_point(text_buf).column, 5);
+
+        // 2nd SelectSimilar: finds the next occurrence of "hello" and adds a secondary cursor
+        editor.execute(Action::SelectSimilar);
+        let win = editor.current_window();
+        assert_eq!(win.selections().selections.len(), 2);
     }
 
     #[test]

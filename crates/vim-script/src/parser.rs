@@ -921,6 +921,7 @@ impl<'a> Parser<'a> {
                 // Statements starting with + or - are range-only jump commands in Vim
                 true
             }
+            TokenKind::SingleQuotedString(_) => true,
             _ => false,
         }
     }
@@ -1267,6 +1268,14 @@ mod tests {
 
         let output3 = parse("+5\n");
         assert!(output3.diagnostics.is_empty(), "{:?}", output3.diagnostics);
+
+        let output4 = parse("'<,'>d\n");
+        assert!(output4.diagnostics.is_empty(), "{:?}", output4.diagnostics);
+        let StmtKind::ExCommand(cmd) = &output4.program.as_ref().unwrap().statements[0].kind else {
+            panic!("expected ex command for '<,'>d");
+        };
+        assert_eq!(cmd.name, "d");
+        assert!(cmd.range.is_some());
     }
 
     #[test]

@@ -292,7 +292,7 @@ pub fn search_word_under(editor: &mut Editor, forward: bool, count: u32) -> Outc
     search(editor, &pattern, forward, count, None)
 }
 
-fn find_next_occurrence(
+pub fn find_next_occurrence(
     buffer: &Buffer,
     regex: &Regex,
     start_row: u32,

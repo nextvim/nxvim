@@ -111,6 +111,12 @@ fn resolve_canonical_command_name(name: &str) -> String {
 }
 
 pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCommand) -> Outcome {
+    if let Some(_) = editor.window(ctx.window) {
+        let (win, buffer) = editor.window_and_buffer_mut(ctx.window);
+        if win.selections().selections.len() > 1 {
+            win.selections_mut().clear(buffer.as_text_buffer());
+        }
+    }
     command.name = resolve_canonical_command_name(&command.name);
     match command.name.as_str() {
         "delete" => {
@@ -1377,6 +1383,26 @@ fn resolve_address(
                     let point = buf.as_text_buffer().offset_to_point(offset.0);
                     return Some(point.row + 1);
                 }
+                if (*ch == '<' || *ch == '>')
+                    && let Some((_, selection)) =
+                        editor.window(ctx.window).and_then(|w| w.last_visual())
+                {
+                    use text::ToOffset;
+                    let text_buf = buf.as_text_buffer();
+                    let start_off = selection.start.to_offset(text_buf);
+                    let end_off = selection.end.to_offset(text_buf);
+                    let target_off = if *ch == '<' {
+                        start_off.min(end_off)
+                    } else {
+                        start_off.max(end_off)
+                    };
+                    let pt = text_buf.offset_to_point(if *ch == '>' && target_off > 0 && text_buf.offset_to_point(target_off).column == 0 {
+                        target_off - 1
+                    } else {
+                        target_off
+                    });
+                    return Some(pt.row + 1);
+                }
             }
             None
         }
@@ -1459,7 +1485,12 @@ pub(crate) fn resolve_range(
         }
         None => start_line,
     };
-    Some((start_line, end_line))
+    let (min_line, max_line) = if start_line <= end_line {
+        (start_line, end_line)
+    } else {
+        (end_line, start_line)
+    };
+    Some((min_line, max_line))
 }
 
 fn execute_delete_lines(
@@ -1515,28 +1546,18 @@ fn execute_delete_lines(
         .expect("deleting range-derived lines is always well-formed")
     };
 
-    let new_anchor = {
-        let buffer = editor.buffer(buffer_id).unwrap();
-        buffer.as_text_buffer().anchor_before(start_offset)
-    };
-    let mut final_selections = None;
-    if let Some(win) = editor.windows_mut().get_mut(window_id) {
-        let primary_id = win.selections().primary().id;
-        let _ = win.selections_mut().replace_primary(Selection {
-            id: primary_id,
-            start: new_anchor.clone(),
-            end: new_anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
-        });
-        final_selections = Some(win.selections().clone());
+    let final_selections = mutation.selections.clone();
+    if let Some(selections) = &final_selections {
+        if let Some(win) = editor.windows_mut().get_mut(window_id) {
+            *win.selections_mut() = selections.clone();
+        }
     }
-    if let (Some(tx_id), Some(selections)) = (mutation.transaction, final_selections) {
+    if let (Some(tx_id), Some(selections)) = (mutation.transaction, &final_selections) {
         let buffer = editor
             .buffers_mut()
             .get_mut(buffer_id)
             .expect("live buffer");
-        buffer.record_selections(tx_id, selections);
+        buffer.record_selections(tx_id, selections.clone());
     }
 
     Outcome::from_mutation(&mutation)

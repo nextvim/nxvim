@@ -639,6 +639,15 @@ impl Keymap {
             normal_actions
                 .bind("<C-S-d>", Action::SelectSimilar)
                 .expect("Valid binding");
+            normal_actions
+                .bind("<C-S-D>", Action::SelectSimilar)
+                .expect("Valid binding");
+            visual_actions
+                .bind("<C-S-d>", Action::SelectSimilar)
+                .expect("Valid binding");
+            visual_actions
+                .bind("<C-S-D>", Action::SelectSimilar)
+                .expect("Valid binding");
         }
         // ----------------------------------------------------------------
 

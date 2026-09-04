@@ -336,8 +336,58 @@ impl App {
                 _ => {}
             }
         }
+        let visual_prompt_prefix = if self.editor.mode().is_visual() {
+            match action {
+                Action::SetToCommand => Some("'<,'>".to_string()),
+                Action::SetToCommandSearchForward | Action::SetToCommandSearchBackward => {
+                    use text::{ToOffset, ToPoint};
+                    use vim_buffer::{BufferText, TextSearch};
+                    let ctx = self.editor.current_context();
+                    let (win, buffer) = self.editor.window_and_buffer_mut(ctx.window);
+                    let text_buf = buffer.as_text_buffer();
+                    let primary = win.selections().primary();
+                    let start_off = primary.start.to_offset(text_buf);
+                    let end_off = primary.end.to_offset(text_buf);
+
+                    let text = if start_off != end_off {
+                        let low = start_off.min(end_off);
+                        let high = start_off.max(end_off);
+                        text_buf
+                            .as_rope()
+                            .chunks_in_range(low..high)
+                            .collect::<String>()
+                    } else {
+                        let point = primary.head().to_point(text_buf);
+                        let row_text = text_buf.row_text(point.row);
+                        row_text
+                            .find_word(point.column as usize)
+                            .map(|(_, _, w)| w.to_string())
+                            .unwrap_or_default()
+                    };
+
+                    if text.is_empty() {
+                        None
+                    } else {
+                        let is_word = text.chars().all(|c| c.is_alphanumeric() || c == '_');
+                        let escaped = crate::kernel::command::search::regex_escape(&text);
+                        let query = if is_word {
+                            format!("\\<{}\\>", escaped)
+                        } else {
+                            escaped
+                        };
+                        Some(query)
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let mut outcome = self.editor.execute_with_register(action, register);
+        if let Some(prefix) = visual_prompt_prefix {
+            self.prompt.set_text(prefix);
+        }
         if let Some(prefix) = prefix_outcome {
             outcome.mode_changed |= prefix.mode_changed;
             use crate::kernel::outcome::RedrawInvalidation;
@@ -522,10 +572,25 @@ impl App {
                 self.record_history(mode, &line);
                 self.history_index = None;
                 self.history_temp.clear();
-                let mut outcome = self.handle_submitted_line(&line);
 
-                // Return the editor to Normal mode via Clear
-                let _exit_outcome = self.editor.execute(Action::Clear);
+                // Clear command mode and return to Normal mode before executing submitted line
+                self.editor.execute(Action::Clear);
+
+                let mut outcome = match mode {
+                    crate::kernel::mode::Mode::Command(crate::kernel::mode::CommandKind::SearchForward) => {
+                        let (pattern, offset) =
+                            crate::kernel::command::search::parse_search_query(&line, '/');
+                        crate::kernel::command::search::search(&mut self.editor, &pattern, true, 1, offset)
+                    }
+                    crate::kernel::mode::Mode::Command(
+                        crate::kernel::mode::CommandKind::SearchBackward,
+                    ) => {
+                        let (pattern, offset) =
+                            crate::kernel::command::search::parse_search_query(&line, '?');
+                        crate::kernel::command::search::search(&mut self.editor, &pattern, false, 1, offset)
+                    }
+                    _ => self.execute_line(&line),
+                };
                 outcome.mode_changed = true;
                 if outcome.invalidation == crate::kernel::outcome::RedrawInvalidation::None {
                     outcome.invalidation =
@@ -921,6 +986,53 @@ mod tests {
 
         assert_eq!(text_of(&app), "aello\naorld\n");
     }
+
+    #[test]
+    fn visual_search_populates_prompt_query() {
+        use crate::kernel::mode::{CommandKind, Mode};
+        let mut app = App::new("hello world\n");
+        let mut input = InputTranslator::new();
+
+        // Enter Visual mode: 'v', 'w'
+        input.sync_mode(app.editor().mode());
+        let resolved = input.translate(key_event('v')).expect("v resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        let resolved = input.translate(key_event('e')).expect("e resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        // Press '/' to search
+        let resolved = input.translate(key_event('/')).expect("/ resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        assert_eq!(app.editor().mode(), Mode::Command(CommandKind::SearchForward));
+        assert_eq!(app.prompt().text(), "\\<hello\\>");
+    }
+
+    #[test]
+    fn visual_command_populates_range_prompt() {
+        use crate::kernel::mode::{CommandKind, Mode};
+        let mut app = App::new("hello world\n");
+        let mut input = InputTranslator::new();
+
+        // Enter Visual mode: 'v'
+        input.sync_mode(app.editor().mode());
+        let resolved = input.translate(key_event('v')).expect("v resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        // Press ':' to enter command mode
+        let resolved = input.translate(key_event(':')).expect(": resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        assert_eq!(app.editor().mode(), Mode::Command(CommandKind::Ex));
+        assert_eq!(app.prompt().text(), "'<,'>");
+    }
+
 
     #[test]
     fn visual_block_insert_multiple_chars_inserts_sequentially_on_all_cursors() {

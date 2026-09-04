@@ -117,7 +117,11 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         win.selections_mut().anchor = saved_anchor;
         win.selections_mut().point = saved_point;
     }
+    let selection_before = editor
+        .window(ctx.window)
+        .map(|w| w.selections().primary().clone());
 
+    let is_set_to_command = matches!(action, Action::SetToCommand);
     let mut outcome = super::normal::dispatch(editor, ctx, action);
 
     if is_visual_exiting_operator && !exits_visual_on_its_own && editor.mode().is_visual() {
@@ -140,10 +144,46 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
     let mode_after = editor.mode();
     if !mode_after.is_visual()
         && let (Some(kind), Some(selection)) = (kind_before, selection_before)
-        && let Some(win) = editor.windows_mut().get_mut(ctx.window)
     {
-        win.set_last_visual(kind, selection);
-        win.set_visual_kind(None);
+        if let Some(win) = editor.windows_mut().get_mut(ctx.window) {
+            win.set_last_visual(kind, selection.clone());
+            win.set_visual_kind(None);
+        }
+        if is_set_to_command {
+            let (anchor_pt, cursor_pt) = if let Some(win) = editor.window(ctx.window) {
+                let text_buf = editor.buffer(ctx.buffer).unwrap().as_text_buffer();
+                let anchor_pt = win.selections().anchor.as_ref().map(|a| a.tail().to_point(text_buf)).unwrap_or_else(|| win.selections().point);
+                (anchor_pt, win.selections().point)
+            } else {
+                (text::Point::new(0, 0), text::Point::new(0, 0))
+            };
+            if let Some(buf) = editor.buffers_mut().get_mut(ctx.buffer) {
+                use text::ToOffset;
+                let text_buf = buf.as_text_buffer();
+                let upper_row = anchor_pt.row.min(cursor_pt.row);
+                let lower_row = anchor_pt.row.max(cursor_pt.row);
+                let upper_off = text::Point { row: upper_row, column: 0 }.to_offset(text_buf);
+                let lower_off = text::Point { row: lower_row, column: text_buf.line_len(lower_row) }.to_offset(text_buf);
+                let start_anchor = text_buf.anchor_before(upper_off);
+                let end_anchor = text_buf.anchor_before(lower_off);
+                let _ = buf.set_mark_anchor('<', start_anchor);
+                let _ = buf.set_mark_anchor('>', end_anchor);
+            }
+        } else if let Some(buf) = editor.buffers_mut().get_mut(ctx.buffer) {
+            use text::ToOffset;
+            let (start_anchor, end_anchor) = {
+                let text_buf = buf.as_text_buffer();
+                let start_off = selection.start.to_offset(text_buf);
+                let end_off = selection.end.to_offset(text_buf);
+                if start_off <= end_off {
+                    (selection.start.clone(), selection.end.clone())
+                } else {
+                    (selection.end.clone(), selection.start.clone())
+                }
+            };
+            let _ = buf.set_mark_anchor('<', start_anchor);
+            let _ = buf.set_mark_anchor('>', end_anchor);
+        }
     }
     outcome
 }
@@ -194,8 +234,19 @@ pub fn exit(editor: &mut Editor, window: WindowId) -> Outcome {
             win.set_last_visual(kind, primary.clone());
         }
         if let Some(buf) = editor.buffers_mut().get_mut(buffer_id) {
-            let _ = buf.set_mark_anchor('<', primary.start.clone());
-            let _ = buf.set_mark_anchor('>', primary.end.clone());
+            use text::ToOffset;
+            let (start_anchor, end_anchor) = {
+                let text_buf = buf.as_text_buffer();
+                let start_off = primary.start.to_offset(text_buf);
+                let end_off = primary.end.to_offset(text_buf);
+                if start_off <= end_off {
+                    (primary.start.clone(), primary.end.clone())
+                } else {
+                    (primary.end.clone(), primary.start.clone())
+                }
+            };
+            let _ = buf.set_mark_anchor('<', start_anchor);
+            let _ = buf.set_mark_anchor('>', end_anchor);
         }
     }
 
@@ -297,18 +348,31 @@ fn block_insert_or_append(editor: &mut Editor, window: WindowId, append: bool) -
     let primary_sel_id = win.selections().primary_id();
     let primary_id = primary_sel_id.get() as usize;
 
-    let start_point = primary.start.to_point(text_buffer);
-    let end_point = primary.end.to_point(text_buffer);
-    let row_start = start_point.row.min(end_point.row);
-    let row_end = start_point.row.max(end_point.row);
-    let col_start = start_point.column.min(end_point.column);
-    let col_end = start_point.column.max(end_point.column) + 1;
+    let (row_start, row_end, col_start, col_end) =
+        if let Some(anchor_sel) = win.selections().anchor.clone() {
+            let anchor_pt = anchor_sel.tail().to_point(text_buffer);
+            let cursor_pt = win.selections().point;
+            let r_start = anchor_pt.row.min(cursor_pt.row);
+            let r_end = anchor_pt.row.max(cursor_pt.row);
+            let c_start = anchor_pt.column.min(cursor_pt.column);
+            let c_end = anchor_pt.column.max(cursor_pt.column) + 1;
+            (r_start, r_end, c_start, c_end)
+        } else {
+            let start_point = primary.start.to_point(text_buffer);
+            let end_point = primary.end.to_point(text_buffer);
+            let r_start = start_point.row.min(end_point.row);
+            let r_end = start_point.row.max(end_point.row);
+            let c_start = start_point.column.min(end_point.column);
+            let c_end = start_point.column.max(end_point.column) + 1;
+            (r_start, r_end, c_start, c_end)
+        };
     let target_col = if append { col_end } else { col_start };
 
     if let Some(kind) = win.visual_kind() {
         win.set_last_visual(kind, primary);
     }
     win.set_visual_kind(None);
+    win.selections_mut().anchor = None;
 
     let mut new_selections = Vec::new();
     let mut next_id = win.selections().id.max(primary_id + 1);

@@ -14,7 +14,12 @@ use vim_buffer::MutationOutcome;
 use vim_input::Action;
 
 use crate::kernel::{
-    Editor, command::CommandContext, ids::WindowId, mode::VisualKind, outcome::Outcome, transaction,
+    Editor,
+    command::CommandContext,
+    ids::WindowId,
+    mode::VisualKind,
+    outcome::{Outcome, RedrawInvalidation},
+    transaction,
 };
 
 pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Outcome {
@@ -386,14 +391,39 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
             operators::delete_char_before(editor, ctx.window, count)
         }
         Action::ChangeCase { count } => operators::change_case(editor, ctx.window, count),
+        Action::SelectSimilar => select_similar(editor, ctx),
+        Action::Sequence { actions, .. } => {
+            let mut outcome = Outcome::default();
+            for act in actions {
+                let sub_outcome = dispatch(editor, ctx, *act);
+                outcome.mutated |= sub_outcome.mutated;
+                outcome.mode_changed |= sub_outcome.mode_changed;
+                if sub_outcome.invalidation != RedrawInvalidation::None {
+                    outcome.invalidation = sub_outcome.invalidation;
+                }
+                outcome.effects.extend(sub_outcome.effects);
+                outcome.events.extend(sub_outcome.events);
+            }
+            outcome
+        }
         _ => Outcome::default(),
     }
 }
 
 fn clear_selections(editor: &mut Editor, ctx: CommandContext) -> Outcome {
     let (win, buffer) = editor.window_and_buffer_mut(ctx.window);
-    win.selections_mut().clear(buffer.as_text_buffer());
-    Outcome::default()
+    let text_buf = buffer.as_text_buffer();
+    let had_multicursor_or_selection =
+        win.selections().selections.len() > 1 || win.selections().has_selection(text_buf);
+    win.selections_mut().clear(text_buf);
+    if had_multicursor_or_selection {
+        Outcome {
+            invalidation: RedrawInvalidation::CurrentWindow,
+            ..Outcome::default()
+        }
+    } else {
+        Outcome::default()
+    }
 }
 
 fn undo(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
@@ -439,4 +469,133 @@ fn replay_history(
         *win.selections_mut() = selections;
     }
     Outcome::from_mutation(&mutation)
+}
+
+fn select_similar(editor: &mut Editor, ctx: CommandContext) -> Outcome {
+    use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
+    use vim_buffer::{BufferText, TextSearch};
+    use vim_regex::{CompileOptions, EditorOptions, Regex};
+    use crate::kernel::buffer::registers::{Register, RegisterKind, RegisterName};
+
+    let ignorecase = editor.global_options().ignorecase;
+    let (win, buffer) = editor.window_and_buffer_mut(ctx.window);
+    let text_buf = buffer.as_text_buffer();
+    let primary = win.selections().primary().clone();
+    let primary_start_off = primary.start.to_offset(text_buf);
+    let primary_end_off = primary.end.to_offset(text_buf);
+
+    if primary_start_off == primary_end_off {
+        let point = primary.head().to_point(text_buf);
+        let row_text = text_buf.row_text(point.row);
+        if let Some((start_col, len, word_str)) = row_text.find_word(point.column as usize) {
+            let word = word_str.to_string();
+            let start_pt = Point::new(point.row, start_col as u32);
+            let end_pt = Point::new(point.row, (start_col + len) as u32);
+            let start_anchor = text_buf.anchor_before(start_pt.to_offset(text_buf));
+            let end_anchor = text_buf.anchor_before(end_pt.to_offset(text_buf));
+
+            let selected = Selection {
+                id: primary.id,
+                start: start_anchor,
+                end: end_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            };
+            let _ = win.selections_mut().replace_primary(selected);
+            win.selections_mut().point = end_pt;
+
+            let escaped = super::search::regex_escape(&word);
+            let pattern = format!("\\<{}\\>", escaped);
+            let _ = editor.registers_mut().set(
+                RegisterName::Search,
+                Register {
+                    text: pattern,
+                    kind: RegisterKind::Character,
+                },
+            );
+
+            return Outcome {
+                invalidation: RedrawInvalidation::CurrentWindow,
+                ..Outcome::default()
+            };
+        }
+        Outcome::default()
+    } else {
+        let low = primary_start_off.min(primary_end_off);
+        let high = primary_start_off.max(primary_end_off);
+        let target_text: String = text_buf.as_rope().chunks_in_range(low..high).collect();
+        if target_text.is_empty() {
+            return Outcome::default();
+        }
+
+        let is_word = target_text
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_');
+        let pattern = if is_word {
+            format!("\\<{}\\>", super::search::regex_escape(&target_text))
+        } else {
+            super::search::regex_escape(&target_text)
+        };
+
+        let compile_opts = CompileOptions {
+            editor: EditorOptions {
+                ignore_case: ignorecase,
+                smart_case: false,
+                ..EditorOptions::default()
+            },
+            ..CompileOptions::default()
+        };
+
+        let Ok(regex) = Regex::compile(&pattern, compile_opts) else {
+            return Outcome::default();
+        };
+
+        let last_sel = win
+            .selections()
+            .selections
+            .iter()
+            .max_by_key(|s| s.end.to_offset(text_buf).max(s.start.to_offset(text_buf)))
+            .cloned()
+            .unwrap_or(primary.clone());
+
+        let max_off = last_sel
+            .end
+            .to_offset(text_buf)
+            .max(last_sel.start.to_offset(text_buf));
+        let last_point = text_buf.anchor_before(max_off).to_point(text_buf);
+
+        let row_count = buffer.snapshot().row_count();
+        if let Some((next_row, next_col, len)) = super::search::find_next_occurrence(
+            buffer,
+            &regex,
+            last_point.row,
+            last_point.column,
+            true,
+            row_count,
+        ) {
+            let next_start_pt = Point::new(next_row, next_col);
+            let next_end_pt = Point::new(next_row, next_col + len as u32);
+            let next_start_anchor = text_buf.anchor_before(next_start_pt.to_offset(text_buf));
+            let next_end_anchor = text_buf.anchor_before(next_end_pt.to_offset(text_buf));
+
+            let next_id = win.selections().id;
+            win.selections_mut().id += 1;
+            let new_selection = Selection {
+                id: next_id,
+                start: next_start_anchor,
+                end: next_end_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            };
+
+            win.selections_mut().selections.push(new_selection);
+            win.selections_mut().collapse_overlapping_cursors(text_buf);
+
+            return Outcome {
+                invalidation: RedrawInvalidation::CurrentWindow,
+                ..Outcome::default()
+            };
+        }
+        Outcome::default()
+    }
 }
