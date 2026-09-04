@@ -54,7 +54,9 @@ pub struct Editor {
     pub(crate) quickfix_index: usize,
     pub(crate) macro_recorder: vim_macros::MacroRecorder,
     pub(crate) last_replayed_macro: Option<String>,
+    pub(crate) popups: window::popup::PopupStore,
 }
+
 
 impl Editor {
     /// Creates an editor with one buffer seeded with `initial_text`, shown
@@ -125,8 +127,10 @@ impl Editor {
             quickfix_index: 0,
             macro_recorder: vim_macros::MacroRecorder::new(),
             last_replayed_macro: None,
+            popups: window::popup::PopupStore::new(),
         }
     }
+
 
     /// The only way `app/` reaches into kernel state: translate one action
     /// into its effect on the current buffer/window/tab.
@@ -134,8 +138,45 @@ impl Editor {
         self.execute_with_register(action, None)
     }
 
+    pub fn current_cursor_point(&self) -> Option<text::Point> {
+        let win = self.current_window();
+        let head = win.selections().primary().head();
+        let buf = self.current_buffer();
+        Some(buf.as_text_buffer().summary_for_anchor(&head))
+    }
+
     pub fn execute_with_register(&mut self, action: Action, register: Option<char>) -> Outcome {
         self.pending_register = register;
+
+        if let Some((is_global, popup_id, buffer_id)) = self.find_active_filter_popup() {
+            let buffer_line_count = self.buffer(buffer_id).map(|b| b.snapshot().row_count() as usize).unwrap_or(0);
+
+
+            let filter_result = if is_global {
+                self.popups.eval_filter(popup_id, &action, buffer_line_count)
+            } else {
+                let tab_id = self.current.tab;
+                self.tabs.get_mut(tab_id).map(|t| t.popups_mut().eval_filter(popup_id, &action, buffer_line_count)).unwrap_or(window::popup::FilterResult::Passthrough)
+            };
+
+            match filter_result {
+                window::popup::FilterResult::Consumed => {
+                    return Outcome {
+                        invalidation: outcome::RedrawInvalidation::Popup,
+                        ..Default::default()
+                    };
+                }
+                window::popup::FilterResult::Close { result_code } => {
+                    self.close_popup(popup_id, result_code);
+                    return Outcome {
+                        invalidation: outcome::RedrawInvalidation::Popup,
+                        ..Default::default()
+                    };
+                }
+                window::popup::FilterResult::Passthrough => {}
+            }
+        }
+
         let ctx = self.current;
         let before = self
             .buffer(ctx.buffer)
@@ -152,13 +193,103 @@ impl Editor {
                 .record(dispatched_action.clone(), register);
         }
 
-        let outcome = command::dispatch(self, ctx, action);
+        let mut outcome = command::dispatch(self, ctx, action);
         self.remove_edited_folds(before.as_ref(), &outcome);
         command::normal::folds::snap_cursors(self, ctx.window, &dispatched_action, &previous_heads);
         self.pending_register = None;
         self.primed_clipboard_register = None;
+
+        let (cursor_line, cursor_col) = self
+            .current_cursor_point()
+            .map(|pt| (pt.row as u32 + 1, pt.column as u32 + 1))
+            .unwrap_or((1, 1));
+        if self.check_popup_movement(cursor_line, cursor_col) {
+            outcome.invalidation = outcome.invalidation.combine(outcome::RedrawInvalidation::Popup);
+        }
+
         outcome
     }
+
+    pub fn find_active_filter_popup(&self) -> Option<(bool, ids::PopupWindowId, BufferId)> {
+        if let Some(popup_id) = self.popups.active_filter_popup() {
+            if let Some(popup) = self.popups.get(popup_id) {
+                return Some((true, popup_id, popup.buffer_id));
+            }
+        }
+        let tab_id = self.current.tab;
+        if let Some(tab) = self.tabs.get(tab_id) {
+            if let Some(popup_id) = tab.popups().active_filter_popup() {
+                if let Some(popup) = tab.popups().get(popup_id) {
+                    return Some((false, popup_id, popup.buffer_id));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn close_popup(&mut self, popup_id: ids::PopupWindowId, _result_code: i32) -> Option<window::popup::PopupWindow> {
+        let removed = self.popups.remove(popup_id).or_else(|| {
+            let tab_id = self.current.tab;
+            self.tabs.get_mut(tab_id).and_then(|t| t.popups_mut().remove(popup_id))
+        });
+        if let Some(ref popup) = removed {
+            let _ = self.buffers.delete(popup.buffer_id, true);
+        }
+        removed
+    }
+
+    pub fn set_popup_text(&mut self, popup_id: ids::PopupWindowId, lines: &[String]) {
+        let buffer_id = self.popups.get(popup_id).map(|p| p.buffer_id).or_else(|| {
+            let tab_id = self.current.tab;
+            self.tabs.get(tab_id).and_then(|t| t.popups().get(popup_id)).map(|p| p.buffer_id)
+        });
+        if let Some(buf_id) = buffer_id {
+            let text = lines.join("\n");
+            if let Some(buf) = self.buffers.get_mut(buf_id) {
+                let len = buf.snapshot().len_bytes();
+                let range = vim_buffer::TextRange::new(vim_buffer::ByteOffset(0), vim_buffer::ByteOffset(len)).expect("ordered range");
+                let mut tx = buf.transaction(vim_buffer::EditOrigin::VimScript);
+                tx.replace(None, range, text);
+                let _ = tx.commit(None);
+            }
+        }
+    }
+
+    pub fn check_popup_timers(&mut self) -> bool {
+        let expired_global = self.popups.check_timers();
+        let tab_id = self.current.tab;
+        let expired_tab = self
+            .tabs
+            .get_mut(tab_id)
+            .map(|t| t.popups_mut().check_timers())
+            .unwrap_or_default();
+
+        let mut closed_any = false;
+        for id in expired_global.into_iter().chain(expired_tab) {
+            self.close_popup(id, 0);
+            closed_any = true;
+        }
+        closed_any
+    }
+
+    pub fn check_popup_movement(&mut self, cursor_line: u32, cursor_col: u32) -> bool {
+        let close_global = self.popups.check_movement(cursor_line, cursor_col);
+        let tab_id = self.current.tab;
+        let close_tab = self
+            .tabs
+            .get_mut(tab_id)
+            .map(|t| t.popups_mut().check_movement(cursor_line, cursor_col))
+            .unwrap_or_default();
+
+        let mut closed_any = false;
+        for id in close_global.into_iter().chain(close_tab) {
+            self.close_popup(id, 0);
+            closed_any = true;
+        }
+        closed_any
+    }
+
+
 
     pub fn persistent_registers(
         &self,
@@ -319,6 +450,15 @@ impl Editor {
     pub(crate) fn global_options_mut(&mut self) -> &mut GlobalOptions {
         &mut self.global_options
     }
+
+    pub fn global_popups(&self) -> &window::popup::PopupStore {
+        &self.popups
+    }
+
+    pub fn global_popups_mut(&mut self) -> &mut window::popup::PopupStore {
+        &mut self.popups
+    }
+
 
     pub fn last_char_search(&self) -> Option<CharSearch> {
         self.last_char_search

@@ -526,6 +526,7 @@ fn append(state: &mut EditorState, args: &[Value]) -> RuntimeResult<Value> {
 impl Host for ActiveHost {
     fn call(&self, request: HostRequest) -> HostFuture {
         let sender = self.sender.clone();
+        let state_arc = self.state.clone();
         Box::pin(async move {
             match request.function.as_str() {
                 "echo" | "message" | "echomsg" => {
@@ -594,6 +595,152 @@ impl Host for ActiveHost {
                             )
                         })?;
                     Ok(Value::Integer(0))
+                }
+                "popup_create" | "popup_atcursor" | "popup_notification" | "popup_dialog" => {
+                    if request.arguments.is_empty() {
+                        return Err(RuntimeError::coded(
+                            "E119",
+                            RuntimeErrorKind::ArityError,
+                            "popup_create expects at least 1 argument",
+                        ));
+                    }
+                    let what = &request.arguments[0];
+                    let opts = request.arguments.get(1).cloned().unwrap_or(Value::Null);
+                    let (lines, mut options) = crate::script::popup::parse_popup_args(what, &opts);
+                    if request.function == "popup_notification" {
+                        options.entry("time".to_string()).or_insert(Value::Integer(3000));
+                        options.entry("border".to_string()).or_insert(Value::List(vec![Value::Integer(1)]));
+                    }
+                    let popup_id_val = {
+                        let mut state = state_arc.lock().map_err(|_| {
+                            RuntimeError::coded(
+                                "E605",
+                                RuntimeErrorKind::HostError,
+                                "editor state lock is poisoned",
+                            )
+                        })?;
+                        let id = state.next_popup_id;
+                        state.next_popup_id += 1;
+                        id
+                    };
+                    sender
+                        .send(AppRequest::PopupCreate { lines, options })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    Ok(Value::Integer(popup_id_val as i64))
+                }
+                "popup_close" => {
+                    let id = request
+                        .arguments
+                        .get(0)
+                        .and_then(|v| match v {
+                            Value::Integer(i) => Some(*i as u64),
+                            _ => None,
+                        })
+                        .unwrap_or(0);
+                    sender
+                        .send(AppRequest::PopupClose { id })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    Ok(Value::Null)
+                }
+                "popup_settext" => {
+                    if request.arguments.len() < 2 {
+                        return Err(RuntimeError::coded(
+                            "E119",
+                            RuntimeErrorKind::ArityError,
+                            "popup_settext expects 2 arguments",
+                        ));
+                    }
+                    let id = match &request.arguments[0] {
+                        Value::Integer(i) => *i as u64,
+                        _ => 0,
+                    };
+                    let (lines, _) = crate::script::popup::parse_popup_args(&request.arguments[1], &Value::Null);
+                    sender
+                        .send(AppRequest::PopupSetText { id, lines })
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    Ok(Value::Null)
+                }
+                "popup_filter_yesno" => {
+                    if request.arguments.len() < 2 {
+                        return Err(RuntimeError::coded(
+                            "E119",
+                            RuntimeErrorKind::ArityError,
+                            "popup_filter_yesno expects 2 arguments",
+                        ));
+                    }
+                    let id = match &request.arguments[0] {
+                        Value::Integer(i) => *i as u64,
+                        _ => 0,
+                    };
+                    let key = match &request.arguments[1] {
+                        Value::String(s) => s.as_ref().to_string(),
+                        Value::Builtin(s) => s.as_ref().to_string(),
+                        Value::HostFunction(s) => s.as_ref().to_string(),
+                        other => other.to_string(),
+                    };
+                    let is_close = matches!(key.as_str(), "y" | "Y" | "n" | "N" | "x" | "\x1b" | "\x03");
+                    if is_close {
+                        sender
+                            .send(AppRequest::PopupClose { id })
+                            .map_err(|_| {
+                                RuntimeError::coded(
+                                    "E_HOST",
+                                    RuntimeErrorKind::HostError,
+                                    "editor command queue is closed",
+                                )
+                            })?;
+                    }
+                    Ok(Value::Integer(1))
+                }
+                "popup_filter_menu" => {
+                    if request.arguments.len() < 2 {
+                        return Err(RuntimeError::coded(
+                            "E119",
+                            RuntimeErrorKind::ArityError,
+                            "popup_filter_menu expects 2 arguments",
+                        ));
+                    }
+                    let id = match &request.arguments[0] {
+                        Value::Integer(i) => *i as u64,
+                        _ => 0,
+                    };
+                    let key = match &request.arguments[1] {
+                        Value::String(s) => s.as_ref().to_string(),
+                        Value::Builtin(s) => s.as_ref().to_string(),
+                        Value::HostFunction(s) => s.as_ref().to_string(),
+                        other => other.to_string(),
+                    };
+                    let is_close = matches!(key.as_str(), "\r" | "\n" | " " | "x" | "\x1b" | "\x03");
+                    if is_close {
+                        sender
+                            .send(AppRequest::PopupClose { id })
+                            .map_err(|_| {
+                                RuntimeError::coded(
+                                    "E_HOST",
+                                    RuntimeErrorKind::HostError,
+                                    "editor command queue is closed",
+                                )
+                            })?;
+                    }
+                    Ok(Value::Integer(1))
                 }
                 name => Err(RuntimeError::coded(
                     "E117",

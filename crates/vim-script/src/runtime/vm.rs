@@ -442,6 +442,21 @@ impl Vm {
                 let name = self.constant_string(&module, function_id, id)?;
                 let value = if let Some(value) = self.globals.get(&name).cloned() {
                     value
+                } else if let Some(value) = name
+                    .strip_prefix("g:")
+                    .and_then(|clean| self.globals.get(&format!(":{clean}")).cloned())
+                {
+                    value
+                } else if let Some(value) = name
+                    .strip_prefix("g:")
+                    .and_then(|clean| self.globals.get(clean).cloned())
+                {
+                    value
+                } else if let Some(value) = name
+                    .strip_prefix(':')
+                    .and_then(|clean| self.globals.get(&format!("g:{clean}")).cloned())
+                {
+                    value
                 } else if name.ends_with(':') {
                     self.namespace_dictionary(&name)
                 } else {

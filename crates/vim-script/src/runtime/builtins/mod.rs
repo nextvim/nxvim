@@ -81,8 +81,24 @@ impl BuiltinRegistry {
         registry.register("setbufline", BuiltinArity::Exact(3), dummy_assert);
         registry.register("deletebufline", BuiltinArity::Range { min: 2, max: 3 }, dummy_assert);
         registry.register("append", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_create", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_atcursor", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_notification", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_dialog", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_menu", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_close", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
+        registry.register("popup_clear", BuiltinArity::Range { min: 0, max: 1 }, dummy_assert);
+        registry.register("popup_hide", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("popup_show", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("popup_getpos", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("popup_getoptions", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("popup_setoptions", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_settext", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_filter_menu", BuiltinArity::Exact(2), dummy_assert);
+        registry.register("popup_filter_yesno", BuiltinArity::Exact(2), dummy_assert);
 
         registry
+
     }
 
     pub fn register(&mut self, name: impl Into<String>, arity: BuiltinArity, function: BuiltinFn) {

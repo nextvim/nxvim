@@ -214,6 +214,117 @@ pub fn project(editor: &Editor) -> Vec<WindowProjection> {
     projections
 }
 
+use crate::kernel::window::popup::{LayoutContext, PopupBorder, PopupPadding, PopupRect, PopupWindowId};
+
+pub struct PopupViewSnapshot {
+    pub id: PopupWindowId,
+    pub buffer: BufferId,
+    pub snapshot: text::BufferSnapshot,
+    pub rect: PopupRect,
+    pub zindex: i32,
+    pub border: PopupBorder,
+    pub padding: PopupPadding,
+    pub title: Option<String>,
+    pub highlight: String,
+    pub border_highlight: String,
+    pub border_chars: Option<[char; 8]>,
+    pub close_button: bool,
+    pub scroll_top: u32,
+    pub wrap: bool,
+}
+
+pub fn project_popups(
+    editor: &Editor,
+    screen_width: u32,
+    screen_height: u32,
+) -> Vec<PopupViewSnapshot> {
+    let mut snapshots = Vec::new();
+
+    let cursor_pos = (1, 1);
+    let win_origin = (1, 1);
+
+    // Global popups
+    for popup in editor.global_popups().iter() {
+        if !popup.state.visible {
+            continue;
+        }
+        if let Some(buf) = editor.buffer(popup.buffer_id) {
+            let snap = buf.snapshot().into_inner();
+            let ctx = LayoutContext {
+                screen_width,
+                screen_height,
+                target_win_origin: win_origin,
+                cursor_screen_pos: cursor_pos,
+                content_line_count: snap.row_count(),
+                max_line_len: (0..snap.row_count())
+                    .map(|r| snap.line_len(r))
+                    .max()
+                    .unwrap_or(0),
+            };
+            let rect = popup.compute_rect(ctx);
+            snapshots.push(PopupViewSnapshot {
+                id: popup.id,
+                buffer: popup.buffer_id,
+                snapshot: snap,
+                rect,
+                zindex: popup.layout.zindex,
+                border: popup.style.border,
+                padding: popup.style.padding,
+                title: popup.style.title.clone(),
+                highlight: popup.style.highlight.clone(),
+                border_highlight: popup.style.border_highlight.clone(),
+                border_chars: popup.style.border_chars,
+                close_button: popup.style.close_button,
+                scroll_top: popup.state.scroll_top,
+                wrap: popup.layout.wrap,
+            });
+        }
+    }
+
+    // Tab-local popups
+    let tab = editor.tabs().active();
+    for popup in tab.popups().iter() {
+        if !popup.state.visible {
+            continue;
+        }
+        if let Some(buf) = editor.buffer(popup.buffer_id) {
+            let snap = buf.snapshot().into_inner();
+            let ctx = LayoutContext {
+                screen_width,
+                screen_height,
+                target_win_origin: win_origin,
+                cursor_screen_pos: cursor_pos,
+                content_line_count: snap.row_count(),
+                max_line_len: (0..snap.row_count())
+                    .map(|r| snap.line_len(r))
+                    .max()
+                    .unwrap_or(0),
+            };
+            let rect = popup.compute_rect(ctx);
+            snapshots.push(PopupViewSnapshot {
+                id: popup.id,
+                buffer: popup.buffer_id,
+                snapshot: snap,
+                rect,
+                zindex: popup.layout.zindex,
+                border: popup.style.border,
+                padding: popup.style.padding,
+                title: popup.style.title.clone(),
+                highlight: popup.style.highlight.clone(),
+                border_highlight: popup.style.border_highlight.clone(),
+                border_chars: popup.style.border_chars,
+                close_button: popup.style.close_button,
+                scroll_top: popup.state.scroll_top,
+                wrap: popup.layout.wrap,
+            });
+        }
+    }
+
+    snapshots.sort_by_key(|s| s.zindex);
+    snapshots
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -22,7 +22,39 @@ pub enum RedrawInvalidation {
     /// Text changed within `range` of `buffer`; a real redraw only needs to
     /// re-layout/re-paint that span, not the whole window.
     Range { buffer: BufferId, range: TextRange },
+    /// Floating popup windows created, moved, updated, or closed.
+    Popup,
 }
+
+impl RedrawInvalidation {
+    pub fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::All, _) | (_, Self::All) => Self::All,
+            (Self::Popup, _) | (_, Self::Popup) => Self::Popup,
+            (
+                Self::Range { buffer, range },
+                Self::Range {
+                    range: other_range, ..
+                },
+            ) => {
+                use std::cmp::{max, min};
+                Self::Range {
+                    buffer,
+                    range: TextRange {
+                        start: min(range.start, other_range.start),
+                        end: max(range.end, other_range.end),
+                    },
+                }
+            }
+            (Self::Range { buffer, range }, _) | (_, Self::Range { buffer, range }) => {
+                Self::Range { buffer, range }
+            }
+            (Self::CurrentWindow, _) | (_, Self::CurrentWindow) => Self::CurrentWindow,
+            (Self::None, Self::None) => Self::None,
+        }
+    }
+}
+
 
 /// A side effect `app::` must carry out on the kernel's behalf. No variants
 /// yet — nothing produces one until a milestone needs fs/clipboard/script

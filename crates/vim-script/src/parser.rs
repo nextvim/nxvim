@@ -85,6 +85,10 @@ impl<'a> Parser<'a> {
                 self.advance();
                 StmtKind::Unlet(self.unlet_targets()?)
             }
+            TokenKind::Keyword(Keyword::Call) => {
+                self.advance();
+                StmtKind::Expression(self.expression(0)?)
+            }
             TokenKind::Keyword(Keyword::Echo) => {
                 self.advance();
                 StmtKind::Echo(self.expression_list_to_end()?)
@@ -714,7 +718,8 @@ impl<'a> Parser<'a> {
                 },
             )));
         }
-        if self.consume_simple(TokenKind::Dot) {
+        if !matches!(target.kind, ExprKind::Literal(_)) && self.check_simple(&TokenKind::Dot) {
+            self.advance();
             let name = self.expect_identifier("expected member name after '.'")?;
             let end = self.previous().span;
             let span = target.span.merge(end);
@@ -1142,7 +1147,9 @@ fn binary_operator(kind: &TokenKind) -> Option<(BinaryOperator, u8, u8)> {
         TokenKind::Keyword(Keyword::IsNot) => (BinaryOperator::IsNot, 30),
         TokenKind::Operator(Operator::Add) => (BinaryOperator::Add, 40),
         TokenKind::Operator(Operator::Subtract) => (BinaryOperator::Subtract, 40),
-        TokenKind::Operator(Operator::Concatenate) => (BinaryOperator::Concatenate, 40),
+        TokenKind::Operator(Operator::Concatenate) | TokenKind::Dot => {
+            (BinaryOperator::Concatenate, 40)
+        }
         TokenKind::Operator(Operator::Multiply) => (BinaryOperator::Multiply, 50),
         TokenKind::Operator(Operator::Divide) => (BinaryOperator::Divide, 50),
         TokenKind::Operator(Operator::Remainder) => (BinaryOperator::Remainder, 50),

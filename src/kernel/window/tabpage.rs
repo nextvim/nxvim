@@ -300,10 +300,13 @@ impl Layout {
     }
 }
 
+use super::popup::PopupStore;
+
 pub struct TabPage {
     layout: Layout,
     active_window: WindowId,
     previous_window: Option<WindowId>,
+    popups: PopupStore,
 }
 
 impl TabPage {
@@ -312,8 +315,18 @@ impl TabPage {
             layout: Layout::Leaf(window),
             active_window: window,
             previous_window: None,
+            popups: PopupStore::new(),
         }
     }
+
+    pub fn popups(&self) -> &PopupStore {
+        &self.popups
+    }
+
+    pub fn popups_mut(&mut self) -> &mut PopupStore {
+        &mut self.popups
+    }
+
 
     pub fn layout(&self) -> &Layout {
         &self.layout

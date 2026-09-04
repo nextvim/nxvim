@@ -1026,35 +1026,8 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCo
                 outcome.mode_changed |= nested_outcome.mode_changed;
                 outcome.effects.extend(nested_outcome.effects);
                 outcome.events.extend(nested_outcome.events);
-                outcome.invalidation = match (outcome.invalidation, nested_outcome.invalidation) {
-                    (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
-                        RedrawInvalidation::All
-                    }
-                    (
-                        RedrawInvalidation::Range { buffer, range },
-                        RedrawInvalidation::Range {
-                            range: other_range, ..
-                        },
-                    ) => {
-                        use std::cmp::{max, min};
-                        RedrawInvalidation::Range {
-                            buffer,
-                            range: TextRange {
-                                start: min(range.start, other_range.start),
-                                end: max(range.end, other_range.end),
-                            },
-                        }
-                    }
-                    (RedrawInvalidation::Range { buffer, range }, _)
-                    | (_, RedrawInvalidation::Range { buffer, range }) => {
-                        RedrawInvalidation::Range { buffer, range }
-                    }
-                    (RedrawInvalidation::CurrentWindow, _)
-                    | (_, RedrawInvalidation::CurrentWindow) => RedrawInvalidation::CurrentWindow,
-                    (RedrawInvalidation::None, RedrawInvalidation::None) => {
-                        RedrawInvalidation::None
-                    }
-                };
+                outcome.invalidation = outcome.invalidation.combine(nested_outcome.invalidation);
+
             }
             outcome
         }
@@ -1096,35 +1069,8 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCo
                 outcome.mode_changed |= nested_outcome.mode_changed;
                 outcome.effects.extend(nested_outcome.effects);
                 outcome.events.extend(nested_outcome.events);
-                outcome.invalidation = match (outcome.invalidation, nested_outcome.invalidation) {
-                    (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
-                        RedrawInvalidation::All
-                    }
-                    (
-                        RedrawInvalidation::Range { buffer, range },
-                        RedrawInvalidation::Range {
-                            range: other_range, ..
-                        },
-                    ) => {
-                        use std::cmp::{max, min};
-                        RedrawInvalidation::Range {
-                            buffer,
-                            range: TextRange {
-                                start: min(range.start, other_range.start),
-                                end: max(range.end, other_range.end),
-                            },
-                        }
-                    }
-                    (RedrawInvalidation::Range { buffer, range }, _)
-                    | (_, RedrawInvalidation::Range { buffer, range }) => {
-                        RedrawInvalidation::Range { buffer, range }
-                    }
-                    (RedrawInvalidation::CurrentWindow, _)
-                    | (_, RedrawInvalidation::CurrentWindow) => RedrawInvalidation::CurrentWindow,
-                    (RedrawInvalidation::None, RedrawInvalidation::None) => {
-                        RedrawInvalidation::None
-                    }
-                };
+                outcome.invalidation = outcome.invalidation.combine(nested_outcome.invalidation);
+
             }
             outcome
         }
@@ -1698,35 +1644,8 @@ fn execute_normal_keys(editor: &mut Editor, keys_str: &str) -> Outcome {
                 outcome.mode_changed |= action_outcome.mode_changed;
                 outcome.effects.extend(action_outcome.effects);
                 outcome.events.extend(action_outcome.events);
-                outcome.invalidation = match (outcome.invalidation, action_outcome.invalidation) {
-                    (RedrawInvalidation::All, _) | (_, RedrawInvalidation::All) => {
-                        RedrawInvalidation::All
-                    }
-                    (
-                        RedrawInvalidation::Range { buffer, range },
-                        RedrawInvalidation::Range {
-                            range: other_range, ..
-                        },
-                    ) => {
-                        use std::cmp::{max, min};
-                        RedrawInvalidation::Range {
-                            buffer,
-                            range: TextRange {
-                                start: min(range.start, other_range.start),
-                                end: max(range.end, other_range.end),
-                            },
-                        }
-                    }
-                    (RedrawInvalidation::Range { buffer, range }, _)
-                    | (_, RedrawInvalidation::Range { buffer, range }) => {
-                        RedrawInvalidation::Range { buffer, range }
-                    }
-                    (RedrawInvalidation::CurrentWindow, _)
-                    | (_, RedrawInvalidation::CurrentWindow) => RedrawInvalidation::CurrentWindow,
-                    (RedrawInvalidation::None, RedrawInvalidation::None) => {
-                        RedrawInvalidation::None
-                    }
-                };
+                outcome.invalidation = outcome.invalidation.combine(action_outcome.invalidation);
+
             }
         }
     }

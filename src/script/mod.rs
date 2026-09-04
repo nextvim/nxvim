@@ -13,6 +13,8 @@ use vim_script::source::SourceMap;
 
 pub mod commands;
 mod ex;
+pub mod popup;
+
 
 #[derive(Clone)]
 pub struct EditorState {
@@ -20,6 +22,7 @@ pub struct EditorState {
     pub names: HashMap<PathBuf, text::BufferId>,
     pub current_buffer_id: Option<text::BufferId>,
     pub current_mode: String,
+    pub next_popup_id: u64,
 }
 
 impl Default for EditorState {
@@ -29,6 +32,7 @@ impl Default for EditorState {
             names: HashMap::new(),
             current_buffer_id: None,
             current_mode: "n".to_string(),
+            next_popup_id: 1,
         }
     }
 }
@@ -195,6 +199,22 @@ impl ScriptHost {
             Arity::Range { min: 1, max: 2 },
             vec![Capability::Editor],
         );
+        runtime.register_function("popup_create", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_atcursor", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_notification", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_dialog", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_menu", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_close", Arity::Range { min: 1, max: 2 }, vec![Capability::UserInterface]);
+        runtime.register_function("popup_clear", Arity::Range { min: 0, max: 1 }, vec![Capability::UserInterface]);
+        runtime.register_function("popup_hide", Arity::Exact(1), vec![Capability::UserInterface]);
+        runtime.register_function("popup_show", Arity::Exact(1), vec![Capability::UserInterface]);
+        runtime.register_function("popup_getpos", Arity::Exact(1), vec![Capability::UserInterface]);
+        runtime.register_function("popup_getoptions", Arity::Exact(1), vec![Capability::UserInterface]);
+        runtime.register_function("popup_setoptions", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_settext", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_filter_menu", Arity::Exact(2), vec![Capability::UserInterface]);
+        runtime.register_function("popup_filter_yesno", Arity::Exact(2), vec![Capability::UserInterface]);
+
 
         for spec in commands::COMMAND_SPECS {
             runtime.register_command(CommandDefinition::from(spec));

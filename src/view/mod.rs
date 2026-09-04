@@ -1,9 +1,11 @@
 //! Incremental/retained rendering state and TextView projection.
 
 pub mod layout;
+pub mod popup;
 
 #[cfg(test)]
 pub mod tests;
+
 
 use crate::kernel::ids::WindowId;
 use crate::kernel::mode::Mode;
@@ -230,10 +232,11 @@ fn should_rebuild(
         || !has_model
         || pending.iter().any(|invalidation| match invalidation {
             RedrawInvalidation::None => false,
-            RedrawInvalidation::All => true,
+            RedrawInvalidation::All | RedrawInvalidation::Popup => true,
             RedrawInvalidation::CurrentWindow => is_current,
             RedrawInvalidation::Range { buffer: dirty, .. } => *dirty == buffer,
         })
+
 }
 
 fn build_syntax_decorations(
@@ -1390,6 +1393,11 @@ pub fn render_with_scheme(
         if !cursor_shown {
             renderer.hide_cursor()?;
         }
+    }
+
+    let popup_snapshots = crate::app::view_sync::project_popups(editor, screen.width as u32, screen.height as u32);
+    if !popup_snapshots.is_empty() {
+        popup::render_popups(&popup_snapshots, &mut renderer.current);
     }
 
     renderer.flush(out)?;

@@ -1508,3 +1508,68 @@ fn test_unranged_peeked_substitute_rendering() {
     let row2 = &model.rows[2];
     assert_eq!(row2.spans[0].text, "next row");
 }
+
+#[test]
+fn test_popup_frame_and_text_rendering_snapshot() {
+    use crate::app::view_sync::PopupViewSnapshot;
+    use crate::kernel::ids::PopupWindowId;
+    use crate::kernel::window::popup::{PopupBorder, PopupPadding, PopupRect};
+    use crate::view::popup::render_popup;
+    let editor = Editor::new("Hello Popup\nSecond Line");
+    let buf = editor.current_buffer();
+    let snapshot = buf.snapshot().into_inner();
+
+
+    let popup = PopupViewSnapshot {
+        id: PopupWindowId::new(1),
+        buffer: buf.id(),
+        snapshot,
+        rect: PopupRect {
+            outer_line: 1,
+            outer_col: 1,
+            outer_width: 20,
+            outer_height: 6,
+            core_line: 3,
+            core_col: 3,
+            core_width: 16,
+            core_height: 2,
+        },
+        zindex: 50,
+        border: PopupBorder::full(),
+        padding: PopupPadding::full(1),
+        title: Some("Info".to_string()),
+        highlight: "Popup".to_string(),
+        border_highlight: "PopupBorder".to_string(),
+        border_chars: None,
+        close_button: true,
+        scroll_top: 0,
+        wrap: true,
+    };
+
+    let mut screen = ScreenBuffer::new(20, 6);
+    render_popup(&popup, &mut screen);
+
+    let output = format_cells(&screen);
+    let lines: Vec<&str> = output.lines().collect();
+
+    // Line 0: Top border with centered title " Info " and close button "[X]"
+    assert!(lines[0].contains("Info"));
+    assert!(lines[0].contains("[X]"));
+
+
+    // Line 1: Top padding row inside outer border
+    assert_eq!(lines[1], "│                  │");
+
+    // Line 2: First content line "Hello Popup" inside padding
+    assert!(lines[2].contains("Hello Popup"));
+
+    // Line 3: Second content line "Second Line" inside padding
+    assert!(lines[3].contains("Second Line"));
+
+    // Line 4: Bottom padding row inside outer border
+    assert_eq!(lines[4], "│                  │");
+
+    // Line 5: Bottom border line
+    assert_eq!(lines[5], "└──────────────────┘");
+}
+

@@ -7,7 +7,9 @@
 //! window's selection in place; edits go through `kernel::transaction`
 //! against the buffer this window names.
 
+pub mod popup;
 pub mod tabpage;
+
 
 use std::collections::HashMap;
 use text::{Anchor, BufferSnapshot, Point, Selection, SelectionGoal, ToOffset};

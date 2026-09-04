@@ -36,6 +36,7 @@ pub enum Keyword {
     Let,
     Const,
     Unlet,
+    Call,
     If,
     ElseIf,
     Else,
@@ -302,6 +303,8 @@ impl<'a> Lexer<'a> {
             while self.peek().is_some_and(is_identifier_continue) {
                 self.bump();
             }
+        } else if &self.source[start..self.cursor] == "function" && self.peek() == Some('!') {
+            self.bump();
         }
         let text = &self.source[start..self.cursor];
         if let Some(keyword) = keyword(text) {
@@ -310,6 +313,7 @@ impl<'a> Lexer<'a> {
                 Keyword::Let
                     | Keyword::Const
                     | Keyword::Unlet
+                    | Keyword::Call
                     | Keyword::Return
                     | Keyword::Throw
                     | Keyword::Await
@@ -660,6 +664,7 @@ fn keyword(text: &str) -> Option<Keyword> {
         "let" => Keyword::Let,
         "const" => Keyword::Const,
         "unlet" => Keyword::Unlet,
+        "call" | "cal" | "call!" | "cal!" => Keyword::Call,
         "if" => Keyword::If,
         "elseif" => Keyword::ElseIf,
         "else" => Keyword::Else,

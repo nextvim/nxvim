@@ -243,7 +243,14 @@ pub enum RawKey {
 pub fn translate_raw(event: &Event) -> Option<RawKey> {
     match event {
         Event::Key(key_event) if key_event.kind != KeyEventKind::Release => match key_event.code {
-            CKey::Char(ch) => Some(RawKey::Char(ch)),
+            CKey::Char(ch) => {
+                if key_event.modifiers.contains(CMod::CONTROL) {
+                    let ctrl_char = (ch.to_ascii_lowercase() as u8 % 32) as char;
+                    Some(RawKey::Char(ctrl_char))
+                } else {
+                    Some(RawKey::Char(ch))
+                }
+            }
             CKey::Backspace => Some(RawKey::Backspace),
             CKey::Delete => Some(RawKey::Delete),
             CKey::Left => Some(RawKey::Left {

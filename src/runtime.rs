@@ -10,6 +10,7 @@ use std::time::Duration;
 use crossterm::event::{self, Event};
 
 use crate::app::{App, input::InputTranslator};
+use vim_input::Action;
 use crate::kernel::outcome::RedrawInvalidation;
 use crate::view::RenderState;
 
@@ -65,6 +66,10 @@ pub fn run(
             if service_outcome.invalidation != RedrawInvalidation::None {
                 pending_invalidations.push(service_outcome.invalidation);
             }
+            if app.editor_mut().check_popup_timers() {
+                pending_invalidations.push(RedrawInvalidation::Popup);
+            }
+
             // Track idle state — start idling after a quiet period, then
             // gradually expand the display-map and highlighter prefetch range.
             if !is_idle && last_command_time.elapsed() >= Duration::from_millis(IDLE_THRESHOLD_MS) {
@@ -134,9 +139,32 @@ pub fn run(
             continue;
         }
 
+        let has_popup_filter = app.editor().find_active_filter_popup().is_some();
         let is_command_mode =
-            app.editor().mode().is_command() || app.editor().has_pending_substitute();
-        if is_command_mode {
+            !has_popup_filter && (app.editor().mode().is_command() || app.editor().has_pending_substitute());
+        if has_popup_filter {
+            if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
+                let action = match raw_key {
+                    crate::app::input::RawKey::Char(c) => Action::InsertText(c.to_string()),
+                    crate::app::input::RawKey::Enter => Action::CarriageReturn,
+                    crate::app::input::RawKey::Escape => Action::Quit,
+                    crate::app::input::RawKey::Backspace | crate::app::input::RawKey::Delete => {
+                        Action::DeleteCharBefore { count: 1 }
+                    }
+                    crate::app::input::RawKey::Up => Action::MoveUp { count: 1, select: false },
+                    crate::app::input::RawKey::Down => Action::MoveDown { count: 1, select: false },
+                    crate::app::input::RawKey::Left { .. } => Action::MoveLeft { count: 1, select: false },
+                    crate::app::input::RawKey::Right { .. } => Action::MoveRight { count: 1, select: false },
+                    _ => Action::NoOp,
+                };
+                if action != Action::NoOp {
+                    let outcome = app.handle_action(action, None);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
+            }
+        } else if is_command_mode {
             if let Some(raw_key) = crate::app::input::translate_raw(&ev) {
                 let outcome = app.handle_raw_key(raw_key);
                 if outcome.invalidation != RedrawInvalidation::None {
@@ -192,6 +220,24 @@ pub fn run(
                         pending_invalidations.push(outcome.invalidation);
                     }
                 }
+                crate::app::request::AppRequest::PopupCreate { lines, options } => {
+                    let outcome = app.execute_popup_create(lines, options);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
+                crate::app::request::AppRequest::PopupClose { id } => {
+                    let outcome = app.execute_popup_close(id);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
+                crate::app::request::AppRequest::PopupSetText { id, lines } => {
+                    let outcome = app.execute_popup_settext(id, lines);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
             }
         }
 
@@ -235,6 +281,15 @@ pub fn run_headless(app: &mut App) -> io::Result<i32> {
                 }
                 crate::app::request::AppRequest::FeedKeys { keys, mode } => {
                     app.execute_feedkeys(&keys, &mode);
+                }
+                crate::app::request::AppRequest::PopupCreate { lines, options } => {
+                    app.execute_popup_create(lines, options);
+                }
+                crate::app::request::AppRequest::PopupClose { id } => {
+                    app.execute_popup_close(id);
+                }
+                crate::app::request::AppRequest::PopupSetText { id, lines } => {
+                    app.execute_popup_settext(id, lines);
                 }
             }
         } else {

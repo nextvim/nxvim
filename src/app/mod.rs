@@ -246,6 +246,9 @@ impl App {
                 AppRequest::ExecuteExString(cmd_str) => self.execute_script(&cmd_str),
                 AppRequest::Source(path) => self.execute_source(&path),
                 AppRequest::FeedKeys { keys, mode } => self.execute_feedkeys(&keys, &mode),
+                AppRequest::PopupCreate { lines, options } => self.execute_popup_create(lines, options),
+                AppRequest::PopupClose { id } => self.execute_popup_close(id),
+                AppRequest::PopupSetText { id, lines } => self.execute_popup_settext(id, lines),
             };
             merge_outcomes(&mut combined, outcome);
         }
@@ -293,6 +296,94 @@ impl App {
         }
 
         combined_outcome
+    }
+
+    pub fn execute_popup_create(
+        &mut self,
+        lines: Vec<String>,
+        options: std::collections::BTreeMap<String, vim_script::runtime::Value>,
+    ) -> Outcome {
+        let text = lines.join("\n");
+        let buf_id = self.editor.buffers_mut().insert(text);
+
+        let popup_id = self.editor.global_popups_mut().insert(|id| {
+            let mut popup = crate::kernel::window::popup::PopupWindow::new(id, buf_id);
+            if let Some(vim_script::runtime::Value::Integer(t)) = options.get("time") {
+                if *t > 0 {
+                    popup.behavior.time_limit_ms = Some(*t as u64);
+                }
+            }
+            if let Some(vim_script::runtime::Value::String(title)) = options.get("title") {
+                popup.style.title = Some(title.to_string());
+            }
+            if let Some(vim_script::runtime::Value::List(b)) = options.get("border") {
+                if !b.is_empty() {
+                    popup.style.border = crate::kernel::window::popup::PopupBorder {
+                        top: true,
+                        right: true,
+                        bottom: true,
+                        left: true,
+                    };
+                }
+            }
+            if let Some(vim_script::runtime::Value::Integer(line)) = options.get("line") {
+                popup.layout.line = *line as i32;
+            }
+            if let Some(vim_script::runtime::Value::Integer(col)) = options.get("col") {
+                popup.layout.col = *col as i32;
+            }
+            if let Some(filter_val) = options.get("filter") {
+                let filter_str = match filter_val {
+                    vim_script::runtime::Value::String(s) => s.as_ref(),
+                    vim_script::runtime::Value::Builtin(s) => s.as_ref(),
+                    vim_script::runtime::Value::HostFunction(s) => s.as_ref(),
+                    other => "",
+                };
+                match filter_str {
+                    "popup_filter_yesno" => {
+                        popup.behavior.filter = crate::kernel::window::popup::PopupFilter::BuiltinYesNo;
+                    }
+                    "popup_filter_menu" => {
+                        popup.behavior.filter = crate::kernel::window::popup::PopupFilter::BuiltinMenu { selected_index: 1 };
+                    }
+                    func if !func.is_empty() => {
+                        popup.behavior.filter = crate::kernel::window::popup::PopupFilter::ScriptFunction(func.to_string());
+                    }
+                    _ => {}
+                }
+            }
+            popup
+        });
+
+        let _ = popup_id;
+        Outcome {
+            invalidation: RedrawInvalidation::Popup,
+            ..Default::default()
+        }
+    }
+
+    pub fn execute_popup_close(&mut self, id: u64) -> Outcome {
+        if id == 0 {
+            if let Some((_, popup_id, _)) = self.editor.find_active_filter_popup() {
+                self.editor.close_popup(popup_id, 0);
+            }
+        } else {
+            let popup_id = crate::kernel::ids::PopupWindowId::new(id);
+            self.editor.close_popup(popup_id, 0);
+        }
+        Outcome {
+            invalidation: RedrawInvalidation::Popup,
+            ..Default::default()
+        }
+    }
+
+    pub fn execute_popup_settext(&mut self, id: u64, lines: Vec<String>) -> Outcome {
+        let popup_id = crate::kernel::ids::PopupWindowId::new(id);
+        self.editor.set_popup_text(popup_id, &lines);
+        Outcome {
+            invalidation: RedrawInvalidation::Popup,
+            ..Default::default()
+        }
     }
 
     pub fn editor(&self) -> &Editor {
@@ -405,6 +496,31 @@ impl App {
 
     pub fn handle_action(&mut self, action: Action, register: Option<char>) -> Outcome {
         let _ = self.script.update_state(&self.editor);
+        if let Some((_, popup_id, _)) = self.editor.find_active_filter_popup() {
+            let script_filter = self.editor.global_popups().get(popup_id).and_then(|p| {
+                if let crate::kernel::window::popup::PopupFilter::ScriptFunction(ref func) = p.behavior.filter {
+                    Some(func.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(func_name) = script_filter {
+                let key_str = match &action {
+                    Action::InsertText(s) => s.clone(),
+                    Action::CarriageReturn | Action::InsertNewLine { .. } => "\r".to_string(),
+                    Action::MoveUp { .. } => "k".to_string(),
+                    Action::MoveDown { .. } => "j".to_string(),
+                    Action::MoveLeft { .. } => "h".to_string(),
+                    Action::MoveRight { .. } => "l".to_string(),
+                    Action::Quit => "\x1b".to_string(),
+                    Action::DeleteCharBefore { .. } => "\x08".to_string(),
+                    _ => "".to_string(),
+                };
+                let escaped_key = format!("\"{}\"", key_str.escape_default());
+                let script_cmd = format!("let g:__popup_filter_ret = {func_name}({}, {escaped_key})", popup_id.get());
+                self.execute_script(&script_cmd);
+            }
+        }
         if matches!(
             action,
             Action::SetToCommand
@@ -605,6 +721,21 @@ impl App {
 
     pub fn handle_raw_key(&mut self, raw_key: input::RawKey) -> Outcome {
         let _ = self.script.update_state(&self.editor);
+        if self.editor.find_active_filter_popup().is_some() {
+            let action = match raw_key {
+                input::RawKey::Char(c) => vim_input::Action::InsertText(c.to_string()),
+                input::RawKey::Escape => vim_input::Action::InsertText("\x1b".to_string()),
+                input::RawKey::Enter => vim_input::Action::CarriageReturn,
+                input::RawKey::Up => vim_input::Action::MoveUp { count: 1, select: false },
+                input::RawKey::Down => vim_input::Action::MoveDown { count: 1, select: false },
+                input::RawKey::Left { .. } => vim_input::Action::MoveLeft { count: 1, select: false },
+                input::RawKey::Right { .. } => vim_input::Action::MoveRight { count: 1, select: false },
+                input::RawKey::Backspace => vim_input::Action::DeleteCharBefore { count: 1 },
+                _ => vim_input::Action::NoOp,
+            };
+            return self.handle_action(action, None);
+        }
+
         if self.editor.has_pending_substitute() {
             let outcome = match raw_key {
                 input::RawKey::Char(ch) => {
@@ -708,6 +839,8 @@ impl App {
                 if outcome.invalidation == crate::kernel::outcome::RedrawInvalidation::None {
                     outcome.invalidation =
                         crate::kernel::outcome::RedrawInvalidation::CurrentWindow;
+                } else {
+                    outcome.invalidation = outcome.invalidation.combine(crate::kernel::outcome::RedrawInvalidation::Popup);
                 }
 
                 self.process_autocommands(&outcome);
@@ -835,6 +968,16 @@ impl App {
         if command.name == "echo" || command.name == "echomsg" {
             let message = command.arguments.trim().to_string();
             self.pending_request = Some(AppRequest::ShowMessage(message));
+            return Outcome::default();
+        }
+
+        if command.name == "call" {
+            let expr = command.arguments.trim();
+            if !expr.is_empty() {
+                if let Err(e) = self.script.execute(expr) {
+                    self.pending_request = Some(AppRequest::ShowMessage(e));
+                }
+            }
             return Outcome::default();
         }
 
@@ -1626,5 +1769,57 @@ mod tests {
         let resolved = input.translate(key_event('a'));
         assert!(resolved.is_some());
         assert_eq!(resolved.unwrap().action, Action::NoOp);
+    }
+
+    #[test]
+    fn custom_script_filter_invokes_function_updates_text_and_closes() {
+        let mut app = App::new("initial content");
+        let _ = app.script.execute("function! TestFilter(id, key)\ncall popup_settext(a:id, ['Key: ' . a:key])\nreturn popup_filter_yesno(a:id, a:key)\nendfunction");
+        let _ = app.script.execute("let g:pop_id = popup_create(['Prompt'], { 'filter': 'TestFilter' })");
+        app.dispatch_script_requests();
+
+        assert!(app.editor().find_active_filter_popup().is_some());
+
+        // Press 'y'
+        let _ = app.handle_action(Action::InsertText("y".to_string()), None);
+
+        // Popup should be closed by popup_filter_yesno inside TestFilter
+        assert!(app.editor().find_active_filter_popup().is_none());
+        // Buffer below should remain unmutated ("initial content")
+        let buf_id = app.editor().current_context().buffer;
+        use vim_buffer::BufferText;
+        let text = app.editor().buffer(buf_id).unwrap().as_text_buffer().row_text(0).to_string();
+        assert_eq!(text, "initial content");
+    }
+
+    #[test]
+    fn call_command_executes_function() {
+        let mut app = App::new("test");
+        app.execute_script("function! Hello()\necho 'hello'\nendfunction");
+        app.execute_script("call Hello()");
+        assert_eq!(app.pending_request, Some(AppRequest::ShowMessage("hello".to_string())));
+    }
+
+    #[test]
+    fn popup_input_filter_key_routing_test() {
+        let mut app = App::new("initial buffer content");
+        let script = "let g:pop_id = popup_create(['Confirm?', '(y/n)'], { 'line': 5, 'col': 15, 'filter': 'popup_filter_yesno' })";
+
+        app.execute_script(&script);
+
+        // Verify popup was created and is active with a filter
+        assert!(app.editor().find_active_filter_popup().is_some());
+        let popup_id = app.editor().find_active_filter_popup().unwrap().1;
+
+        // Key 'y' routed to popup filter -> popup closes without mutating document
+        let outcome = app.handle_action(Action::InsertText("y".to_string()), None);
+        assert_eq!(outcome.invalidation, RedrawInvalidation::Popup);
+
+        // Popup should now be closed and removed
+        assert!(app.editor().find_active_filter_popup().is_none());
+        assert!(app.editor().global_popups().get(popup_id).is_none());
+
+        // Underlying buffer text remains unaffected
+        assert_eq!(text_of(&app), "initial buffer content");
     }
 }

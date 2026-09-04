@@ -34,3 +34,18 @@ impl TabPageId {
         self.0
     }
 }
+
+/// Identifies a `kernel::window::popup::PopupWindow` for as long as it exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PopupWindowId(u64);
+
+impl PopupWindowId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
