@@ -65,6 +65,7 @@ pub struct Services {
     workers: WorkerManager,
     sequences: HashMap<TaskKind, Arc<AtomicU64>>,
     pending: HashMap<TaskId, TaskMetadata>,
+    pub treesitter: vim_treesitter::TreeSitterService,
 }
 
 impl Services {
@@ -147,6 +148,7 @@ impl Services {
         &mut self,
         snapshot: vim_buffer::BufferSnapshot,
         grammar: vim_treesitter::Grammar,
+        old_tree: Option<vim_treesitter::SyntaxTree>,
     ) -> Option<TaskId> {
         let kind = TaskKind::TreeSitter;
         let buffer = snapshot.id();
@@ -158,7 +160,7 @@ impl Services {
                     Some(vim_treesitter::parse_snapshot_cancellable(
                         snapshot,
                         grammar,
-                        None,
+                        old_tree,
                         || cancel.is_cancelled(),
                     ))
                 })?;

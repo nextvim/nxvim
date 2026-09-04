@@ -73,6 +73,14 @@ impl BuiltinRegistry {
         registry.register("mode", BuiltinArity::Range { min: 0, max: 1 }, dummy_assert);
         registry.register("eval", BuiltinArity::Exact(1), dummy_assert);
         registry.register("execute", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
+        registry.register("bufnr", BuiltinArity::Range { min: 0, max: 2 }, dummy_assert);
+        registry.register("bufname", BuiltinArity::Range { min: 0, max: 1 }, dummy_assert);
+        registry.register("bufexists", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("getbufinfo", BuiltinArity::Range { min: 0, max: 1 }, dummy_assert);
+        registry.register("getbufline", BuiltinArity::Range { min: 2, max: 3 }, dummy_assert);
+        registry.register("setbufline", BuiltinArity::Exact(3), dummy_assert);
+        registry.register("deletebufline", BuiltinArity::Range { min: 2, max: 3 }, dummy_assert);
+        registry.register("append", BuiltinArity::Exact(2), dummy_assert);
 
         registry
     }

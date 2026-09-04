@@ -222,6 +222,7 @@ impl App {
             self.pending_request = Some(AppRequest::ShowMessage(format!("Error: {e}")));
         }
         let outcome = self.dispatch_script_requests();
+        let _ = self.script.sync_state_to_editor(&mut self.editor);
         let _ = self.script.update_state(&self.editor);
         outcome
     }
@@ -352,9 +353,13 @@ impl App {
                         outcome.effects.push(effect);
                     }
                 }
-                services::TaskKind::TreeSitter | services::TaskKind::Indexer => {}
+                services::TaskKind::TreeSitter => {
+                    view_sync::apply_treesitter_result(&self.editor, &mut self.services, result);
+                }
+                services::TaskKind::Indexer => {}
             }
         }
+        view_sync::schedule_treesitter_parses(&self.editor, &mut self.services);
         outcome
     }
 
@@ -485,7 +490,14 @@ impl App {
             None
         };
 
-        let mut outcome = self.editor.execute_with_register(action, register);
+        let mut outcome = if view_sync::handle_treesitter_motion(&mut self.editor, &self.services, &action) {
+            crate::kernel::outcome::Outcome {
+                invalidation: crate::kernel::outcome::RedrawInvalidation::CurrentWindow,
+                ..Default::default()
+            }
+        } else {
+            self.editor.execute_with_register(action, register)
+        };
         if let Some(prefix) = visual_prompt_prefix {
             self.prompt.set_text(prefix);
         }
@@ -854,6 +866,27 @@ impl App {
                     )));
                     Outcome::default()
                 }
+            };
+        }
+
+        if command.name == "treesitter" || command.name == "tre" {
+            let args = command.arguments.trim();
+            if args == "on" || args == "enable" || args.is_empty() {
+                self.editor.global_options_mut().treesitter = true;
+                view_sync::schedule_treesitter_parses(&self.editor, &mut self.services);
+                self.pending_request = Some(AppRequest::ShowMessage("Tree-sitter enabled".to_string()));
+            } else if args == "off" || args == "disable" {
+                self.editor.global_options_mut().treesitter = false;
+                self.pending_request = Some(AppRequest::ShowMessage("Tree-sitter disabled".to_string()));
+            } else if args == "status" {
+                let status = if self.editor.global_options().treesitter { "enabled" } else { "disabled" };
+                self.pending_request = Some(AppRequest::ShowMessage(format!("Tree-sitter parsing is {status}")));
+            } else {
+                self.pending_request = Some(AppRequest::ShowMessage(format!("E475: Invalid argument: {args}")));
+            }
+            return Outcome {
+                invalidation: crate::kernel::outcome::RedrawInvalidation::CurrentWindow,
+                ..Outcome::default()
             };
         }
 
@@ -1416,6 +1449,77 @@ mod tests {
         app.execute_script("call execute('echo \"test execute\"')");
         let errs = app.script_mut().globals.get("v:errors").cloned();
         assert_eq!(errs, Some(Value::List(vec![])));
+    }
+
+    #[test]
+    fn buffer_script_builtins_test() {
+        use vim_script::runtime::Value;
+
+        let mut app = App::new("line 1\nline 2\nline 3");
+
+        // bufnr, bufexists, bufname, getbufinfo
+        app.execute_script("let g:nr = bufnr('%')");
+        app.execute_script("let g:ex = bufexists(g:nr)");
+        app.execute_script("let g:name = bufname(g:nr)");
+        app.execute_script("let g:info = getbufinfo(g:nr)");
+
+        assert_eq!(app.script_mut().globals.get("g:ex"), Some(&Value::Integer(1)));
+
+        // getbufline
+        app.execute_script("let g:lines = getbufline(g:nr, 1, '$')");
+        let lines = app.script_mut().globals.get("g:lines").cloned();
+        assert_eq!(
+            lines,
+            Some(Value::List(vec![
+                Value::String(std::sync::Arc::from("line 1")),
+                Value::String(std::sync::Arc::from("line 2")),
+                Value::String(std::sync::Arc::from("line 3")),
+            ]))
+        );
+
+        // setbufline
+        app.execute_script("let g:set_res = setbufline(g:nr, 2, 'replaced line 2')");
+        println!("g:nr = {:?}", app.script_mut().globals.get("g:nr"));
+        println!("g:set_res = {:?}", app.script_mut().globals.get("g:set_res"));
+        app.execute_script("let g:lines_after_set = getbufline(g:nr, 1, '$')");
+        let lines_after_set = app.script_mut().globals.get("g:lines_after_set").cloned();
+        assert_eq!(
+            lines_after_set,
+            Some(Value::List(vec![
+                Value::String(std::sync::Arc::from("line 1")),
+                Value::String(std::sync::Arc::from("replaced line 2")),
+                Value::String(std::sync::Arc::from("line 3")),
+            ]))
+        );
+
+        // append
+        app.execute_script("let g:app_res = append(3, 'appended line 4')");
+        println!("g:app_res = {:?}", app.script_mut().globals.get("g:app_res"));
+        app.execute_script("let g:lines_after_append = getbufline(g:nr, 1, '$')");
+        let lines_after_append = app.script_mut().globals.get("g:lines_after_append").cloned();
+        println!("lines_after_append = {:?}", lines_after_append);
+        assert_eq!(
+            lines_after_append,
+            Some(Value::List(vec![
+                Value::String(std::sync::Arc::from("line 1")),
+                Value::String(std::sync::Arc::from("replaced line 2")),
+                Value::String(std::sync::Arc::from("line 3")),
+                Value::String(std::sync::Arc::from("appended line 4")),
+            ]))
+        );
+
+        // deletebufline
+        app.execute_script("let g:del_res = deletebufline(g:nr, 2, 3)");
+        println!("g:del_res = {:?}", app.script_mut().globals.get("g:del_res"));
+        app.execute_script("let g:lines_after_delete = getbufline(g:nr, 1, '$')");
+        let lines_after_delete = app.script_mut().globals.get("g:lines_after_delete").cloned();
+        assert_eq!(
+            lines_after_delete,
+            Some(Value::List(vec![
+                Value::String(std::sync::Arc::from("line 1")),
+                Value::String(std::sync::Arc::from("appended line 4")),
+            ]))
+        );
     }
 
     #[test]

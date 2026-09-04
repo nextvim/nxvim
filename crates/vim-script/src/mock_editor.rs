@@ -83,11 +83,244 @@ impl MockEditor {
     }
 }
 
+fn find_mock_buffer_id(state: &MockEditorState, buf_expr: &Value) -> Option<u64> {
+    match buf_expr {
+        Value::Null => Some(state.current_buffer),
+        Value::Integer(id) => {
+            if *id == 0 {
+                Some(state.current_buffer)
+            } else if *id > 0 {
+                let u = *id as u64;
+                if state.buffers.contains_key(&u) {
+                    Some(u)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        Value::String(name) => {
+            let s = name.as_ref();
+            if s == "%" || s == "" || s == "#" {
+                Some(state.current_buffer)
+            } else if s == "$" {
+                state.buffers.keys().max().copied()
+            } else {
+                state.buffers.values().find(|b| b.name == s || b.name.ends_with(s)).map(|b| b.id)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn resolve_mock_lnum(val: &Value, line_count: usize) -> Option<usize> {
+    match val {
+        Value::Integer(n) => {
+            if *n < 0 {
+                None
+            } else {
+                usize::try_from(*n).ok()
+            }
+        }
+        Value::String(s) => {
+            if s.as_ref() == "$" {
+                Some(line_count)
+            } else {
+                s.parse::<usize>().ok()
+            }
+        }
+        _ => None,
+    }
+}
+
 impl Host for MockEditor {
     fn call(&self, request: HostRequest) -> HostFuture {
         let state = Arc::clone(&self.state);
         Box::pin(async move {
             match request.function.as_str() {
+                "getbufline" => {
+                    let state = state.lock().map_err(|_| lock_error())?;
+                    let id = match find_mock_buffer_id(&state, &request.arguments[0]) {
+                        Some(id) => id,
+                        None => return Ok(Value::List(Vec::new())),
+                    };
+                    let buffer = match state.buffers.get(&id) {
+                        Some(b) => b,
+                        None => return Ok(Value::List(Vec::new())),
+                    };
+                    let line_count = buffer.lines.len();
+                    let start_lnum = match resolve_mock_lnum(&request.arguments[1], line_count) {
+                        Some(l) => l,
+                        None => return Ok(Value::List(Vec::new())),
+                    };
+                    let end_lnum = if request.arguments.len() > 2 {
+                        match resolve_mock_lnum(&request.arguments[2], line_count) {
+                            Some(l) => l,
+                            None => return Ok(Value::List(Vec::new())),
+                        }
+                    } else {
+                        start_lnum
+                    };
+                    if start_lnum == 0 || start_lnum > line_count || end_lnum < start_lnum {
+                        return Ok(Value::List(Vec::new()));
+                    }
+                    let start_idx = start_lnum - 1;
+                    let end_idx = (end_lnum.min(line_count)) - 1;
+                    let lines = buffer.lines[start_idx..=end_idx]
+                        .iter()
+                        .map(|s| Value::String(Arc::from(s.as_str())))
+                        .collect();
+                    Ok(Value::List(lines))
+                }
+                "setbufline" => {
+                    let mut state = state.lock().map_err(|_| lock_error())?;
+                    let id = match find_mock_buffer_id(&state, &request.arguments[0]) {
+                        Some(id) => id,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    let buffer = match state.buffers.get_mut(&id) {
+                        Some(b) => b,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    let line_count = buffer.lines.len();
+                    let lnum = match resolve_mock_lnum(&request.arguments[1], line_count) {
+                        Some(l) => l,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    if lnum < 1 || lnum > line_count + 1 {
+                        return Ok(Value::Integer(1));
+                    }
+                    let to_insert: Vec<String> = match &request.arguments[2] {
+                        Value::List(items) => {
+                            if items.is_empty() {
+                                return Ok(Value::Integer(0));
+                            }
+                            items.iter().map(|i| i.to_string()).collect()
+                        }
+                        other => vec![other.to_string()],
+                    };
+                    let start_idx = lnum - 1;
+                    for (i, new_line) in to_insert.into_iter().enumerate() {
+                        let idx = start_idx + i;
+                        if idx < buffer.lines.len() {
+                            buffer.lines[idx] = new_line;
+                        } else {
+                            buffer.lines.push(new_line);
+                        }
+                    }
+                    Ok(Value::Integer(0))
+                }
+                "deletebufline" => {
+                    let mut state = state.lock().map_err(|_| lock_error())?;
+                    let id = match find_mock_buffer_id(&state, &request.arguments[0]) {
+                        Some(id) => id,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    let buffer = match state.buffers.get_mut(&id) {
+                        Some(b) => b,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    let line_count = buffer.lines.len();
+                    let first_lnum = match resolve_mock_lnum(&request.arguments[1], line_count) {
+                        Some(l) => l,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    let last_lnum = if request.arguments.len() > 2 {
+                        match resolve_mock_lnum(&request.arguments[2], line_count) {
+                            Some(l) => l,
+                            None => return Ok(Value::Integer(1)),
+                        }
+                    } else {
+                        first_lnum
+                    };
+                    if first_lnum < 1 || first_lnum > line_count || last_lnum < first_lnum {
+                        return Ok(Value::Integer(1));
+                    }
+                    let end_lnum = last_lnum.min(line_count);
+                    buffer.lines.drain((first_lnum - 1)..end_lnum);
+                    if buffer.lines.is_empty() {
+                        buffer.lines.push(String::new());
+                    }
+                    Ok(Value::Integer(0))
+                }
+                "bufnr" => {
+                    let state = state.lock().map_err(|_| lock_error())?;
+                    if request.arguments.is_empty() {
+                        return Ok(Value::Integer(state.current_buffer as i64));
+                    }
+                    if let Some(id) = find_mock_buffer_id(&state, &request.arguments[0]) {
+                        return Ok(Value::Integer(id as i64));
+                    }
+                    let create = request.arguments.get(1).map_or(false, |v| match v {
+                        Value::Bool(b) => *b,
+                        Value::Integer(i) => *i != 0,
+                        _ => false,
+                    });
+                    if create {
+                        if let Value::Integer(id) = &request.arguments[0] {
+                            if *id > 0 {
+                                return Ok(Value::Integer(*id));
+                            }
+                        }
+                    }
+                    Ok(Value::Integer(-1))
+                }
+                "bufname" => {
+                    let state = state.lock().map_err(|_| lock_error())?;
+                    let default_target = Value::String(Arc::from("%"));
+                    let expr = request.arguments.get(0).unwrap_or(&default_target);
+                    if let Some(id) = find_mock_buffer_id(&state, expr) {
+                        if let Some(buf) = state.buffers.get(&id) {
+                            return Ok(Value::String(Arc::from(buf.name.as_str())));
+                        }
+                    }
+                    Ok(Value::String(Arc::from("")))
+                }
+                "bufexists" => {
+                    let state = state.lock().map_err(|_| lock_error())?;
+                    let exists = find_mock_buffer_id(&state, &request.arguments[0]).is_some();
+                    Ok(Value::Integer(if exists { 1 } else { 0 }))
+                }
+                "getbufinfo" => {
+                    let state = state.lock().map_err(|_| lock_error())?;
+                    let mut target_ids: Vec<u64> = Vec::new();
+                    if let Some(arg) = request.arguments.get(0) {
+                        if let Value::Dictionary(_) = arg {
+                            target_ids = state.buffers.keys().copied().collect();
+                        } else if let Some(id) = find_mock_buffer_id(&state, arg) {
+                            target_ids.push(id);
+                        } else {
+                            return Ok(Value::List(Vec::new()));
+                        }
+                    } else {
+                        target_ids = state.buffers.keys().copied().collect();
+                    }
+                    target_ids.sort();
+                    let mut res = Vec::new();
+                    for id in target_ids {
+                        let buf = match state.buffers.get(&id) {
+                            Some(b) => b,
+                            None => continue,
+                        };
+                        let mut dict = std::collections::BTreeMap::new();
+                        dict.insert("bufnr".to_string(), Value::Integer(buf.id as i64));
+                        dict.insert("name".to_string(), Value::String(Arc::from(buf.name.as_str())));
+                        dict.insert("lnum".to_string(), Value::Integer(1));
+                        dict.insert("linecount".to_string(), Value::Integer(buf.lines.len() as i64));
+                        dict.insert("loaded".to_string(), Value::Integer(1));
+                        dict.insert("listed".to_string(), Value::Integer(1));
+                        dict.insert("changed".to_string(), Value::Integer(0));
+                        dict.insert("changedtick".to_string(), Value::Integer(1));
+                        dict.insert("hidden".to_string(), Value::Integer(if state.current_buffer == buf.id { 0 } else { 1 }));
+                        dict.insert("variables".to_string(), Value::Dictionary(std::collections::BTreeMap::new()));
+                        dict.insert("windows".to_string(), Value::List(Vec::new()));
+                        dict.insert("popups".to_string(), Value::List(Vec::new()));
+                        dict.insert("signs".to_string(), Value::List(Vec::new()));
+                        res.push(Value::Dictionary(dict));
+                    }
+                    Ok(Value::List(res))
+                }
                 "getline" => {
                     expect_arity(&request, 1)?;
                     let line = integer_argument(&request, 0)?;
@@ -108,12 +341,27 @@ impl Host for MockEditor {
                 }
                 "append" => {
                     expect_arity(&request, 2)?;
-                    let line = integer_argument(&request, 0)?;
-                    let text = string_argument(&request, 1)?;
                     let mut state = state.lock().map_err(|_| lock_error())?;
-                    let buffer = current_buffer_mut(&mut state)?;
-                    let index = line_index(line, buffer.lines.len(), true)?;
-                    buffer.lines.insert(index, text);
+                    let current_id = state.current_buffer;
+                    let buffer = state.buffers.get_mut(&current_id).ok_or_else(lock_error)?;
+                    let line_count = buffer.lines.len();
+                    let lnum = match resolve_mock_lnum(&request.arguments[0], line_count) {
+                        Some(l) => l,
+                        None => return Ok(Value::Integer(1)),
+                    };
+                    if lnum > line_count {
+                        return Ok(Value::Integer(1));
+                    }
+                    let to_insert: Vec<String> = match &request.arguments[1] {
+                        Value::List(items) => {
+                            if items.is_empty() {
+                                return Ok(Value::Integer(0));
+                            }
+                            items.iter().map(|i| i.to_string()).collect()
+                        }
+                        other => vec![other.to_string()],
+                    };
+                    buffer.lines.splice(lnum..lnum, to_insert);
                     Ok(Value::Integer(0))
                 }
                 "cursor" => {
@@ -146,6 +394,16 @@ impl Host for MockEditor {
                 )),
             }
         })
+    }
+
+    fn call_sync(&self, request: HostRequest) -> Option<RuntimeResult<Value>> {
+        let future = self.call(request);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut future = future;
+        match std::future::Future::poll(future.as_mut(), &mut context) {
+            std::task::Poll::Ready(result) => Some(result),
+            std::task::Poll::Pending => None,
+        }
     }
 
     fn execute_command(&self, request: CommandRequest) -> HostFuture {

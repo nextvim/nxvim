@@ -2571,6 +2571,7 @@ fn get_option_string(editor: &Editor, ctx: CommandContext, spec: options::Option
             "laststatus" => editor.global_options().laststatus.to_string(),
             "ruler" => editor.global_options().ruler.to_string(),
             "showtabline" => editor.global_options().showtabline.to_string(),
+            "treesitter" => editor.global_options().treesitter.to_string(),
             _ => String::new(),
         },
         OptionScope::Window => {
@@ -2613,6 +2614,7 @@ fn get_option_bool(editor: &Editor, ctx: CommandContext, spec: options::OptionSp
             "hlsearch" => editor.global_options().hlsearch,
             "incsearch" => editor.global_options().incsearch,
             "ruler" => editor.global_options().ruler,
+            "treesitter" => editor.global_options().treesitter,
             _ => false,
         },
         OptionScope::Window => {
@@ -2680,6 +2682,11 @@ fn set_option_val(
                 "showtabline" => {
                     if let OptionValue::Number(n) = val {
                         global.showtabline = n;
+                    }
+                }
+                "treesitter" => {
+                    if let OptionValue::Bool(b) = val {
+                        global.treesitter = b;
                     }
                 }
                 _ => {}

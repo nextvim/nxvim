@@ -34,6 +34,7 @@ pub struct GlobalOptions {
     pub laststatus: i64,
     pub ruler: bool,
     pub showtabline: i64,
+    pub treesitter: bool,
 }
 
 impl Default for GlobalOptions {
@@ -45,6 +46,7 @@ impl Default for GlobalOptions {
             laststatus: 1,
             ruler: false,
             showtabline: 1,
+            treesitter: true,
         }
     }
 }
@@ -107,6 +109,11 @@ pub fn lookup(name: &str) -> Option<OptionSpec> {
             canonical_name: "showtabline",
             scope: OptionScope::Global,
             kind: OptionValueKind::Number,
+        }),
+        "treesitter" | "ts_opt" => Some(OptionSpec {
+            canonical_name: "treesitter",
+            scope: OptionScope::Global,
+            kind: OptionValueKind::Bool,
         }),
         "expandtab" | "et" => Some(OptionSpec {
             canonical_name: "expandtab",

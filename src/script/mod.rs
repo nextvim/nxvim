@@ -146,10 +146,20 @@ impl ScriptHost {
         runtime.register_function("echomsg", Arity::Exact(1), vec![Capability::Editor]);
         runtime.register_function(
             "bufnr",
+            Arity::Range { min: 0, max: 2 },
+            vec![Capability::BufferRead],
+        );
+        runtime.register_function(
+            "bufname",
             Arity::Range { min: 0, max: 1 },
             vec![Capability::BufferRead],
         );
         runtime.register_function("bufexists", Arity::Exact(1), vec![Capability::BufferRead]);
+        runtime.register_function(
+            "getbufinfo",
+            Arity::Range { min: 0, max: 1 },
+            vec![Capability::BufferRead],
+        );
         runtime.register_function(
             "getline",
             Arity::Range { min: 1, max: 2 },
@@ -164,6 +174,21 @@ impl ScriptHost {
             "getbufoneline",
             Arity::Exact(2),
             vec![Capability::BufferRead],
+        );
+        runtime.register_function(
+            "setbufline",
+            Arity::Exact(3),
+            vec![Capability::BufferWrite],
+        );
+        runtime.register_function(
+            "deletebufline",
+            Arity::Range { min: 2, max: 3 },
+            vec![Capability::BufferWrite],
+        );
+        runtime.register_function(
+            "append",
+            Arity::Exact(2),
+            vec![Capability::BufferWrite],
         );
         runtime.register_function(
             "feedkeys",
@@ -352,6 +377,50 @@ impl ScriptHost {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn sync_state_to_editor(&self, editor: &mut crate::kernel::Editor) -> Result<(), String> {
+        let lock = self
+            .state
+            .lock()
+            .map_err(|_| "Editor state lock is poisoned".to_owned())?;
+        for (&text_id, (snapshot, state_tick)) in &lock.buffers {
+            if let Some(buf_id) = vim_buffer::BufferId::new(text_id.to_proto()) {
+                if let Some(editor_buf) = editor.buffer(buf_id) {
+                    if *state_tick > editor_buf.changedtick().get() {
+                        let text_len = editor_buf.snapshot().len_bytes();
+                        let lines: Vec<String> = (0..snapshot.row_count())
+                            .map(|r| {
+                                let start = snapshot.point_to_offset(text::Point::new(r, 0));
+                                let end = snapshot.point_to_offset(text::Point::new(r, snapshot.line_len(r)));
+                                snapshot.text_for_range(start..end).collect()
+                            })
+                            .collect();
+                        let full_text = lines.join("\n");
+                        let buffer_mut = editor.buffers_mut().get_mut(buf_id).unwrap();
+                        let _ = crate::kernel::transaction::apply(
+                            buffer_mut,
+                            crate::kernel::transaction::EditDescription {
+                                origin: vim_buffer::EditOrigin::User,
+                                edits: vec![vim_buffer::PlannedEdit {
+                                    selection: None,
+                                    edit: vim_buffer::Edit::replace(
+                                        vim_buffer::TextRange {
+                                            start: vim_buffer::ByteOffset(0),
+                                            end: vim_buffer::ByteOffset(text_len),
+                                        },
+                                        full_text,
+                                    ),
+                                }],
+                                selections: None,
+                                join_previous: false,
+                            },
+                        );
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

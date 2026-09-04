@@ -31,120 +31,207 @@ fn expect_arity(request: &HostRequest, expected: usize) -> Result<(), RuntimeErr
     Ok(())
 }
 
-fn type_error(function: &str, expected: &str, actual: &Value) -> RuntimeError {
-    RuntimeError::coded(
-        "E745",
-        RuntimeErrorKind::TypeError,
-        format!("{function} expected {expected}, got {}", actual.type_name()),
-    )
-}
-
-fn parse_lnum(val: &Value) -> Option<u32> {
-    let num = match val {
-        Value::Integer(n) => Some(*n),
-        Value::String(s) => s.parse::<i64>().ok(),
-        _ => None,
-    }?;
-    let positive = num.max(1);
-    u32::try_from(positive - 1).ok()
-}
-
-fn find_buffer_snapshot<'a>(
-    state: &'a EditorState,
-    buf_expr: &Value,
-) -> Option<&'a text::BufferSnapshot> {
+fn find_buffer_id(state: &EditorState, buf_expr: &Value) -> Option<text::BufferId> {
     match buf_expr {
-        Value::String(name) => {
-            let path = PathBuf::from(name.as_ref());
-            if let Some(id) = state.names.get(&path) {
-                state.buffers.get(id).map(|(snap, _)| snap)
-            } else {
-                for (buf_path, id) in &state.names {
-                    if buf_path.ends_with(&path) {
-                        return state.buffers.get(id).map(|(snap, _)| snap);
-                    }
+        Value::Null => state.current_buffer_id,
+        Value::Integer(id) => {
+            if *id == 0 {
+                state.current_buffer_id
+            } else if *id > 0 {
+                let text_id = text::BufferId::new(*id as u64).ok()?;
+                if state.buffers.contains_key(&text_id) {
+                    Some(text_id)
+                } else {
+                    None
                 }
+            } else {
                 None
             }
         }
-        Value::Integer(id) => {
-            if *id >= 0 {
-                let text_id = text::BufferId::new(*id as u64).ok()?;
-                state.buffers.get(&text_id).map(|(snap, _)| snap)
+        Value::String(name) => {
+            let s = name.as_ref();
+            if s == "%" || s == "" || s == "#" {
+                state.current_buffer_id
+            } else if s == "$" {
+                state.buffers.keys().max().cloned()
             } else {
-                None
+                let path = PathBuf::from(s);
+                if let Some(id) = state.names.get(&path) {
+                    Some(*id)
+                } else {
+                    for (buf_path, id) in &state.names {
+                        if buf_path.ends_with(&path) {
+                            return Some(*id);
+                        }
+                    }
+                    None
+                }
             }
         }
         _ => None,
     }
+}
+
+fn resolve_lnum(val: &Value, line_count: usize) -> Option<usize> {
+    match val {
+        Value::Integer(n) => {
+            if *n < 0 {
+                None
+            } else {
+                usize::try_from(*n).ok()
+            }
+        }
+        Value::String(s) => {
+            if s.as_ref() == "$" {
+                Some(line_count)
+            } else {
+                s.parse::<usize>().ok()
+            }
+        }
+        _ => None,
+    }
+}
+
+fn snapshot_lines(snapshot: &text::BufferSnapshot) -> Vec<String> {
+    let row_count = snapshot.row_count();
+    let mut lines = Vec::with_capacity(row_count as usize);
+    for r in 0..row_count {
+        let start = snapshot.point_to_offset(text::Point::new(r, 0));
+        let end = snapshot.point_to_offset(text::Point::new(r, snapshot.line_len(r)));
+        let line_text: String = snapshot.text_for_range(start..end).collect();
+        lines.push(line_text);
+    }
+    lines
+}
+
+fn create_snapshot_from_lines(id: text::BufferId, lines: &[String]) -> text::BufferSnapshot {
+    let full_text = lines.join("\n");
+    let text_buf = text::Buffer::new(clock::ReplicaId::default(), id, full_text);
+    text_buf.snapshot().clone()
 }
 
 // Synchronous function handlers
 fn bufnr(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
     if args.is_empty() {
-        let first_id = state.buffers.keys().next().cloned();
-        match first_id {
+        return match state.current_buffer_id {
             Some(id) => Ok(Value::Integer(id.to_proto() as i64)),
             None => Ok(Value::Integer(-1)),
-        }
-    } else {
-        let first_arg = args.get(0).ok_or_else(|| {
-            RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
-        })?;
-        match first_arg {
-            Value::String(name) => {
-                let path = PathBuf::from(name.as_ref());
-                if let Some(id) = state.names.get(&path) {
-                    Ok(Value::Integer(id.to_proto() as i64))
-                } else {
-                    for (buf_path, id) in &state.names {
-                        if buf_path.ends_with(&path) {
-                            return Ok(Value::Integer(id.to_proto() as i64));
-                        }
-                    }
-                    Ok(Value::Integer(-1))
-                }
+        };
+    }
+    let first_arg = &args[0];
+    if let Some(id) = find_buffer_id(state, first_arg) {
+        return Ok(Value::Integer(id.to_proto() as i64));
+    }
+    let create = args.get(1).map_or(false, |v| match v {
+        Value::Bool(b) => *b,
+        Value::Integer(i) => *i != 0,
+        _ => false,
+    });
+    if create {
+        if let Value::Integer(id) = first_arg {
+            if *id > 0 {
+                return Ok(Value::Integer(*id));
             }
-            Value::Integer(id) => {
-                if *id >= 0 {
-                    if let Ok(text_id) = text::BufferId::new(*id as u64) {
-                        if state.buffers.contains_key(&text_id) {
-                            return Ok(Value::Integer(*id));
-                        }
-                    }
-                }
-                Ok(Value::Integer(-1))
-            }
-            other => Err(type_error("bufnr", "String or Number", other)),
         }
     }
+    Ok(Value::Integer(-1))
+}
+
+fn bufname(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    let default_target = Value::String(Arc::from("%"));
+    let target_val = args.get(0).unwrap_or(&default_target);
+    let id = match find_buffer_id(state, target_val) {
+        Some(id) => id,
+        None => return Ok(Value::String(Arc::from(""))),
+    };
+    for (path, buf_id) in &state.names {
+        if *buf_id == id {
+            return Ok(Value::String(Arc::from(path.to_string_lossy().as_ref())));
+        }
+    }
+    Ok(Value::String(Arc::from("")))
 }
 
 fn bufexists(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
     let first_arg = args.get(0).ok_or_else(|| {
         RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
     })?;
-    match first_arg {
-        Value::String(name) => {
-            let path = PathBuf::from(name.as_ref());
-            let exists = state.names.contains_key(&path)
-                || state.names.keys().any(|buf_path| buf_path.ends_with(&path));
-            Ok(Value::Integer(if exists { 1 } else { 0 }))
-        }
-        Value::Integer(id) => {
-            let exists = if *id >= 0 {
-                if let Ok(text_id) = text::BufferId::new(*id as u64) {
-                    state.buffers.contains_key(&text_id)
-                } else {
-                    false
-                }
+    let exists = find_buffer_id(state, first_arg).is_some();
+    Ok(Value::Integer(if exists { 1 } else { 0 }))
+}
+
+fn getbufinfo(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    let mut target_ids: Vec<text::BufferId> = Vec::new();
+    let mut filter_listed: Option<bool> = None;
+    let mut filter_loaded: Option<bool> = None;
+    let mut filter_modified: Option<bool> = None;
+
+    if let Some(arg) = args.get(0) {
+        if let Value::Dictionary(dict) = arg {
+            if let Some(val) = dict.get("buflisted") {
+                filter_listed = Some(val.to_string() != "0" && val != &Value::Bool(false));
+            }
+            if let Some(val) = dict.get("bufloaded") {
+                filter_loaded = Some(val.to_string() != "0" && val != &Value::Bool(false));
+            }
+            if let Some(val) = dict.get("bufmodified") {
+                filter_modified = Some(val.to_string() != "0" && val != &Value::Bool(false));
+            }
+            target_ids = state.buffers.keys().cloned().collect();
+        } else {
+            if let Some(id) = find_buffer_id(state, arg) {
+                target_ids.push(id);
             } else {
-                false
-            };
-            Ok(Value::Integer(if exists { 1 } else { 0 }))
+                return Ok(Value::List(Vec::new()));
+            }
         }
-        other => Err(type_error("bufexists", "String or Number", other)),
+    } else {
+        target_ids = state.buffers.keys().cloned().collect();
     }
+
+    target_ids.sort_by_key(|id| id.to_proto());
+    let mut res = Vec::new();
+
+    for id in target_ids {
+        let (snapshot, tick) = match state.buffers.get(&id) {
+            Some(pair) => pair,
+            None => continue,
+        };
+
+        if let Some(fl) = filter_loaded {
+            if !fl { continue; }
+        }
+        if let Some(fm) = filter_modified {
+            let is_modified = *tick > 0;
+            if fm != is_modified { continue; }
+        }
+        if let Some(flist) = filter_listed {
+            if !flist { continue; }
+        }
+
+        let name = state.names.iter().find(|(_, b_id)| **b_id == id)
+            .map(|(path, _)| path.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let mut dict = std::collections::BTreeMap::new();
+        dict.insert("bufnr".to_string(), Value::Integer(id.to_proto() as i64));
+        dict.insert("name".to_string(), Value::String(Arc::from(name.as_str())));
+        dict.insert("lnum".to_string(), Value::Integer(1));
+        dict.insert("linecount".to_string(), Value::Integer(snapshot.row_count() as i64));
+        dict.insert("loaded".to_string(), Value::Integer(1));
+        dict.insert("listed".to_string(), Value::Integer(1));
+        dict.insert("changed".to_string(), Value::Integer(if *tick > 0 { 1 } else { 0 }));
+        dict.insert("changedtick".to_string(), Value::Integer(*tick as i64));
+        dict.insert("hidden".to_string(), Value::Integer(if state.current_buffer_id == Some(id) { 0 } else { 1 }));
+        dict.insert("variables".to_string(), Value::Dictionary(std::collections::BTreeMap::new()));
+        dict.insert("windows".to_string(), Value::List(Vec::new()));
+        dict.insert("popups".to_string(), Value::List(Vec::new()));
+        dict.insert("signs".to_string(), Value::List(Vec::new()));
+
+        res.push(Value::Dictionary(dict));
+    }
+
+    Ok(Value::List(res))
 }
 
 fn getline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
@@ -160,18 +247,19 @@ fn getline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
     let first_arg = args.get(0).ok_or_else(|| {
         RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
     })?;
-    let start_row = match parse_lnum(first_arg) {
-        Some(row) => row,
+    let row_count = snapshot.row_count() as usize;
+    let start_lnum = match resolve_lnum(first_arg, row_count) {
+        Some(l) => l,
         None => return Ok(Value::String(std::sync::Arc::from(""))),
     };
 
     if args.len() == 1 {
-        if start_row >= snapshot.row_count() {
+        if start_lnum == 0 || start_lnum > row_count {
             Ok(Value::String(std::sync::Arc::from("")))
         } else {
-            let start = snapshot.point_to_offset(text::Point::new(start_row, 0));
-            let end =
-                snapshot.point_to_offset(text::Point::new(start_row, snapshot.line_len(start_row)));
+            let row = (start_lnum - 1) as u32;
+            let start = snapshot.point_to_offset(text::Point::new(row, 0));
+            let end = snapshot.point_to_offset(text::Point::new(row, snapshot.line_len(row)));
             let line_text: String = snapshot.text_for_range(start..end).collect();
             Ok(Value::String(std::sync::Arc::from(line_text)))
         }
@@ -179,19 +267,23 @@ fn getline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
         let second_arg = args.get(1).ok_or_else(|| {
             RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
         })?;
-        let end_row = match parse_lnum(second_arg) {
-            Some(row) => row,
+        let end_lnum = match resolve_lnum(second_arg, row_count) {
+            Some(l) => l,
             None => return Ok(Value::List(Vec::new())),
         };
 
-        let row_count = snapshot.row_count();
+        if start_lnum == 0 || start_lnum > row_count || end_lnum < start_lnum {
+            return Ok(Value::List(Vec::new()));
+        }
+
+        let start_row = start_lnum - 1;
+        let end_row = (end_lnum.min(row_count)) - 1;
+
         let mut lines = Vec::new();
         for r in start_row..=end_row {
-            if r >= row_count {
-                break;
-            }
-            let start = snapshot.point_to_offset(text::Point::new(r, 0));
-            let end = snapshot.point_to_offset(text::Point::new(r, snapshot.line_len(r)));
+            let u_r = r as u32;
+            let start = snapshot.point_to_offset(text::Point::new(u_r, 0));
+            let end = snapshot.point_to_offset(text::Point::new(u_r, snapshot.line_len(u_r)));
             let line_text: String = snapshot.text_for_range(start..end).collect();
             lines.push(Value::String(std::sync::Arc::from(line_text)));
         }
@@ -203,41 +295,47 @@ fn getbufline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
     let first_arg = args.get(0).ok_or_else(|| {
         RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
     })?;
-    let snapshot = match find_buffer_snapshot(state, first_arg) {
-        Some(snap) => snap,
+    let id = match find_buffer_id(state, first_arg) {
+        Some(id) => id,
+        None => return Ok(Value::List(Vec::new())),
+    };
+    let snapshot = match state.buffers.get(&id) {
+        Some((snap, _)) => snap,
         None => return Ok(Value::List(Vec::new())),
     };
 
     let second_arg = args.get(1).ok_or_else(|| {
         RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
     })?;
-    let start_row = match parse_lnum(second_arg) {
-        Some(row) => row,
+    let row_count = snapshot.row_count() as usize;
+    let start_lnum = match resolve_lnum(second_arg, row_count) {
+        Some(l) => l,
         None => return Ok(Value::List(Vec::new())),
     };
 
-    let end_row = if args.len() > 2 {
-        let third_arg = args.get(2).ok_or_else(|| {
-            RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
-        })?;
-        match parse_lnum(third_arg) {
-            Some(row) => row,
+    let end_lnum = if args.len() > 2 {
+        match resolve_lnum(&args[2], row_count) {
+            Some(l) => l,
             None => return Ok(Value::List(Vec::new())),
         }
     } else {
-        start_row
+        start_lnum
     };
 
-    let row_count = snapshot.row_count();
+    if start_lnum == 0 || start_lnum > row_count || end_lnum < start_lnum {
+        return Ok(Value::List(Vec::new()));
+    }
+
+    let start_row = start_lnum - 1;
+    let end_row = (end_lnum.min(row_count)) - 1;
+
     let mut lines = Vec::new();
     for r in start_row..=end_row {
-        if r >= row_count {
-            break;
-        }
-        let start = snapshot.point_to_offset(text::Point::new(r, 0));
-        let end = snapshot.point_to_offset(text::Point::new(r, snapshot.line_len(r)));
+        let u_r = r as u32;
+        let start = snapshot.point_to_offset(text::Point::new(u_r, 0));
+        let end = snapshot.point_to_offset(text::Point::new(u_r, snapshot.line_len(u_r)));
         let line_text: String = snapshot.text_for_range(start..end).collect();
-        lines.push(Value::String(std::sync::Arc::from(line_text)));
+        lines.push(Value::String(Arc::from(line_text)));
     }
     Ok(Value::List(lines))
 }
@@ -246,27 +344,183 @@ fn getbufoneline(state: &EditorState, args: &[Value]) -> RuntimeResult<Value> {
     let first_arg = args.get(0).ok_or_else(|| {
         RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
     })?;
-    let snapshot = match find_buffer_snapshot(state, first_arg) {
-        Some(snap) => snap,
+    let id = match find_buffer_id(state, first_arg) {
+        Some(id) => id,
+        None => return Ok(Value::String(std::sync::Arc::from(""))),
+    };
+    let snapshot = match state.buffers.get(&id) {
+        Some((snap, _)) => snap,
         None => return Ok(Value::String(std::sync::Arc::from(""))),
     };
 
     let second_arg = args.get(1).ok_or_else(|| {
         RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
     })?;
-    let row = match parse_lnum(second_arg) {
-        Some(r) => r,
+    let row_count = snapshot.row_count() as usize;
+    let lnum = match resolve_lnum(second_arg, row_count) {
+        Some(l) => l,
         None => return Ok(Value::String(std::sync::Arc::from(""))),
     };
 
-    if row >= snapshot.row_count() {
+    if lnum == 0 || lnum > row_count {
         Ok(Value::String(std::sync::Arc::from("")))
     } else {
-        let start = snapshot.point_to_offset(text::Point::new(row, 0));
-        let end = snapshot.point_to_offset(text::Point::new(row, snapshot.line_len(row)));
+        let u_r = (lnum - 1) as u32;
+        let start = snapshot.point_to_offset(text::Point::new(u_r, 0));
+        let end = snapshot.point_to_offset(text::Point::new(u_r, snapshot.line_len(u_r)));
         let line_text: String = snapshot.text_for_range(start..end).collect();
         Ok(Value::String(std::sync::Arc::from(line_text)))
     }
+}
+
+fn setbufline(state: &mut EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    let first_arg = args.get(0).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+    let id = match find_buffer_id(state, first_arg) {
+        Some(id) => id,
+        None => return Ok(Value::Integer(1)),
+    };
+    let (snapshot, tick) = match state.buffers.get(&id) {
+        Some((snap, t)) => (snap.clone(), *t),
+        None => return Ok(Value::Integer(1)),
+    };
+
+    let second_arg = args.get(1).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+    let mut lines = snapshot_lines(&snapshot);
+    let line_count = lines.len();
+    let lnum = match resolve_lnum(second_arg, line_count) {
+        Some(l) => l,
+        None => return Ok(Value::Integer(1)),
+    };
+
+    if lnum < 1 || lnum > line_count + 1 {
+        return Ok(Value::Integer(1));
+    }
+
+    let text_arg = args.get(2).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+
+    let to_insert: Vec<String> = match text_arg {
+        Value::List(items) => {
+            if items.is_empty() {
+                return Ok(Value::Integer(0));
+            }
+            items.iter().map(|item| item.to_string()).collect()
+        }
+        other => vec![other.to_string()],
+    };
+
+    let start_idx = lnum - 1;
+    for (i, new_line) in to_insert.into_iter().enumerate() {
+        let idx = start_idx + i;
+        if idx < lines.len() {
+            lines[idx] = new_line;
+        } else {
+            lines.push(new_line);
+        }
+    }
+
+    let new_snap = create_snapshot_from_lines(id, &lines);
+    state.buffers.insert(id, (new_snap, tick + 1));
+    Ok(Value::Integer(0))
+}
+
+fn deletebufline(state: &mut EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    let first_arg = args.get(0).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+    let id = match find_buffer_id(state, first_arg) {
+        Some(id) => id,
+        None => return Ok(Value::Integer(1)),
+    };
+    let (snapshot, tick) = match state.buffers.get(&id) {
+        Some((snap, t)) => (snap.clone(), *t),
+        None => return Ok(Value::Integer(1)),
+    };
+
+    let mut lines = snapshot_lines(&snapshot);
+    let line_count = lines.len();
+
+    let second_arg = args.get(1).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+    let first_lnum = match resolve_lnum(second_arg, line_count) {
+        Some(l) => l,
+        None => return Ok(Value::Integer(1)),
+    };
+
+    let last_lnum = if args.len() > 2 {
+        match resolve_lnum(&args[2], line_count) {
+            Some(l) => l,
+            None => return Ok(Value::Integer(1)),
+        }
+    } else {
+        first_lnum
+    };
+
+    if first_lnum < 1 || first_lnum > line_count || last_lnum < first_lnum {
+        return Ok(Value::Integer(1));
+    }
+
+    let end_lnum = last_lnum.min(line_count);
+    lines.drain((first_lnum - 1)..end_lnum);
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    let new_snap = create_snapshot_from_lines(id, &lines);
+    state.buffers.insert(id, (new_snap, tick + 1));
+    Ok(Value::Integer(0))
+}
+
+fn append(state: &mut EditorState, args: &[Value]) -> RuntimeResult<Value> {
+    let current_id = match state.current_buffer_id {
+        Some(id) => id,
+        None => return Ok(Value::Integer(1)),
+    };
+    let (snapshot, tick) = match state.buffers.get(&current_id) {
+        Some((snap, t)) => (snap.clone(), *t),
+        None => return Ok(Value::Integer(1)),
+    };
+
+    let mut lines = snapshot_lines(&snapshot);
+    let line_count = lines.len();
+
+    let first_arg = args.get(0).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+    let lnum = match resolve_lnum(first_arg, line_count) {
+        Some(l) => l,
+        None => return Ok(Value::Integer(1)),
+    };
+
+    if lnum > line_count {
+        return Ok(Value::Integer(1));
+    }
+
+    let second_arg = args.get(1).ok_or_else(|| {
+        RuntimeError::coded("E119", RuntimeErrorKind::ArityError, "missing argument")
+    })?;
+
+    let to_insert: Vec<String> = match second_arg {
+        Value::List(items) => {
+            if items.is_empty() {
+                return Ok(Value::Integer(0));
+            }
+            items.iter().map(|item| item.to_string()).collect()
+        }
+        other => vec![other.to_string()],
+    };
+
+    lines.splice(lnum..lnum, to_insert);
+
+    let new_snap = create_snapshot_from_lines(current_id, &lines);
+    state.buffers.insert(current_id, (new_snap, tick + 1));
+    Ok(Value::Integer(0))
 }
 
 impl Host for ActiveHost {
@@ -351,7 +605,7 @@ impl Host for ActiveHost {
     }
 
     fn call_sync(&self, request: HostRequest) -> Option<RuntimeResult<Value>> {
-        let state = match self.state.lock() {
+        let mut state = match self.state.lock() {
             Ok(s) => s,
             Err(_) => {
                 return Some(Err(RuntimeError::coded(
@@ -365,10 +619,15 @@ impl Host for ActiveHost {
         match request.function.as_str() {
             "mode" => Some(Ok(Value::String(Arc::from(state.current_mode.as_str())))),
             "bufnr" => Some(bufnr(&state, &request.arguments)),
+            "bufname" => Some(bufname(&state, &request.arguments)),
             "bufexists" => Some(bufexists(&state, &request.arguments)),
+            "getbufinfo" => Some(getbufinfo(&state, &request.arguments)),
             "getline" => Some(getline(&state, &request.arguments)),
             "getbufline" => Some(getbufline(&state, &request.arguments)),
             "getbufoneline" => Some(getbufoneline(&state, &request.arguments)),
+            "setbufline" => Some(setbufline(&mut state, &request.arguments)),
+            "deletebufline" => Some(deletebufline(&mut state, &request.arguments)),
+            "append" => Some(append(&mut state, &request.arguments)),
             _ => None,
         }
     }

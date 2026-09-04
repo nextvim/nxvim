@@ -39,6 +39,111 @@ pub fn schedule_display_map_expansions(
     }
 }
 
+pub fn schedule_treesitter_parses(editor: &Editor, services: &mut Services) {
+    if !editor.global_options().treesitter {
+        return;
+    }
+    let tab = editor.tabs().active();
+    for window_id in tab.layout().window_ids() {
+        let Some(win) = editor.window(window_id) else {
+            continue;
+        };
+        let buffer_id = win.buffer_id();
+        let Some(buffer) = editor.buffer(buffer_id) else {
+            continue;
+        };
+        let grammar = buffer.path().and_then(vim_treesitter::Grammar::from_path);
+        let Some(grammar) = grammar else {
+            continue;
+        };
+        let changedtick = buffer.changedtick();
+        if services.treesitter.should_parse(buffer_id, changedtick, grammar) {
+            let old_tree = services.treesitter.syntax_tree(buffer_id).cloned();
+            let _seq = services.treesitter.begin_parse(buffer_id, changedtick, grammar);
+            if let Some(task_id) = services.spawn_tree_sitter(buffer.snapshot(), grammar, old_tree) {
+                services.treesitter.set_pending_task(buffer_id, task_id);
+            }
+        }
+    }
+}
+
+pub fn apply_treesitter_result(
+    editor: &Editor,
+    services: &mut Services,
+    result: ServiceResult,
+) {
+    let task_id = result.metadata.id;
+    let DispatchResult::Accepted(result) = task_dispatcher::dispatch(editor, result) else {
+        return;
+    };
+    let ServiceOutput::TreeSitter(completed) = result.output else {
+        return;
+    };
+    if services.treesitter.apply_task_result(task_id, completed) {
+        services.finish(task_id);
+    }
+}
+
+pub fn handle_treesitter_motion(
+    editor: &mut Editor,
+    services: &Services,
+    action: &vim_input::Action,
+) -> bool {
+    use text::{ToOffset, ToPoint};
+    use vim_input::Action::*;
+
+    let (count, select, nav_fn): (u32, bool, fn(&vim_treesitter::SyntaxTree, usize) -> Option<vim_treesitter::SyntaxNode>) = match action {
+        MoveToNextFunction { count, select } => (*count, *select, |tree, byte| tree.next_function_after_byte(byte)),
+        MoveToPreviousFunction { count, select } => (*count, *select, |tree, byte| tree.previous_function_before_byte(byte)),
+        MoveToNextClass { count, select } => (*count, *select, |tree, byte| tree.next_class_after_byte(byte)),
+        MoveToPreviousClass { count, select } => (*count, *select, |tree, byte| tree.previous_class_before_byte(byte)),
+        MoveToNextArgument { count, select } => (*count, *select, |tree, byte| tree.next_argument_after_byte(byte)),
+        MoveToPreviousArgument { count, select } => (*count, *select, |tree, byte| tree.previous_argument_before_byte(byte)),
+        MoveToNextBlock { count, select } | MoveToBlockEnd { count, select } => (*count, *select, |tree, byte| tree.next_block_after_byte(byte)),
+        MoveToPreviousBlock { count, select } | MoveToBlockStart { count, select } => (*count, *select, |tree, byte| tree.previous_block_before_byte(byte)),
+        _ => return false,
+    };
+
+    let ctx = editor.current_context();
+    let buffer_id = ctx.buffer;
+    let Some(tree) = services.treesitter.syntax_tree(buffer_id) else {
+        return false;
+    };
+
+    let (win, buffer) = editor.window_and_buffer_mut(ctx.window);
+    let text_buf = buffer.as_text_buffer();
+    let primary = win.selections().primary();
+    let mut current_offset = primary.head().to_offset(text_buf);
+
+    let mut target_byte = None;
+    for _ in 0..count {
+        if let Some(node) = nav_fn(tree, current_offset) {
+            current_offset = node.byte_range.start;
+            target_byte = Some(node.byte_range.start);
+        } else {
+            break;
+        }
+    }
+
+    if let Some(byte) = target_byte {
+        let text_point = text_buf.as_rope().offset_to_point(byte);
+        let new_head = text_buf.anchor_at(byte, text::Bias::Left);
+        let new_sel = text::Selection {
+            id: primary.id,
+            start: new_head,
+            end: if select { primary.tail() } else { new_head },
+            reversed: select && primary.reversed,
+            goal: text::SelectionGoal::None,
+        };
+        win.selections_mut().replace_primary(new_sel);
+        win.scroll_to_line(text_point.row);
+        win.scroll_to_column(text_point.column);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn apply_display_map_result(
     editor: &Editor,
     services: &mut Services,
