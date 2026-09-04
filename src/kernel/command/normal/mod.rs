@@ -38,6 +38,11 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
             folds::dispatch(editor, ctx.window, action)
         }
         Action::SetToInsert => super::insert::enter(editor),
+        Action::SetToAppend => super::insert::enter_append(editor, ctx.window),
+        Action::SetToAppendEndOfLine => super::insert::enter_append_eol(editor, ctx.window),
+        Action::SetToOpenLineBelow { count } => super::insert::enter_open_line(editor, ctx.window, count, false),
+        Action::SetToOpenLineAbove { count } => super::insert::enter_open_line(editor, ctx.window, count, true),
+        Action::SetToInsertStartOfLineNonSpace => super::insert::enter_insert_start_non_space(editor, ctx.window),
         Action::SetToReplace => super::insert::enter_replace(editor, ctx.window, false),
         Action::SetToVirtualReplace => super::insert::enter_replace(editor, ctx.window, true),
         Action::SetToVisual => super::visual::enter(editor, ctx.window, VisualKind::Char),
@@ -375,6 +380,7 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::SearchWordUnderBackward { count } => {
             super::search::search_word_under(editor, false, count)
         }
+        Action::Clear => clear_selections(editor, ctx),
         Action::DeleteChar { count } => operators::delete_char(editor, ctx.window, count),
         Action::DeleteCharBefore { count } => {
             operators::delete_char_before(editor, ctx.window, count)
@@ -382,6 +388,12 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::ChangeCase { count } => operators::change_case(editor, ctx.window, count),
         _ => Outcome::default(),
     }
+}
+
+fn clear_selections(editor: &mut Editor, ctx: CommandContext) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(ctx.window);
+    win.selections_mut().clear(buffer.as_text_buffer());
+    Outcome::default()
 }
 
 fn undo(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {

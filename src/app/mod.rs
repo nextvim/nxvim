@@ -807,6 +807,10 @@ mod tests {
             .summary_for_anchor(&head)
     }
 
+    fn text_of(app: &App) -> String {
+        app.editor().current_buffer().snapshot().chunks().collect()
+    }
+
     /// End-to-end: exactly the `InputTranslator -> App::handle_action` wiring
     /// `runtime::run` uses, with no terminal involved.
     #[test]
@@ -874,6 +878,83 @@ mod tests {
             before,
             "motions must work again once back in Normal mode"
         );
+    }
+
+    #[test]
+    fn visual_block_delete_exits_to_normal_mode_and_allows_inserting_text() {
+        use crate::kernel::mode::Mode;
+        let mut app = App::new("hello\nworld\n");
+        let mut input = InputTranslator::new();
+
+        // Enter Visual Block mode: Ctrl-v, j, l
+        input.sync_mode(app.editor().mode());
+        let ctrl_v = Event::Key(KeyEvent::new(CKey::Char('v'), CMod::CONTROL));
+        let resolved = input.translate(ctrl_v).expect("Ctrl-v resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+        assert!(app.editor().mode().is_visual());
+
+        let resolved = input.translate(key_event('j')).expect("j resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        let resolved = input.translate(key_event('x')).expect("x resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        // Deleting visual block must land in Normal mode
+        assert_eq!(app.editor().mode(), Mode::Normal);
+        assert_eq!(input.resolver.mode(), vim_input::Mode::Normal);
+
+        // Press 'i' to enter insert mode
+        let resolved = input.translate(key_event('i')).expect("i resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+        assert_eq!(app.editor().mode(), Mode::Insert);
+        assert_eq!(input.resolver.mode(), vim_input::Mode::Insert);
+
+        // Type 'a'
+        let resolved = input.translate(key_event('a')).expect("a resolves");
+        assert_eq!(resolved.action, Action::InsertText("a".to_string()));
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        assert_eq!(text_of(&app), "aello\naorld\n");
+    }
+
+    #[test]
+    fn visual_block_insert_multiple_chars_inserts_sequentially_on_all_cursors() {
+        use crate::kernel::mode::Mode;
+        let mut app = App::new("hello\nworld\n");
+        let mut input = InputTranslator::new();
+
+        // Enter Visual Block mode: Ctrl-v, j
+        input.sync_mode(app.editor().mode());
+        let ctrl_v = Event::Key(KeyEvent::new(CKey::Char('v'), CMod::CONTROL));
+        let resolved = input.translate(ctrl_v).expect("Ctrl-v resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        let resolved = input.translate(key_event('j')).expect("j resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+
+        // Press 'I' to enter insert at start of block
+        let resolved = input.translate(key_event('I')).expect("I resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+        assert_eq!(app.editor().mode(), Mode::Insert);
+        println!("SELECTIONS AFTER I: {:?}", app.editor().window(app.editor().current_context().window).unwrap().selections().selections());
+
+        // Type 'x' and 'y'
+        let resolved = input.translate(key_event('x')).expect("x resolves");
+        app.handle_action(resolved.action, resolved.register);
+        input.sync_mode(app.editor().mode());
+        let resolved = input.translate(key_event('y')).expect("y resolves");
+        app.handle_action(resolved.action, resolved.register);
+
+        println!("RESULT TEXT:\n{:?}", text_of(&app));
+        assert_eq!(text_of(&app), "xyhello\nxyworld\n");
     }
 
     fn submit_line(app: &mut App, line: &str) {

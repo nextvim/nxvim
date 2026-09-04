@@ -254,7 +254,7 @@ impl SelectionSet {
         ];
         cols.sort();
         let col_start = cols[0];
-        let col_end = cols[3];
+        let col_end = cols[3] + 1;
 
         let first_id = first_sel.id;
         let first_row = first_sel.head().to_point(buffer).row;

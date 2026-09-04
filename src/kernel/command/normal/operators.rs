@@ -786,15 +786,16 @@ fn apply_delete_block(
     let Some(top_row) = rows.first().map(|r| r.row) else {
         return Outcome::default();
     };
-    let top_col = rows
-        .iter()
-        .map(|r| r.start)
-        .min()
-        .map(|start| {
-            let buffer = editor.buffer(buffer_id).expect("live buffer");
-            start.to_point(buffer.as_text_buffer()).column
-        })
-        .unwrap_or(0);
+
+    let mut row_cols = Vec::new();
+    {
+        let buffer = editor.buffer(buffer_id).expect("live buffer");
+        let text_buf = buffer.as_text_buffer();
+        for r in &rows {
+            let col = r.start.to_point(text_buf).column;
+            row_cols.push((r.row, col));
+        }
+    }
 
     let edits: Vec<PlannedEdit> = rows
         .iter()
@@ -807,9 +808,6 @@ fn apply_delete_block(
             }),
         })
         .collect();
-    if edits.is_empty() {
-        return Outcome::default();
-    }
 
     let joined = {
         let buffer = editor.buffer(buffer_id).expect("live buffer");
@@ -831,7 +829,11 @@ fn apply_delete_block(
         }
         lines.join("\n")
     };
-    let effect = super::registers_ops::write_register(editor, true, joined, RegisterKind::Block);
+    let effect = if !joined.is_empty() {
+        super::registers_ops::write_register(editor, true, joined, RegisterKind::Block)
+    } else {
+        None
+    };
 
     let selections_before = editor.window(window).unwrap().selections().clone();
     let mutation = {
@@ -844,29 +846,63 @@ fn apply_delete_block(
             EditDescription {
                 origin: EditOrigin::User,
                 edits,
-                selections: Some(selections_before),
+                selections: Some(selections_before.clone()),
                 join_previous: false,
             },
         )
         .expect("block-delete edits are always well-formed")
     };
 
-    let text_buffer = editor.buffer(buffer_id).unwrap().as_text_buffer();
-    let line_len = text_buffer.line_len(top_row);
-    let offset = Point::new(top_row, top_col.min(line_len)).to_offset(text_buffer);
-    let anchor = text_buffer.anchor_before(offset);
-    let landing = Selection {
-        id: primary_id,
-        start: anchor,
-        end: anchor,
-        reversed: false,
-        goal: SelectionGoal::None,
-    };
+    editor.set_mode(Mode::Normal);
+
+    let mut new_selections = Vec::new();
+    let mut next_id = selections_before.id;
+    {
+        let text_buffer = editor.buffer(buffer_id).unwrap().as_text_buffer();
+        for &(row, col) in &row_cols {
+            let line_len = text_buffer.line_len(row);
+            let target_col = col.min(line_len);
+            let offset = Point::new(row, target_col).to_offset(text_buffer);
+            let anchor = text_buffer.anchor_before(offset);
+
+            let id = if row == top_row {
+                primary_id
+            } else {
+                let id = next_id;
+                next_id += 1;
+                id
+            };
+
+            new_selections.push(Selection {
+                id,
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+        }
+    }
+
     let final_selections = {
         let win = editor.windows_mut().get_mut(window).expect("live window");
-        win.selections_mut()
-            .replace_primary(landing)
-            .expect("primary id is unchanged by a block delete");
+
+        // Clear visual mode state
+        if let Some(kind) = win.visual_kind() {
+            win.set_last_visual(kind, selections_before.primary().clone());
+        }
+        win.set_visual_kind(None);
+        win.selections_mut().end_line();
+        win.selections_mut().end_block();
+        win.selections_mut().anchor = None;
+
+        win.selections_mut().id = next_id;
+
+        *win.selections_mut() = vim_buffer::SelectionSet::from_selections(
+            selections_before.primary_id(),
+            new_selections,
+        )
+        .expect("landing selections are always valid");
+
         win.selections().clone()
     };
 
@@ -882,6 +918,7 @@ fn apply_delete_block(
     if let Some(eff) = effect {
         outcome.effects.push(eff);
     }
+    outcome.mode_changed = true;
     outcome
 }
 
@@ -1632,6 +1669,294 @@ fn indent_lines_from_cursor(
 }
 
 pub fn delete_char(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    delete_char_impl(editor, window, count, false)
+}
+
+pub fn delete_char_before(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
+    delete_char_impl(editor, window, count, true)
+}
+
+fn delete_char_impl(editor: &mut Editor, window: WindowId, count: u32, before: bool) -> Outcome {
+    let buffer_id = editor
+        .window(window)
+        .expect("dispatch only runs against a live window")
+        .buffer_id();
+
+    // Save visual state before cleanup
+    let visual_kind_before = editor.window(window).and_then(|w| w.visual_kind());
+    let selections_before = editor.window(window).unwrap().selections().clone();
+
+    let is_visual = editor.mode().is_visual();
+
+    if is_visual && visual_kind_before == Some(VisualKind::Block) {
+        let primary = selections_before.primary().clone();
+        if let Some(rows) = resolve_visual_block_rows(editor, window, buffer_id, &primary) {
+            return apply_delete_block(editor, window, buffer_id, primary.id, rows);
+        }
+    }
+
+    let buffer = editor.buffer(buffer_id).expect("live buffer");
+    let text_buffer = buffer.as_text_buffer();
+
+    let floor_char_boundary = |text: &str, offset: usize| -> usize {
+        let mut offset = offset.min(text.len());
+        while offset > 0 && !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    };
+
+    let mut edits = Vec::new();
+    let mut landing_offsets = Vec::new();
+    let mut deleted_texts = Vec::new();
+
+    for cursor in &selections_before.selections {
+        let start = text_buffer.offset_for_anchor(&cursor.start);
+        let end = text_buffer.offset_for_anchor(&cursor.end);
+        let (range_start, range_end) = (start.min(end), start.max(end));
+
+        let (del_start, del_end) = if is_visual || range_start != range_end {
+            // We have a selection range!
+            if visual_kind_before == Some(VisualKind::Line) {
+                // Snap to whole lines
+                let start_row = range_start.to_point(text_buffer).row;
+                let end_row = range_end.to_point(text_buffer).row;
+                whole_line_range(text_buffer, start_row, end_row)
+            } else {
+                (range_start, range_end)
+            }
+        } else {
+            // It's a single cursor (empty selection)
+            let cursor_point = cursor.head().to_point(text_buffer);
+            let row = cursor_point.row;
+            let mut col = cursor_point.column;
+            let line_len = text_buffer.line_len(row);
+
+            if line_len == 0 {
+                // Empty line
+                continue;
+            }
+
+            let start_of_line_offset = Point::new(row, 0).to_offset(text_buffer);
+            let end_of_line_offset = Point::new(row, line_len).to_offset(text_buffer);
+            let line_text: String = buffer
+                .snapshot()
+                .chunks_for_range(TextRange {
+                    start: ByteOffset(start_of_line_offset),
+                    end: ByteOffset(end_of_line_offset),
+                })
+                .expect("line range is valid")
+                .collect();
+
+            if before {
+                // Backspace
+                let col = col.min(line_len);
+                let end_byte_idx = floor_char_boundary(&line_text, col as usize);
+                if end_byte_idx > 0 {
+                    let count_val = count.max(1) as usize;
+                    let mut start_byte_idx = end_byte_idx;
+                    let mut chars_deleted = 0;
+                    for (idx, _) in line_text[..end_byte_idx].char_indices().rev() {
+                        if chars_deleted >= count_val {
+                            break;
+                        }
+                        start_byte_idx = idx;
+                        chars_deleted += 1;
+                    }
+                    (
+                        start_of_line_offset + start_byte_idx,
+                        start_of_line_offset + end_byte_idx,
+                    )
+                } else {
+                    continue;
+                }
+            } else {
+                // Delete/x
+                if !editor.mode().is_insert() && col >= line_len {
+                    col = line_len.saturating_sub(1);
+                }
+                let col = floor_char_boundary(&line_text, col as usize) as u32;
+                let start_byte_idx = col as usize;
+                if start_byte_idx < line_text.len() {
+                    let count_val = count.max(1) as usize;
+                    let mut end_byte_idx = start_byte_idx;
+                    let mut chars_deleted = 0;
+                    for ch in line_text[start_byte_idx..].chars() {
+                        if chars_deleted >= count_val {
+                            break;
+                        }
+                        end_byte_idx += ch.len_utf8();
+                        chars_deleted += 1;
+                    }
+                    (
+                        start_of_line_offset + start_byte_idx,
+                        start_of_line_offset + end_byte_idx,
+                    )
+                } else {
+                    continue;
+                }
+            }
+        };
+
+        if del_start >= del_end {
+            continue;
+        }
+
+        // Record deleted text
+        let deleted_text: String = buffer
+            .snapshot()
+            .chunks_for_range(TextRange {
+                start: ByteOffset(del_start),
+                end: ByteOffset(del_end),
+            })
+            .expect("range is valid")
+            .collect();
+        deleted_texts.push(deleted_text);
+
+        edits.push(PlannedEdit {
+            selection: Some(vim_buffer::SelectionId::new(cursor.id)),
+            edit: Edit::delete(TextRange {
+                start: ByteOffset(del_start),
+                end: ByteOffset(del_end),
+            }),
+        });
+
+        landing_offsets.push((cursor.id, del_start));
+    }
+
+    if edits.is_empty() {
+        return Outcome::default();
+    }
+
+    // If in visual mode, perform visual cleanup
+    let mut mode_changed = false;
+    if is_visual {
+        if let (Some(kind), Some(sel)) = (
+            visual_kind_before,
+            selections_before.selections.first().cloned(),
+        ) {
+            if let Some(win) = editor.windows_mut().get_mut(window) {
+                win.set_last_visual(kind, sel);
+            }
+        }
+        if let Some(win) = editor.windows_mut().get_mut(window) {
+            win.set_visual_kind(None);
+            win.selections_mut().end_line();
+            win.selections_mut().end_block();
+            win.selections_mut().anchor = None;
+        }
+        editor.set_mode(Mode::Normal);
+        mode_changed = true;
+    }
+
+    // Write register
+    let joined_deleted_text = deleted_texts.join("\n");
+    let register_kind = if visual_kind_before == Some(VisualKind::Line) {
+        RegisterKind::Line
+    } else if visual_kind_before == Some(VisualKind::Block) {
+        RegisterKind::Block
+    } else {
+        RegisterKind::Character
+    };
+    let effect = if !joined_deleted_text.is_empty() {
+        super::registers_ops::write_register(editor, true, joined_deleted_text, register_kind)
+    } else {
+        None
+    };
+
+    // Apply transaction
+    let mutation = {
+        let is_insert = editor.mode().is_insert();
+        let buffer_mut = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer_mut,
+            EditDescription {
+                origin: if is_insert {
+                    EditOrigin::InsertMode
+                } else {
+                    EditOrigin::User
+                },
+                edits,
+                selections: Some(selections_before.clone()),
+                join_previous: false,
+            },
+        )
+        .expect("deleting ranges is always well-formed")
+    };
+
+    // Compute landing selections in the new buffer revision
+    let final_selections = {
+        let buffer = editor.buffer(buffer_id).unwrap();
+        let text_buffer = buffer.as_text_buffer();
+        let mut new_selections = Vec::new();
+
+        for (id, orig_start_offset) in landing_offsets {
+            let point = orig_start_offset.to_point(text_buffer);
+            let row = point.row.min(text_buffer.row_count().saturating_sub(1));
+            let line_len = text_buffer.line_len(row);
+            let mut col = point.column;
+
+            if !editor.mode().is_insert() && line_len > 0 {
+                if col >= line_len {
+                    col = line_len.saturating_sub(1);
+                }
+                let start_of_line = Point::new(row, 0).to_offset(text_buffer);
+                let end_of_line = Point::new(row, line_len).to_offset(text_buffer);
+                let line_text: String = buffer
+                    .snapshot()
+                    .chunks_for_range(TextRange {
+                        start: ByteOffset(start_of_line),
+                        end: ByteOffset(end_of_line),
+                    })
+                    .unwrap()
+                    .collect();
+                col = floor_char_boundary(&line_text, col as usize) as u32;
+            } else {
+                col = col.min(line_len);
+            }
+
+            let target_offset = Point::new(row, col).to_offset(text_buffer);
+            let anchor = text_buffer.anchor_before(target_offset);
+            new_selections.push(Selection {
+                id,
+                start: anchor.clone(),
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            });
+        }
+
+        let win = editor.windows_mut().get_mut(window).expect("live window");
+        *win.selections_mut() = vim_buffer::SelectionSet::from_selections(
+            selections_before.primary_id(),
+            new_selections,
+        )
+        .expect("landing selections are always valid");
+        win.selections().clone()
+    };
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer_mut = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer_mut.record_selections(tx_id, final_selections);
+    }
+
+    let mut outcome = Outcome::from_mutation(&mutation);
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    if mode_changed {
+        outcome.mode_changed = true;
+    }
+    outcome
+}
+
+pub fn change_case(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
     let buffer_id = editor
         .window(window)
         .expect("dispatch only runs against a live window")
@@ -1654,232 +1979,47 @@ pub fn delete_char(editor: &mut Editor, window: WindowId, count: u32) -> Outcome
         return Outcome::default();
     }
 
-    if col >= line_len {
-        col = line_len - 1;
-    }
+    let floor_char_boundary = |text: &str, offset: usize| -> usize {
+        let mut offset = offset.min(text.len());
+        while offset > 0 && !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    };
 
-    let count = count.max(1);
-    let end_col = (col + count).min(line_len);
-    if col >= end_col {
-        return Outcome::default();
-    }
-
-    let start_offset = Point::new(row, col).to_offset(text_buffer);
-    let end_offset = Point::new(row, end_col).to_offset(text_buffer);
-
-    let deleted_text: String = buffer
+    let start_of_line_offset = Point::new(row, 0).to_offset(text_buffer);
+    let end_of_line_offset = Point::new(row, line_len).to_offset(text_buffer);
+    let line_text: String = buffer
         .snapshot()
         .chunks_for_range(TextRange {
-            start: ByteOffset(start_offset),
-            end: ByteOffset(end_offset),
+            start: ByteOffset(start_of_line_offset),
+            end: ByteOffset(end_of_line_offset),
         })
-        .expect("range is valid")
+        .expect("line range is valid")
         .collect();
-
-    let effect =
-        super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
-
-    let selections_before = editor.window(window).unwrap().selections().clone();
-    let mutation = {
-        let buffer = editor
-            .buffers_mut()
-            .get_mut(buffer_id)
-            .expect("live buffer");
-        transaction::apply(
-            buffer,
-            EditDescription {
-                origin: EditOrigin::User,
-                edits: vec![PlannedEdit {
-                    selection: None,
-                    edit: Edit::delete(TextRange {
-                        start: ByteOffset(start_offset),
-                        end: ByteOffset(end_offset),
-                    }),
-                }],
-                selections: Some(selections_before),
-                join_previous: false,
-            },
-        )
-        .expect("deleting a character-derived range is always well-formed")
-    };
-
-    let landing = {
-        let buffer = editor.buffer(buffer_id).unwrap();
-        let text_buffer = buffer.as_text_buffer();
-        let new_line_len = text_buffer.line_len(row);
-        let target_col = if new_line_len == 0 {
-            0
-        } else {
-            col.min(new_line_len - 1)
-        };
-        let target_offset = Point::new(row, target_col).to_offset(text_buffer);
-        let anchor = text_buffer.anchor_before(target_offset);
-        Selection {
-            id: primary.id,
-            start: anchor,
-            end: anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
-        }
-    };
-
-    let final_selections = {
-        let win = editor.windows_mut().get_mut(window).expect("live window");
-        win.selections_mut()
-            .replace_primary(landing)
-            .expect("primary id is unchanged by a delete");
-        win.selections().clone()
-    };
-
-    if let Some(tx_id) = mutation.transaction {
-        let buffer = editor
-            .buffers_mut()
-            .get_mut(buffer_id)
-            .expect("live buffer");
-        buffer.record_selections(tx_id, final_selections);
-    }
-
-    let mut outcome = Outcome::from_mutation(&mutation);
-    if let Some(eff) = effect {
-        outcome.effects.push(eff);
-    }
-    outcome
-}
-
-pub fn delete_char_before(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
-    let buffer_id = editor
-        .window(window)
-        .expect("dispatch only runs against a live window")
-        .buffer_id();
-    let primary = editor
-        .window(window)
-        .unwrap()
-        .selections()
-        .primary()
-        .clone();
-    let buffer = editor.buffer(buffer_id).expect("live buffer");
-    let text_buffer = buffer.as_text_buffer();
-
-    let cursor_point = primary.head().to_point(text_buffer);
-    let row = cursor_point.row;
-    let line_len = text_buffer.line_len(row);
-    let col = cursor_point.column.min(line_len);
-
-    if col == 0 {
-        return Outcome::default();
-    }
-
-    let count = count.max(1);
-    let start_col = col.saturating_sub(count);
-    if start_col >= col {
-        return Outcome::default();
-    }
-
-    let start_offset = Point::new(row, start_col).to_offset(text_buffer);
-    let end_offset = Point::new(row, col).to_offset(text_buffer);
-
-    let deleted_text: String = buffer
-        .snapshot()
-        .chunks_for_range(TextRange {
-            start: ByteOffset(start_offset),
-            end: ByteOffset(end_offset),
-        })
-        .expect("range is valid")
-        .collect();
-
-    let effect =
-        super::registers_ops::write_register(editor, true, deleted_text, RegisterKind::Character);
-
-    let selections_before = editor.window(window).unwrap().selections().clone();
-    let mutation = {
-        let buffer = editor
-            .buffers_mut()
-            .get_mut(buffer_id)
-            .expect("live buffer");
-        transaction::apply(
-            buffer,
-            EditDescription {
-                origin: EditOrigin::User,
-                edits: vec![PlannedEdit {
-                    selection: None,
-                    edit: Edit::delete(TextRange {
-                        start: ByteOffset(start_offset),
-                        end: ByteOffset(end_offset),
-                    }),
-                }],
-                selections: Some(selections_before),
-                join_previous: false,
-            },
-        )
-        .expect("deleting a character-derived range is always well-formed")
-    };
-
-    let landing = {
-        let buffer = editor.buffer(buffer_id).unwrap();
-        let text_buffer = buffer.as_text_buffer();
-        let target_offset = Point::new(row, start_col).to_offset(text_buffer);
-        let anchor = text_buffer.anchor_before(target_offset);
-        Selection {
-            id: primary.id,
-            start: anchor,
-            end: anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
-        }
-    };
-
-    let final_selections = {
-        let win = editor.windows_mut().get_mut(window).expect("live window");
-        win.selections_mut()
-            .replace_primary(landing)
-            .expect("primary id is unchanged by a delete");
-        win.selections().clone()
-    };
-
-    if let Some(tx_id) = mutation.transaction {
-        let buffer = editor
-            .buffers_mut()
-            .get_mut(buffer_id)
-            .expect("live buffer");
-        buffer.record_selections(tx_id, final_selections);
-    }
-
-    let mut outcome = Outcome::from_mutation(&mutation);
-    if let Some(eff) = effect {
-        outcome.effects.push(eff);
-    }
-    outcome
-}
-
-pub fn change_case(editor: &mut Editor, window: WindowId, count: u32) -> Outcome {
-    let buffer_id = editor
-        .window(window)
-        .expect("dispatch only runs against a live window")
-        .buffer_id();
-    let primary = editor
-        .window(window)
-        .unwrap()
-        .selections()
-        .primary()
-        .clone();
-    let buffer = editor.buffer(buffer_id).expect("live buffer");
-    let text_buffer = buffer.as_text_buffer();
-
-    let cursor_point = primary.head().to_point(text_buffer);
-    let row = cursor_point.row;
-    let col = cursor_point.column;
-    let line_len = text_buffer.line_len(row);
-
-    if line_len == 0 {
-        return Outcome::default();
-    }
 
     if col >= line_len {
+        col = line_len.saturating_sub(1);
+    }
+    let col = floor_char_boundary(&line_text, col as usize) as u32;
+
+    let count = count.max(1) as usize;
+    let start_byte_idx = col as usize;
+    if start_byte_idx >= line_text.len() {
         return Outcome::default();
     }
 
-    let count = count.max(1);
-    let end_col = (col + count).min(line_len);
+    let mut end_byte_idx = start_byte_idx;
+    let mut chars_processed = 0;
+    for ch in line_text[start_byte_idx..].chars() {
+        if chars_processed >= count {
+            break;
+        }
+        end_byte_idx += ch.len_utf8();
+        chars_processed += 1;
+    }
+
+    let end_col = end_byte_idx as u32;
     if col >= end_col {
         return Outcome::default();
     }
@@ -1929,10 +2069,22 @@ pub fn change_case(editor: &mut Editor, window: WindowId, count: u32) -> Outcome
         let buffer = editor.buffer(buffer_id).unwrap();
         let text_buffer = buffer.as_text_buffer();
         let new_line_len = text_buffer.line_len(row);
-        let mut target_col = end_col;
-        if target_col >= new_line_len && new_line_len > 0 {
-            target_col = new_line_len - 1;
-        }
+        let target_col = if new_line_len == 0 {
+            0
+        } else {
+            let col_candidate = end_col.min(new_line_len - 1);
+            let start_of_line = Point::new(row, 0).to_offset(text_buffer);
+            let end_of_line = Point::new(row, new_line_len).to_offset(text_buffer);
+            let new_line_text: String = buffer
+                .snapshot()
+                .chunks_for_range(TextRange {
+                    start: ByteOffset(start_of_line),
+                    end: ByteOffset(end_of_line),
+                })
+                .expect("new line range is valid")
+                .collect();
+            floor_char_boundary(&new_line_text, col_candidate as usize) as u32
+        };
         let target_offset = Point::new(row, target_col).to_offset(text_buffer);
         let anchor = text_buffer.anchor_before(target_offset);
         Selection {

@@ -144,12 +144,14 @@ pub fn run(
                 }
             }
         } else {
+            input.sync_mode(app.editor().mode());
             let buf_id = app.editor().current_context().buffer.get();
             if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id), app.digraphs()) {
                 let outcome = app.handle_action(resolved.action, resolved.register);
                 if outcome.invalidation != RedrawInvalidation::None {
                     pending_invalidations.push(outcome.invalidation);
                 }
+                input.sync_mode(app.editor().mode());
             }
         }
 

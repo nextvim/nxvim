@@ -9,8 +9,8 @@
 //! true difference (overtyping through tabs/virtual columns) is deferred,
 //! per this milestone's own scope note.
 
-use text::{Point, Selection, SelectionGoal, ToOffset, ToPoint};
-use vim_buffer::{BufferText, EditOrigin};
+use text::{Anchor, Point, Selection, SelectionGoal, ToOffset, ToPoint};
+use vim_buffer::{BufferText, EditOrigin, Motions};
 use vim_input::Action;
 
 use crate::kernel::{
@@ -91,6 +91,129 @@ pub fn enter(editor: &mut Editor) -> Outcome {
     }
 }
 
+pub fn enter_append(editor: &mut Editor, window: WindowId) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    let buf_text = buffer.as_text_buffer();
+    for cursor in win.selections().selections().to_vec() {
+        let point = cursor.head().to_point(buf_text);
+        if point.column < buf_text.line_len(point.row) {
+            let next = cursor.move_right_once(false, buf_text);
+            win.selections_mut().update(buf_text, &next);
+        }
+    }
+    enter(editor)
+}
+
+pub fn enter_append_eol(editor: &mut Editor, window: WindowId) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    win.selections_mut()
+        .move_to_end_of_line(false, buffer.as_text_buffer());
+    enter(editor)
+}
+
+pub fn enter_insert_start_non_space(editor: &mut Editor, window: WindowId) -> Outcome {
+    let (win, buffer) = editor.window_and_buffer_mut(window);
+    win.selections_mut()
+        .move_to_start_of_line_non_space(false, buffer.as_text_buffer());
+    enter(editor)
+}
+
+pub fn enter_open_line(
+    editor: &mut Editor,
+    window: WindowId,
+    count: u32,
+    above: bool,
+) -> Outcome {
+    let buffer_id = editor
+        .window(window)
+        .expect("dispatch only runs against a live window")
+        .buffer_id();
+
+    let text_to_insert = "\n".repeat(count.max(1) as usize);
+
+    let cursors = editor
+        .window(window)
+        .unwrap()
+        .selections()
+        .selections()
+        .to_vec();
+
+    let mut edits = Vec::new();
+    let mut insertion_offsets = Vec::new();
+
+    for cursor in &cursors {
+        let buffer = editor.buffer(buffer_id).expect("live buffer");
+        let buf_text = buffer.as_text_buffer();
+        let point = cursor.head().to_point(buf_text);
+        let insertion_point = if above {
+            Point {
+                row: point.row,
+                column: 0,
+            }
+        } else {
+            Point {
+                row: point.row,
+                column: buf_text.line_len(point.row),
+            }
+        };
+        let offset = insertion_point.to_offset(buf_text);
+        insertion_offsets.push((cursor.id, offset));
+        edits.push(vim_buffer::PlannedEdit {
+            selection: Some(vim_buffer::SelectionId::new(cursor.id)),
+            edit: vim_buffer::Edit::insert(vim_buffer::ByteOffset(offset), text_to_insert.clone()),
+        });
+    }
+
+    let selections_before = editor.window(window).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            EditDescription {
+                origin: EditOrigin::InsertMode,
+                edits,
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("open line edits are well-formed")
+    };
+
+    let (win, buf) = editor.window_and_buffer_mut(window);
+    let buf_text = buf.as_text_buffer();
+
+    for (id, offset) in insertion_offsets {
+        let target_offset = if above { offset } else { offset + 1 };
+        let target_anchor = buf_text.anchor_at(target_offset, text::Bias::Left);
+        if let Some(selected) = win.selections_mut().selections.iter_mut().find(|s| s.id == id) {
+            *selected = Selection {
+                id,
+                start: target_anchor.clone(),
+                end: target_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            };
+        }
+    }
+    let final_selections = win.selections().clone();
+
+    if let Some(tx_id) = mutation.transaction {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        buffer.record_selections(tx_id, final_selections);
+    }
+
+    let enter_outcome = enter(editor);
+    let mut mutation_outcome = Outcome::from_mutation(&mutation);
+    mutation_outcome.mode_changed = enter_outcome.mode_changed;
+    mutation_outcome
+}
+
 /// Handles `Action::SetToReplace`/`Action::SetToVirtualReplace` (`R`/`gR`).
 /// Resets the acting window's overtype history so a stale entry from a
 /// previous Replace session can never be popped by this one's `Backspace`.
@@ -124,13 +247,41 @@ fn insert_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
         .window(window)
         .expect("dispatch only runs against a live window")
         .buffer_id();
-    let head = editor.window(window).unwrap().selections().primary().head();
-    let offset = {
-        let buffer = editor
-            .buffer(buffer_id)
-            .expect("window always names a live buffer");
-        buffer.as_text_buffer().offset_for_anchor(&head)
-    };
+
+    let cursors = editor
+        .window(window)
+        .unwrap()
+        .selections()
+        .selections()
+        .to_vec();
+
+    let mut pre_edit_ranges = Vec::new();
+    let mut edits = Vec::new();
+    for cursor in &cursors {
+        let buffer = editor.buffer(buffer_id).expect("live buffer");
+        let start = buffer.as_text_buffer().offset_for_anchor(&cursor.tail());
+        let end = buffer.as_text_buffer().offset_for_anchor(&cursor.head());
+        let (range_start, range_end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        pre_edit_ranges.push((cursor.id, range_start, range_end));
+    }
+    pre_edit_ranges.sort_by_key(|(_, start, _)| *start);
+
+    for &(id, range_start, range_end) in &pre_edit_ranges {
+        edits.push(vim_buffer::PlannedEdit {
+            selection: Some(vim_buffer::SelectionId::new(id)),
+            edit: vim_buffer::Edit::replace(
+                vim_buffer::TextRange {
+                    start: vim_buffer::ByteOffset(range_start),
+                    end: vim_buffer::ByteOffset(range_end),
+                },
+                text.to_string(),
+            ),
+        });
+    }
 
     let selections_before = editor.window(window).unwrap().selections().clone();
     let mutation = {
@@ -142,36 +293,41 @@ fn insert_text(editor: &mut Editor, window: WindowId, text: &str) -> Outcome {
             buffer,
             EditDescription {
                 origin: EditOrigin::InsertMode,
-                edits: vec![vim_buffer::PlannedEdit {
-                    selection: None,
-                    edit: vim_buffer::Edit::insert(
-                        vim_buffer::ByteOffset(offset),
-                        text.to_string(),
-                    ),
-                }],
+                edits,
                 selections: Some(selections_before),
                 join_previous: false,
             },
         )
-        .expect("inserting at the cursor is always a well-formed edit")
+        .expect("inserting at the cursors is always a well-formed edit")
     };
 
-    let new_offset = offset + text.len();
-    let new_anchor = {
+    let new_anchors: Vec<(usize, Anchor)> = {
         let buffer = editor.buffer(buffer_id).unwrap();
-        buffer.as_text_buffer().anchor_after(new_offset)
+        let text_buffer = buffer.as_text_buffer();
+        let mut cumulative_delta = 0isize;
+        let mut anchors = Vec::new();
+        for (id, range_start, range_end) in pre_edit_ranges {
+            let new_offset = (range_start as isize + cumulative_delta) as usize + text.len();
+            cumulative_delta += text.len() as isize - (range_end - range_start) as isize;
+            let new_anchor = text_buffer.anchor_before(new_offset);
+            anchors.push((id, new_anchor));
+        }
+        anchors
     };
-    let primary_id = editor.window(window).unwrap().selections().primary().id;
+
     let win = editor.windows_mut().get_mut(window).expect("live window");
-    win.selections_mut()
-        .replace_primary(Selection {
-            id: primary_id,
-            start: new_anchor,
-            end: new_anchor,
-            reversed: false,
-            goal: SelectionGoal::None,
-        })
-        .expect("primary id is unchanged by an insert");
+    let selections_set = win.selections_mut();
+    for (id, new_anchor) in new_anchors {
+        if let Some(selected) = selections_set.selections.iter_mut().find(|s| s.id == id) {
+            *selected = Selection {
+                id,
+                start: new_anchor.clone(),
+                end: new_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            };
+        }
+    }
     let final_selections = win.selections().clone();
 
     if let Some(tx_id) = mutation.transaction {

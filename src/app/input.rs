@@ -51,6 +51,22 @@ impl InputTranslator {
         }
     }
 
+    pub fn sync_mode(&mut self, mode: crate::kernel::mode::Mode) {
+        let input_mode = match mode {
+            crate::kernel::mode::Mode::Normal => Mode::Normal,
+            crate::kernel::mode::Mode::Insert => Mode::Insert,
+            crate::kernel::mode::Mode::Replace => Mode::Replace,
+            crate::kernel::mode::Mode::VirtualReplace => Mode::VirtualReplace,
+            crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => Mode::Visual,
+            crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => Mode::VisualLine,
+            crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => Mode::VisualBlock,
+            crate::kernel::mode::Mode::Command(_) => Mode::Command,
+        };
+        if self.resolver.mode() != input_mode {
+            self.resolver.set_mode(input_mode);
+        }
+    }
+
     /// Translates one terminal event into a resolved action.
     ///
     /// Returns `None` for events that don't produce a complete action

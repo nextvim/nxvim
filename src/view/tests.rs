@@ -2,7 +2,7 @@ use super::*;
 use crate::app::view_sync::WindowProjection;
 use crate::kernel::Editor;
 use crate::kernel::ids::WindowId;
-use text::ReplicaId;
+use text::{ReplicaId, ToOffset, ToPoint};
 use vim_buffer::{Buffer, BufferId, SelectionId};
 use vim_input::Action;
 use vim_ui::Color;
@@ -1095,7 +1095,9 @@ fn test_visual_selection_rendering_modes() {
             count: 2,
             select: false,
         });
+
         editor.execute(Action::SetToVisual);
+
         editor.execute(Action::MoveRight {
             count: 4,
             select: true,
@@ -1180,6 +1182,104 @@ fn test_visual_selection_rendering_modes() {
             );
         }
     }
+}
+
+#[test]
+fn test_secondary_cursor_rendering_when_tail_equals_head() {
+    let buf_id = BufferId::new(1).unwrap();
+    let buffer = Buffer::new(buf_id, ReplicaId::LOCAL, "hello world\nsecond line\n");
+    let anchor1 = buffer.as_text_buffer().anchor_before(2); // 'l' in hello
+    let sel1 = text::Selection {
+        id: 0,
+        start: anchor1,
+        end: anchor1,
+        reversed: false,
+        goal: text::SelectionGoal::None,
+    };
+    let anchor2 = buffer.as_text_buffer().anchor_before(14); // 'e' in second (offset 14 = 12 + 2)
+    let sel2 = text::Selection {
+        id: 1,
+        start: anchor2,
+        end: anchor2,
+        reversed: false,
+        goal: text::SelectionGoal::None,
+    };
+    let selections =
+        vim_buffer::SelectionSet::from_selections(SelectionId::new(0), vec![sel1, sel2]).unwrap();
+
+    let text_snapshot = buffer.snapshot().into_inner();
+    let proj = WindowProjection {
+        window: WindowId::new(1),
+        buffer: buf_id,
+        snapshot: text_snapshot.clone(),
+        selections,
+        folds: Vec::new(),
+        is_current: true,
+        scroll_top: 0,
+        leftcol: 0,
+        wrap: true,
+        scrollbar: false,
+        path: None,
+        name: "test".to_string(),
+        is_modified: false,
+        visual_kind: None,
+    };
+
+    let mut decorations = Vec::new();
+    let mut selected_style = vim_ui::Style::default();
+    selected_style.bg = Some(vim_ui::Color::Yellow);
+
+    let display_map = display_map::DisplayMap::new(text_snapshot, Some(80));
+    let display_snapshot = display_map.snapshot();
+
+    build_selection_decorations(
+        &display_snapshot,
+        &proj,
+        0,
+        selected_style,
+        &mut decorations,
+    );
+
+    // Primary cursor (id 0) has start == end in normal mode, so it gets no 0-width decoration override (hardware cursor used instead)
+    let primary_dec = decorations.iter().find(|d| d.start == DisplayPosition { row: 0, column: 2 });
+    assert_eq!(primary_dec.map(|d| d.start == d.end), Some(true));
+
+    // Secondary cursor (id 1) at (row 1, col 2) has start == end, but MUST be extended to a 1-char decoration
+    let sec_dec = decorations.iter().find(|d| d.start == DisplayPosition { row: 1, column: 2 }).unwrap();
+    assert_eq!(sec_dec.end, DisplayPosition { row: 1, column: 3 });
+    assert_eq!(sec_dec.style, selected_style);
+}
+
+#[test]
+fn test_visual_mode_cursor_position() {
+    let screen = Rect::new(0, 0, 40, 10);
+    let mut editor = Editor::new("hello world\n");
+    let mut render_state = RenderState::new();
+    let win_id = editor.current_context().window;
+
+    // Move to col 2 ('l')
+    editor.execute(Action::MoveRight {
+        count: 2,
+        select: false,
+    });
+    // Enter visual mode (head is over anchor at col 2)
+    editor.execute(Action::SetToVisual);
+
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let model = render_state.windows[&win_id].last_model.as_ref().unwrap();
+    let cursor = model.cursor.as_ref().unwrap();
+    assert_eq!(cursor.position.column, 2, "cursor must be over anchor (col 2), not offset +1");
+
+    // Move right 2 steps to col 4
+    editor.execute(Action::MoveRight {
+        count: 2,
+        select: true,
+    });
+
+    render_frame(&mut editor, &mut render_state, screen, &[], true);
+    let model = render_state.windows[&win_id].last_model.as_ref().unwrap();
+    let cursor = model.cursor.as_ref().unwrap();
+    assert_eq!(cursor.position.column, 4, "cursor must be over head (col 4), not offset +1");
 }
 
 #[test]

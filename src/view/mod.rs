@@ -6,7 +6,7 @@ pub mod layout;
 pub mod tests;
 
 use crate::kernel::ids::WindowId;
-use crate::kernel::mode::VisualKind;
+use crate::kernel::mode::Mode;
 use crate::kernel::outcome::RedrawInvalidation;
 use display_map::{DisplayMap, DisplayPoint};
 use std::borrow::Cow;
@@ -290,6 +290,7 @@ fn build_selection_decorations(
     selected_style: Style,
     decorations: &mut Vec<DisplayDecoration>,
 ) {
+    let primary_id = projection.selections.primary_id();
     for sel in &projection.selections.selections {
         let start_pt = projection
             .snapshot
@@ -298,87 +299,59 @@ fn build_selection_decorations(
             .snapshot
             .offset_to_point(sel.end.to_offset(&projection.snapshot));
 
-        let mut ranges = Vec::new();
-        match projection.visual_kind {
-            Some(VisualKind::Line) => {
-                let start_row = start_pt.row.min(end_pt.row);
-                let end_row = start_pt.row.max(end_pt.row);
-                let s_pt = Point::new(start_row, 0);
-                let e_pt = Point::new(end_row, projection.snapshot.line_len(end_row));
-                ranges.push((s_pt, e_pt));
-            }
-            Some(VisualKind::Block) => {
-                let row_start = start_pt.row.min(end_pt.row);
-                let row_end = start_pt.row.max(end_pt.row);
-                let col_start = start_pt.column.min(end_pt.column);
-                let col_end = start_pt.column.max(end_pt.column) + 1;
-                for r in row_start..=row_end {
-                    let line_len = projection.snapshot.line_len(r);
-                    let s_col = col_start.min(line_len);
-                    let e_col = col_end.min(line_len);
-                    ranges.push((Point::new(r, s_col), Point::new(r, e_col)));
+        if let (Some(d_start), Some(d_end)) = (
+            snapshot.try_point_to_display_point(start_pt),
+            snapshot.try_point_to_display_point(end_pt),
+        ) {
+            let leftcol_offset = if projection.wrap {
+                0
+            } else {
+                projection.leftcol
+            };
+            // Ensure proper orientation for DisplaySelection (validate checks end >= start)
+            let (mut start_pos, mut end_pos) = if d_end >= d_start {
+                (
+                    DisplayPosition {
+                        row: d_start.row().saturating_sub(scroll_y),
+                        column: d_start.column().saturating_sub(leftcol_offset),
+                    },
+                    DisplayPosition {
+                        row: d_end.row().saturating_sub(scroll_y),
+                        column: d_end.column().saturating_sub(leftcol_offset),
+                    },
+                )
+            } else {
+                (
+                    DisplayPosition {
+                        row: d_end.row().saturating_sub(scroll_y),
+                        column: d_end.column().saturating_sub(leftcol_offset),
+                    },
+                    DisplayPosition {
+                        row: d_start.row().saturating_sub(scroll_y),
+                        column: d_start.column().saturating_sub(leftcol_offset),
+                    },
+                )
+            };
+
+            let is_primary = vim_buffer::SelectionId::new(sel.id) == primary_id;
+
+            // Non-zero selections, non-primary cursors, and visual mode cursors must render at least one character.
+            // When start_pos == end_pos (e.g. folded display position or single-point cursor selection),
+            // extend the range to cover at least 1 character based on selection bias (orientation / direction).
+            if start_pos == end_pos && (sel.start != sel.end || !is_primary || projection.visual_kind.is_some()) {
+                if sel.reversed {
+                    start_pos.column = start_pos.column.saturating_sub(1);
+                } else {
+                    end_pos.column = end_pos.column.saturating_add(1);
                 }
             }
-            _ => {
-                if projection.visual_kind.is_some() {
-                    let (low, mut high) = if start_pt <= end_pt {
-                        (start_pt, end_pt)
-                    } else {
-                        (end_pt, start_pt)
-                    };
-                    let line_len = projection.snapshot.line_len(high.row);
-                    if high.column < line_len {
-                        high.column += 1;
-                    }
-                    ranges.push((low, high));
-                } else {
-                    ranges.push((start_pt, end_pt));
-                }
-            }
-        }
 
-        for (s_pt, e_pt) in ranges {
-            if let (Some(d_start), Some(d_end)) = (
-                snapshot.try_point_to_display_point(s_pt),
-                snapshot.try_point_to_display_point(e_pt),
-            ) {
-                let leftcol_offset = if projection.wrap {
-                    0
-                } else {
-                    projection.leftcol
-                };
-                // Ensure proper orientation for DisplaySelection (validate checks end >= start)
-                let (start_pos, end_pos) = if d_end >= d_start {
-                    (
-                        DisplayPosition {
-                            row: d_start.row().saturating_sub(scroll_y),
-                            column: d_start.column().saturating_sub(leftcol_offset),
-                        },
-                        DisplayPosition {
-                            row: d_end.row().saturating_sub(scroll_y),
-                            column: d_end.column().saturating_sub(leftcol_offset),
-                        },
-                    )
-                } else {
-                    (
-                        DisplayPosition {
-                            row: d_end.row().saturating_sub(scroll_y),
-                            column: d_end.column().saturating_sub(leftcol_offset),
-                        },
-                        DisplayPosition {
-                            row: d_start.row().saturating_sub(scroll_y),
-                            column: d_start.column().saturating_sub(leftcol_offset),
-                        },
-                    )
-                };
-
-                decorations.push(DisplayDecoration {
-                    start: start_pos,
-                    end: end_pos,
-                    style: selected_style,
-                    priority: 100,
-                });
-            }
+            decorations.push(DisplayDecoration {
+                start: start_pos,
+                end: end_pos,
+                style: selected_style,
+                priority: 100,
+            });
         }
     }
 }
@@ -753,9 +726,13 @@ pub fn render_with_scheme(
 
             // Convert selections
             let primary_sel = projection.selections.primary();
-            let head_point = projection
-                .snapshot
-                .offset_to_point(primary_sel.head().to_offset(&projection.snapshot));
+            let head_point = if projection.visual_kind.is_some() {
+                projection.selections.point
+            } else {
+                projection
+                    .snapshot
+                    .offset_to_point(primary_sel.head().to_offset(&projection.snapshot))
+            };
             let display_cursor = cache
                 .display_map
                 .snapshot()
@@ -1088,9 +1065,15 @@ pub fn render_with_scheme(
                 && cursor_display_pos.row < view_rect.height as u32
                 && cursor_display_pos.column < effective_text_width as u32;
 
+            let cursor_shape = match editor.mode() {
+                Mode::Insert => CursorShape::Bar,
+                Mode::Replace | Mode::VirtualReplace => CursorShape::Underline,
+                _ => CursorShape::Block,
+            };
+
             let cursor = Some(TextCursor {
                 position: cursor_display_pos,
-                shape: CursorShape::Block,
+                shape: cursor_shape,
                 visible: cursor_visible,
             });
 
@@ -1287,9 +1270,12 @@ pub fn render_with_scheme(
         } else if laststatus == 3 {
             if let Some(proj) = projections.iter().find(|p| p.is_current) {
                 let primary_sel = proj.selections.primary();
-                let head_point = proj
-                    .snapshot
-                    .offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
+                let head_point = if proj.visual_kind.is_some() {
+                    proj.selections.point
+                } else {
+                    proj.snapshot
+                        .offset_to_point(primary_sel.head().to_offset(&proj.snapshot))
+                };
                 let (display_cursor, scroll_y) =
                     if let Some(cache) = render_state.windows.get(&proj.window) {
                         (
@@ -1348,9 +1334,12 @@ pub fn render_with_scheme(
             let right = if ruler {
                 if let Some(proj) = projections.iter().find(|p| p.is_current) {
                     let primary_sel = proj.selections.primary();
-                    let head_point = proj
-                        .snapshot
-                        .offset_to_point(primary_sel.head().to_offset(&proj.snapshot));
+                    let head_point = if proj.visual_kind.is_some() {
+                        proj.selections.point
+                    } else {
+                        proj.snapshot
+                            .offset_to_point(primary_sel.head().to_offset(&proj.snapshot))
+                    };
                     let display_cursor = if let Some(cache) = render_state.windows.get(&proj.window)
                     {
                         cache
@@ -1385,7 +1374,12 @@ pub fn render_with_scheme(
         let cursor_shown =
             if let (Some(view), Some(rect)) = (current_window_view, current_window_rect) {
                 if let Some((cx, cy)) = view.cursor_screen_pos(rect) {
-                    renderer.show_cursor(cx, cy, CursorShape::Block)?;
+                    let cursor_shape = match editor.mode() {
+                        Mode::Insert => CursorShape::Bar,
+                        Mode::Replace | Mode::VirtualReplace => CursorShape::Underline,
+                        _ => CursorShape::Block,
+                    };
+                    renderer.show_cursor(cx, cy, cursor_shape)?;
                     true
                 } else {
                     false
@@ -1427,10 +1421,13 @@ impl<'a> FormatResolver for WindowResolver<'a> {
         } else {
             use text::ToOffset;
             let primary_sel = self.projection.selections.primary();
-            let head_point = self
-                .projection
-                .snapshot
-                .offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
+            let head_point = if self.projection.visual_kind.is_some() {
+                self.projection.selections.point
+            } else {
+                self.projection
+                    .snapshot
+                    .offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot))
+            };
             head_point.row as usize + 1
         }
     }
@@ -1441,10 +1438,13 @@ impl<'a> FormatResolver for WindowResolver<'a> {
         } else {
             use text::ToOffset;
             let primary_sel = self.projection.selections.primary();
-            let head_point = self
-                .projection
-                .snapshot
-                .offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot));
+            let head_point = if self.projection.visual_kind.is_some() {
+                self.projection.selections.point
+            } else {
+                self.projection
+                    .snapshot
+                    .offset_to_point(primary_sel.head().to_offset(&self.projection.snapshot))
+            };
             head_point.column as usize + 1
         }
     }

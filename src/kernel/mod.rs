@@ -1336,6 +1336,28 @@ mod tests {
     }
 
     #[test]
+    fn clear_in_normal_mode_clears_multicursors_and_selections() {
+        let mut editor = Editor::new("hello world hello");
+        // Add a secondary selection
+        let (win, buffer) = editor.window_and_buffer_mut(editor.current_context().window);
+        let buf_text = buffer.as_text_buffer();
+        let sel2 = text::Selection {
+            id: 1,
+            start: buf_text.anchor_after(12),
+            end: buf_text.anchor_after(17),
+            reversed: false,
+            goal: text::SelectionGoal::None,
+        };
+        win.selections_mut().selections.push(sel2);
+        assert_eq!(win.selections().selections.len(), 2);
+
+        editor.execute(Action::Clear);
+
+        let win = editor.current_window();
+        assert_eq!(win.selections().selections.len(), 1);
+    }
+
+    #[test]
     fn range_only_jump_smoke_test() {
         // 1. :10 jumps to line 10
         let mut editor = Editor::new("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12");
@@ -1848,7 +1870,22 @@ mod tests {
         assert!(outcome.mutated);
         assert_eq!(editor.mode(), Mode::Normal);
         assert_eq!(text_of(&editor), "aef\nx\naef\n");
+        {
+            let selections = editor.current_window().selections().clone();
+            assert_eq!(selections.selections.len(), 3);
+            let text_buf = editor.current_buffer().as_text_buffer();
+            let points: Vec<Point> = selections
+                .selections
+                .iter()
+                .map(|s| s.head().to_point(text_buf))
+                .collect();
+            // Cursors should be at start col of the deleted block, which is 1.
+            assert_eq!(points[0], Point::new(0, 1));
+            assert_eq!(points[1], Point::new(1, 1));
+            assert_eq!(points[2], Point::new(2, 1));
+        }
 
+        editor.set_mode(Mode::Normal);
         editor.execute(Action::Undo { count: 1 });
         assert_eq!(text_of(&editor), "abcdef\nxy\nabcdef\n");
     }
@@ -1875,6 +1912,19 @@ mod tests {
         assert!(outcome.mode_changed);
         assert_eq!(editor.mode(), Mode::Insert);
         assert_eq!(text_of(&editor), "cdef\ncdef\n");
+        {
+            let selections = editor.current_window().selections().clone();
+            assert_eq!(selections.selections.len(), 2);
+            let text_buf = editor.current_buffer().as_text_buffer();
+            let points: Vec<Point> = selections
+                .selections
+                .iter()
+                .map(|s| s.head().to_point(text_buf))
+                .collect();
+            // Start column was 0, so cursors should land at column 0.
+            assert_eq!(points[0], Point::new(0, 0));
+            assert_eq!(points[1], Point::new(1, 0));
+        }
 
         editor.set_mode(Mode::Normal);
         editor.execute(Action::Undo { count: 1 });
@@ -1918,7 +1968,7 @@ mod tests {
             count: 3,
             select: true,
         });
-        assert_eq!(cursor(&editor), Point::new(0, 5));
+        assert_eq!(cursor(&editor), Point::new(0, 6));
 
         editor.execute(Action::SwapSelectionEnds { corner: false });
         assert_eq!(cursor(&editor), Point::new(0, 2));
@@ -2017,6 +2067,47 @@ mod tests {
         editor.execute(Action::InsertNewLine { count: 1 });
         assert_eq!(text_of(&editor), "he\nllo\n");
         assert_eq!(cursor(&editor), Point::new(1, 0));
+    }
+
+    #[test]
+    fn test_mode_entry_commands_a_A_o_O_I() {
+        // Test `a` (SetToAppend)
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::SetToAppend);
+        assert_eq!(editor.mode(), Mode::Insert);
+        assert_eq!(cursor(&editor), Point::new(0, 1));
+        editor.execute(Action::InsertText("X".to_string()));
+        assert_eq!(text_of(&editor), "hXello\n");
+
+        // Test `A` (SetToAppendEndOfLine)
+        let mut editor = Editor::new("hello\n");
+        editor.execute(Action::SetToAppendEndOfLine);
+        assert_eq!(editor.mode(), Mode::Insert);
+        assert_eq!(cursor(&editor), Point::new(0, 5));
+        editor.execute(Action::InsertText("!".to_string()));
+        assert_eq!(text_of(&editor), "hello!\n");
+
+        // Test `I` (SetToInsertStartOfLineNonSpace)
+        let mut editor = Editor::new("  hello\n");
+        editor.execute(Action::SetToInsertStartOfLineNonSpace);
+        assert_eq!(editor.mode(), Mode::Insert);
+        assert_eq!(cursor(&editor), Point::new(0, 2));
+        editor.execute(Action::InsertText("X".to_string()));
+        assert_eq!(text_of(&editor), "  Xhello\n");
+
+        // Test `o` (SetToOpenLineBelow)
+        let mut editor = Editor::new("hello\nworld\n");
+        editor.execute(Action::SetToOpenLineBelow { count: 1 });
+        assert_eq!(editor.mode(), Mode::Insert);
+        assert_eq!(cursor(&editor), Point::new(1, 0));
+        assert_eq!(text_of(&editor), "hello\n\nworld\n");
+
+        // Test `O` (SetToOpenLineAbove)
+        let mut editor = Editor::new("hello\nworld\n");
+        editor.execute(Action::SetToOpenLineAbove { count: 1 });
+        assert_eq!(editor.mode(), Mode::Insert);
+        assert_eq!(cursor(&editor), Point::new(0, 0));
+        assert_eq!(text_of(&editor), "\nhello\nworld\n");
     }
 
     #[test]
