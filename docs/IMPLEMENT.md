@@ -1,6 +1,8 @@
 # IMPLEMENT.md — Working Checklist
 
-This is the granular, checkable companion to `src/RESCUE.md`. `RESCUE.md`
+> **Note on Documentation Locations:** Architecture reference documents previously referenced under `src/` (e.g. `src/RESCUE.md`) are located under `docs/` (`docs/RESCUE.md`, `docs/TASK.md`, `docs/IMPLEMENT.md`).
+
+This is the granular, checkable companion to `docs/RESCUE.md`. `RESCUE.md`
 defines the rules and the high-level **Build Order** (Skeleton, Operators +
 undo + events, Windows/tabs, ...). This file breaks whichever milestone is
 currently active into an ordered, checkable to-do list, plus the concrete
@@ -193,3 +195,109 @@ Template to copy:
 - [ ] Background save completion cannot mark a buffer clean after a newer edit.
 - [ ] Unit/integration tests cover both accepted and rejected results.
 - [ ] Manual smoke test passes in a live terminal.
+
+---
+
+# User Macro Recording and Replay (Feature recovery 4 / Missing #2) [x] COMPLETE
+
+> Restore user macro recording (`q{register}`), termination (`q`), macro playback (`@{register}`, `@@`), action queueing, and statusline recording indicators.
+
+## Checklist
+
+- [x] `kernel/command/normal/mod.rs` & `app/mod.rs`: Implement `Action::BeginMacro`, `Action::EndMacro`, and `Action::ReplayMacro` handlers in normal mode dispatch.
+- [x] `kernel/mod.rs` & `app/services.rs`: Wire macro recording state, recording keystrokes into the specified register while active and setting statusline indication (`recording @a`).
+- [x] `app/mod.rs` / `runtime.rs`: Sequence replayed macro action vectors into the application command queue with count support (`count` * macro execution).
+- [x] `app/input.rs`: Synchronize `in_recording` flag on the input translator when entering or leaving macro recording mode.
+- [x] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+- [x] Unit tests: Test macro recording to named registers, stopping recording, replaying macros with counts, handling empty/missing registers, and avoiding recursive macro deadlocks.
+- [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] `q{register}` starts recording keystrokes into the specified register and displays recording status.
+- [x] `q` terminates macro recording cleanly and saves the macro sequence.
+- [x] `@{register}` and `@@` replay recorded keystroke actions accurately with counts.
+- [x] Replaying macros respects current buffer/window context and undo transaction boundaries.
+- [x] Manual smoke test passes in a live terminal.
+
+---
+
+# Runtime Event Pipeline & Host Commands (Feature recovery 1 / Missing #1)
+
+> Restore post-transaction deferred event delivery queueing, script-emitted command execution, and modal prompt choice handling in the event loop.
+
+## Checklist
+
+- [ ] `runtime.rs` / `app/mod.rs`: Implement `deliver_deferred_events()` queueing mechanism to ensure autocommand callbacks run strictly post-transaction commit.
+- [ ] `runtime.rs` / `app/script_host.rs`: Wire `pending_script_commands` queue to collect `EmittedCommand`s from `ScriptRuntime` and execute them in order.
+- [ ] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+- [ ] Unit tests: Verify deferred autocommand event ordering, post-commit transaction state isolation, script-emitted command sequencing, and prompt choice handling.
+- [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [ ] Autocommand callbacks execute only after buffer mutations have fully committed.
+- [ ] Script-emitted commands are processed in sequence without discarding subsequent event handlers.
+- [ ] Manual smoke test passes in a live terminal.
+
+---
+
+# External Runtime & Process Control (Feature recovery 3 / Missing #4)
+
+> Restore external runtime infrastructure for sub-process job control (`jobstart`/`jobstop`), stdin/stdout/stderr channels, async timers (`timer_start`), and `:terminal` process buffers.
+
+## Checklist
+
+- [ ] `app/external_runtime.rs`: Create external runtime module owning process IDs, job channels, sub-process handles, and timer handles.
+- [ ] `app/external_runtime.rs` / `runtime.rs`: Implement non-blocking polling for sub-process channel events and timer expiries, delivering typed events to the main thread.
+- [ ] `app/mod.rs` / `kernel/window/mod.rs`: Implement `:terminal` buffer and window lifecycle, handling terminal mode transitions and PTY input/output.
+- [ ] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+- [ ] Unit tests: Test job spawning, job killing, stdout/stderr channel buffer streaming, timer expiry dispatch, and shutdown cleanup.
+- [ ] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [ ] `cargo check -p nxvim` passes.
+- [ ] `cargo check --workspace` passes.
+- [ ] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [ ] Asynchronous shell jobs can be spawned and controlled via `:jobstart` / `jobstop`.
+- [ ] Timer callbacks (`timer_start()`) trigger asynchronously on the application thread.
+- [ ] `:terminal` buffers interactively launch sub-shells and render terminal output cleanly.
+- [ ] Shutdown cleans up all child processes, channels, and active timers without leaks or deadlocks.
+- [ ] Manual smoke test passes in a live terminal.
+
+---
+
+# Ex Command Admission Expansion (Missing Ex Commands) [x] COMPLETE
+
+> Wire missing registered Ex commands (`:copy`, `:move`, `:yank`, `:put`, `:join`, `:read`, `:file`, `:tabnew`, `:tabnext`, `:tabprev`, `:tabclose`, `:pwd`, `:cd`, `:nohlsearch`) into `kernel/command/ex/mod.rs`'s `admit_command` dispatcher.
+
+## Checklist
+
+- [x] `kernel/command/ex/mod.rs`: Implement line-manipulation Ex commands (`:copy` / `:t`, `:move` / `:m`, `:yank` / `:y`, `:put` / `:pu`, `:join` / `:j`) in `admit_command`.
+- [x] `kernel/command/ex/mod.rs`: Implement buffer file state Ex commands (`:read` / `:r`, `:file` / `:f`) in `admit_command`.
+- [x] `kernel/command/ex/mod.rs`: Implement tab-page navigation Ex commands (`:tabnew`, `:tabnext` / `:tabn`, `:tabprevious` / `:tabp`, `:tabclose` / `:tabc`) in `admit_command`.
+- [x] `kernel/command/ex/mod.rs`: Implement directory & environment Ex commands (`:pwd`, `:cd`, `:chdir`, `:lcd`, `:tcd`) in `admit_command`.
+- [x] `kernel/command/ex/mod.rs`: Implement `:nohlsearch` (`:nohl`) to clear search highlight state in `admit_command`.
+- [x] Kernel purity check: Run `grep -rn "crate::app\|vim_ui::\|vim_clipboard::" src/kernel/` to ensure no UI/app dependencies leaked.
+- [x] Unit tests: Add unit tests in `kernel/command/ex/mod.rs` for line copy/move, tab-page commands, `:read`, `:file`, `:cd`/`:pwd`, and `:nohlsearch`.
+- [x] Run `cargo check -p nxvim` and `cargo check --workspace` to verify compiling.
+
+## Criteria for Completion
+
+- [x] `cargo check -p nxvim` passes.
+- [x] `cargo check --workspace` passes.
+- [x] Kernel-purity grep (`crate::app\|vim_ui::\|vim_clipboard::` under `src/kernel/`) returns clean.
+- [x] `:copy` (`:t`), `:move` (`:m`), `:yank`, `:put`, and `:join` correctly mutate buffer line ranges.
+- [x] `:tabnew`, `:tabnext`, `:tabprevious`, and `:tabclose` correctly manipulate `TabStore`.
+- [x] `:read` inserts file contents at target line, and `:file` displays or renames buffer path.
+- [x] `:cd`/`:pwd` change and display working directory.
+- [x] `:nohlsearch` clears search highlight match range.
+- [x] Manual smoke test passes in a live terminal.
+

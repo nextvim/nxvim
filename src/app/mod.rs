@@ -1200,7 +1200,7 @@ mod tests {
     fn autocommand_smoke_test() {
         let mut app = App::new("word1 word2");
 
-        submit_line(&mut app, "autocmd TextChanged * q");
+        submit_line(&mut app, "autocmd TextChanged * q!");
 
         let resolved = Action::DeleteMotion {
             count: 1,

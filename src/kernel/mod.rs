@@ -52,6 +52,8 @@ pub struct Editor {
     pub(crate) peeked_substitute_text: Option<String>,
     pub(crate) quickfix_list: Vec<window::QuickfixItem>,
     pub(crate) quickfix_index: usize,
+    pub(crate) macro_recorder: vim_macros::MacroRecorder,
+    pub(crate) last_replayed_macro: Option<String>,
 }
 
 impl Editor {
@@ -121,6 +123,8 @@ impl Editor {
             peeked_substitute_text: None,
             quickfix_list: Vec::new(),
             quickfix_index: 0,
+            macro_recorder: vim_macros::MacroRecorder::new(),
+            last_replayed_macro: None,
         }
     }
 
@@ -138,6 +142,16 @@ impl Editor {
             .map(|buffer| buffer.snapshot().into_inner());
         let previous_heads = self.cursor_offsets(ctx.window);
         let dispatched_action = action.clone();
+
+        let is_macro_control = matches!(
+            action,
+            Action::BeginMacro { .. } | Action::EndMacro | Action::ReplayMacro { .. }
+        );
+        if self.macro_recorder.is_recording() && !is_macro_control {
+            self.macro_recorder
+                .record(dispatched_action.clone(), register);
+        }
+
         let outcome = command::dispatch(self, ctx, action);
         self.remove_edited_folds(before.as_ref(), &outcome);
         command::normal::folds::snap_cursors(self, ctx.window, &dispatched_action, &previous_heads);
@@ -789,6 +803,37 @@ mod tests {
 
     fn text_of(editor: &Editor) -> String {
         editor.current_buffer().snapshot().chunks().collect()
+    }
+
+    #[test]
+    fn macro_recording_and_replay_test() {
+        let mut editor = Editor::new("one two three four");
+
+        let outcome = editor.execute(Action::BeginMacro {
+            register: "a".to_string(),
+        });
+        assert!(editor.macro_recorder.is_recording());
+        assert_eq!(editor.macro_recorder.current_register(), Some("a"));
+        assert!(outcome.effects.iter().any(|e| matches!(e, Effect::OptionMessage { message } if message.contains("recording @a"))));
+
+        editor.execute(dw());
+        assert_eq!(text_of(&editor), "two three four");
+
+        let outcome = editor.execute(Action::EndMacro);
+        assert!(!editor.macro_recorder.is_recording());
+        assert!(outcome.effects.iter().any(|e| matches!(e, Effect::OptionMessage { message } if message.contains("recorded"))));
+
+        editor.execute(Action::ReplayMacro {
+            count: 2,
+            register: "a".to_string(),
+        });
+        assert_eq!(text_of(&editor), "four");
+
+        editor.execute(Action::ReplayMacro {
+            count: 1,
+            register: "@".to_string(),
+        });
+        assert_eq!(text_of(&editor), "");
     }
 
     fn dw() -> Action {

@@ -147,10 +147,98 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCo
 
             execute_delete_lines(editor, ctx, start_line, end_line)
         }
-        "quit" => Outcome {
-            effects: vec![Effect::Quit],
-            ..Outcome::default()
-        },
+        "quit" => {
+            let force = command.bang;
+            if let Some(buf) = editor.buffer(ctx.buffer) {
+                if buf.is_modified() && !force {
+                    return Outcome {
+                        effects: vec![Effect::OptionMessage {
+                            message: "E37: No write since last change (add ! to override)".to_string(),
+                        }],
+                        ..Outcome::default()
+                    };
+                }
+            }
+
+            let active_tab = editor.tabs().active_id();
+            let active_win_count = editor.tabs().active().layout().window_ids().len();
+            let tab_count = editor.tabs().len();
+            let active_buffers: Vec<_> = editor
+                .buffers_mut()
+                .list()
+                .into_iter()
+                .filter(|&id| {
+                    editor
+                        .buffer(id)
+                        .map(|b| b.lifecycle() != vim_buffer::BufferLifecycle::Deleted)
+                        .unwrap_or(false)
+                })
+                .collect();
+            let buffer_count = active_buffers.len();
+
+            if active_win_count > 1 {
+                let mut outcome = super::normal::windows::close_window(editor, ctx);
+                outcome.invalidation = RedrawInvalidation::All;
+                outcome
+            } else if tab_count > 1 {
+                if let Ok(new_active) = editor.tabs_mut().close(active_tab) {
+                    editor.set_current_tab(new_active);
+                    Outcome {
+                        invalidation: RedrawInvalidation::All,
+                        ..Outcome::default()
+                    }
+                } else {
+                    Outcome {
+                        effects: vec![Effect::Quit],
+                        ..Outcome::default()
+                    }
+                }
+            } else if buffer_count > 1 {
+                let replacement = active_buffers
+                    .into_iter()
+                    .find(|&x| x != ctx.buffer)
+                    .unwrap_or_else(|| editor.buffers_mut().insert(""));
+
+                editor.handle_buffer_deleted(ctx.buffer, replacement);
+                let _ = editor.buffers_mut().set_current(replacement);
+                editor.set_window_buffer(ctx.window, replacement);
+                let _ = editor.buffers_mut().delete(ctx.buffer, force);
+
+                Outcome {
+                    invalidation: RedrawInvalidation::All,
+                    ..Outcome::default()
+                }
+            } else {
+                Outcome {
+                    effects: vec![Effect::Quit],
+                    ..Outcome::default()
+                }
+            }
+        }
+        "qall" | "quitall" => {
+            let force = command.bang;
+            if !force {
+                for id in editor.buffers_mut().list() {
+                    if let Some(buf) = editor.buffer(id) {
+                        if buf.is_modified() {
+                            return Outcome {
+                                effects: vec![Effect::OptionMessage {
+                                    message: format!(
+                                        "E37: No write since last change for buffer {} (add ! to override)",
+                                        id.get()
+                                    ),
+                                }],
+                                ..Outcome::default()
+                            };
+                        }
+                    }
+                }
+            }
+            Outcome {
+                effects: vec![Effect::Quit],
+                ..Outcome::default()
+            }
+        }
         "wq" | "xit" | "exit" => {
             let force = command.bang;
             let trimmed = command.arguments.trim();
@@ -161,10 +249,62 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCo
             };
 
             match res {
-                Ok(_) => Outcome {
-                    effects: vec![Effect::Quit],
-                    ..Outcome::default()
-                },
+                Ok(_) => {
+                    let active_tab = editor.tabs().active_id();
+                    let active_win_count = editor.tabs().active().layout().window_ids().len();
+                    let tab_count = editor.tabs().len();
+                    let active_buffers: Vec<_> = editor
+                        .buffers_mut()
+                        .list()
+                        .into_iter()
+                        .filter(|&id| {
+                            editor
+                                .buffer(id)
+                                .map(|b| b.lifecycle() != vim_buffer::BufferLifecycle::Deleted)
+                                .unwrap_or(false)
+                        })
+                        .collect();
+                    let buffer_count = active_buffers.len();
+
+                    if active_win_count > 1 {
+                        let mut outcome = super::normal::windows::close_window(editor, ctx);
+                        outcome.invalidation = RedrawInvalidation::All;
+                        outcome
+                    } else if tab_count > 1 {
+                        if let Ok(new_active) = editor.tabs_mut().close(active_tab) {
+                            editor.set_current_tab(new_active);
+                            Outcome {
+                                invalidation: RedrawInvalidation::All,
+                                ..Outcome::default()
+                            }
+                        } else {
+                            Outcome {
+                                effects: vec![Effect::Quit],
+                                ..Outcome::default()
+                            }
+                        }
+                    } else if buffer_count > 1 {
+                        let replacement = active_buffers
+                            .into_iter()
+                            .find(|&x| x != ctx.buffer)
+                            .unwrap_or_else(|| editor.buffers_mut().insert(""));
+
+                        editor.handle_buffer_deleted(ctx.buffer, replacement);
+                        let _ = editor.buffers_mut().set_current(replacement);
+                        editor.set_window_buffer(ctx.window, replacement);
+                        let _ = editor.buffers_mut().delete(ctx.buffer, force);
+
+                        Outcome {
+                            invalidation: RedrawInvalidation::All,
+                            ..Outcome::default()
+                        }
+                    } else {
+                        Outcome {
+                            effects: vec![Effect::Quit],
+                            ..Outcome::default()
+                        }
+                    }
+                }
                 Err(err) => Outcome {
                     effects: vec![Effect::FileSaveFailed {
                         message: err.to_string(),
@@ -1061,6 +1201,392 @@ pub fn admit_command(editor: &mut Editor, ctx: CommandContext, mut command: ExCo
                 ..Outcome::default()
             }
         }
+        "copy" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+            let (start_line, end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
+            let target_line = match resolve_target_address(
+                editor,
+                ctx,
+                &command.arguments,
+                current_row,
+                max_row,
+            ) {
+                Some(t) => t,
+                None => return Outcome::default(),
+            };
+            execute_copy_lines(editor, ctx, start_line, end_line, target_line)
+        }
+        "move" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+            let (start_line, end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
+            let target_line = match resolve_target_address(
+                editor,
+                ctx,
+                &command.arguments,
+                current_row,
+                max_row,
+            ) {
+                Some(t) => t,
+                None => return Outcome::default(),
+            };
+            execute_move_lines(editor, ctx, start_line, end_line, target_line)
+        }
+        "yank" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+            let (start_line, end_line) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => return Outcome::default(),
+                };
+            let reg_char = command.arguments.trim().chars().next();
+            if let Some(c) = reg_char {
+                editor.pending_register = Some(c);
+            }
+            let outcome = execute_yank_lines(editor, ctx, start_line, end_line);
+            editor.pending_register = None;
+            outcome
+        }
+        "put" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+            let (start_line, _) =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some(r) => r,
+                    None => (current_row + 1, current_row + 1),
+                };
+
+            let reg_char = command.arguments.trim().chars().next();
+            if let Some(c) = reg_char {
+                editor.pending_register = Some(c);
+            }
+
+            let before = command.bang;
+            let outcome =
+                super::normal::registers_ops::put_lines(editor, ctx.window, start_line, before);
+            editor.pending_register = None;
+            outcome
+        }
+        "join" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+            let (start_line, end_line) = if command.range.is_none() {
+                let count = command.arguments.trim().parse::<u32>().unwrap_or(2).max(2);
+                let start = current_row + 1;
+                let end = (start + count - 1).min(max_row + 1);
+                (start, end)
+            } else {
+                let (s, mut e) =
+                    match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                        Some(r) => r,
+                        None => return Outcome::default(),
+                    };
+                if s == e && e < max_row + 1 {
+                    e = s + 1;
+                }
+                (s, e)
+            };
+
+            let keep_space = !command.bang;
+            execute_join_lines(editor, ctx, start_line, end_line, keep_space)
+        }
+        "read" => {
+            let current_row = if let Some(win) = editor.window(ctx.window) {
+                let head = win.selections().primary().head();
+                if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let pt: text::Point = buf.as_text_buffer().summary_for_anchor(&head);
+                    pt.row
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            let row_count = if let Some(buf) = editor.buffer(ctx.buffer) {
+                buf.as_text_buffer().row_count()
+            } else {
+                0
+            };
+            let max_row = row_count.saturating_sub(1);
+            let target_line =
+                match resolve_range(editor, ctx, &command.range, current_row, max_row) {
+                    Some((s, _)) => s,
+                    None => current_row + 1,
+                };
+
+            let arg = command.arguments.trim();
+            if arg.is_empty() {
+                return Outcome {
+                    effects: vec![Effect::OptionMessage {
+                        message: "E32: No file name".to_string(),
+                    }],
+                    ..Outcome::default()
+                };
+            }
+
+            let path = std::path::PathBuf::from(arg);
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(err) => {
+                    return Outcome {
+                        effects: vec![Effect::OptionMessage {
+                            message: format!("E484: Can't open file {}: {}", arg, err),
+                        }],
+                        ..Outcome::default()
+                    };
+                }
+            };
+
+            execute_insert_text_at_line(editor, ctx, target_line, &content)
+        }
+        "file" => {
+            let arg = command.arguments.trim();
+            if arg.is_empty() {
+                let msg = if let Some(buf) = editor.buffer(ctx.buffer) {
+                    let path_str = buf
+                        .path()
+                        .map(|p| format!("\"{}\"", p.display()))
+                        .unwrap_or_else(|| "\"No Name\"".to_string());
+                    let mod_str = if buf.is_modified() {
+                        " [Modified]"
+                    } else {
+                        ""
+                    };
+                    let lines = buf.as_text_buffer().row_count();
+                    format!("{} {}line{}", path_str, mod_str, lines)
+                } else {
+                    "No buffer".to_string()
+                };
+                Outcome {
+                    effects: vec![Effect::OptionMessage { message: msg }],
+                    ..Outcome::default()
+                }
+            } else {
+                let path = std::path::PathBuf::from(arg);
+                if let Some(buf) = editor.buffers_mut().get_mut(ctx.buffer) {
+                    let meta = vim_buffer::FileMetadata {
+                        path: Some(path.clone()),
+                        ..buf.file_metadata().clone()
+                    };
+                    buf.set_file_metadata(meta);
+                }
+                Outcome {
+                    effects: vec![Effect::OptionMessage {
+                        message: format!("\"{}\"", path.display()),
+                    }],
+                    invalidation: RedrawInvalidation::CurrentWindow,
+                    ..Outcome::default()
+                }
+            }
+        }
+        "tabnew" => {
+            let trimmed = command.arguments.trim();
+            let buf_id = if !trimmed.is_empty() {
+                let path = std::path::PathBuf::from(trimmed);
+                let opened = editor
+                    .buffers_mut()
+                    .load(&path)
+                    .or_else(|_| editor.buffers_mut().create_named(&path, ""));
+                match opened {
+                    Ok((id, _)) => id,
+                    Err(err) => {
+                        return Outcome {
+                            effects: vec![Effect::OptionMessage {
+                                message: format!("E297: Cannot open file: {}", err),
+                            }],
+                            ..Outcome::default()
+                        };
+                    }
+                }
+            } else {
+                editor.buffers_mut().insert("")
+            };
+
+            let buffer = editor.buffer(buf_id).expect("live buffer");
+            let win = crate::kernel::window::Window::new(buf_id, buffer);
+            let win_id = editor.windows_mut().insert(win);
+            let tab = crate::kernel::window::tabpage::TabPage::new(win_id);
+            let tab_id = editor.tabs_mut().insert(tab);
+            editor.set_current_tab(tab_id);
+
+            Outcome {
+                invalidation: RedrawInvalidation::All,
+                ..Outcome::default()
+            }
+        }
+        "tabnext" => {
+            let arg = command.arguments.trim();
+            let tab_id = if let Ok(num) = arg.parse::<usize>() {
+                let ordered = editor.tabs().ordered();
+                if num > 0 && num <= ordered.len() {
+                    ordered[num - 1]
+                } else {
+                    editor.tabs_mut().next_tab(1)
+                }
+            } else {
+                let count = arg.parse::<usize>().unwrap_or(1);
+                editor.tabs_mut().next_tab(count)
+            };
+            editor.set_current_tab(tab_id);
+            Outcome {
+                invalidation: RedrawInvalidation::All,
+                ..Outcome::default()
+            }
+        }
+        "tabprevious" => {
+            let count = command.arguments.trim().parse::<usize>().unwrap_or(1);
+            let tab_id = editor.tabs_mut().previous_tab(count);
+            editor.set_current_tab(tab_id);
+            Outcome {
+                invalidation: RedrawInvalidation::All,
+                ..Outcome::default()
+            }
+        }
+        "tabclose" => {
+            let active_tab = editor.tabs().active_id();
+            match editor.tabs_mut().close(active_tab) {
+                Ok(new_active) => {
+                    editor.set_current_tab(new_active);
+                    Outcome {
+                        invalidation: RedrawInvalidation::All,
+                        ..Outcome::default()
+                    }
+                }
+                Err(err) => Outcome {
+                    effects: vec![Effect::OptionMessage {
+                        message: format!("E784: {}", err),
+                    }],
+                    ..Outcome::default()
+                },
+            }
+        }
+        "pwd" => {
+            let cwd = std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string());
+            Outcome {
+                effects: vec![Effect::OptionMessage { message: cwd }],
+                ..Outcome::default()
+            }
+        }
+        "cd" | "chdir" | "lcd" | "tcd" => {
+            let arg = command.arguments.trim();
+            let path = if arg.is_empty() || arg == "~" {
+                std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+            } else {
+                arg.to_string()
+            };
+
+            match std::env::set_current_dir(&path) {
+                Ok(_) => {
+                    let cwd = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or(path);
+                    Outcome {
+                        effects: vec![Effect::OptionMessage { message: cwd }],
+                        ..Outcome::default()
+                    }
+                }
+                Err(err) => Outcome {
+                    effects: vec![Effect::OptionMessage {
+                        message: format!("E344: Can't find directory \"{}\" in cdpath: {}", path, err),
+                    }],
+                    ..Outcome::default()
+                },
+            }
+        }
+        "nohlsearch" => {
+            editor.peeked_search_range = None;
+            Outcome {
+                invalidation: RedrawInvalidation::All,
+                ..Outcome::default()
+            }
+        }
         _ => Outcome::default(),
     }
 }
@@ -1563,6 +2089,449 @@ fn execute_delete_lines(
     Outcome::from_mutation(&mutation)
 }
 
+fn resolve_target_address(
+    editor: &Editor,
+    ctx: CommandContext,
+    arg: &str,
+    current_row: u32,
+    max_row: u32,
+) -> Option<u32> {
+    let trimmed = arg.trim();
+    if trimmed.is_empty() {
+        return Some(current_row + 1);
+    }
+    if trimmed == "0" {
+        return Some(0);
+    }
+    if trimmed == "." {
+        return Some(current_row + 1);
+    }
+    if trimmed == "$" {
+        return Some(max_row + 1);
+    }
+    if let Ok(num) = trimmed.parse::<u32>() {
+        return Some(num);
+    }
+    if trimmed.starts_with('\'') && trimmed.len() == 2 {
+        let ch = trimmed.chars().nth(1)?;
+        return resolve_address(editor, ctx, &Address::Mark(ch), current_row, max_row);
+    }
+    if let Ok(parsed) = ExLineParser::new(SourceId(0), trimmed, 0).parse() {
+        if let Some(r) = parsed.command.range {
+            return resolve_address(editor, ctx, &r.start, current_row, max_row);
+        }
+    }
+    None
+}
+
+fn execute_copy_lines(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    start_line: u32,
+    end_line: u32,
+    target_line: u32,
+) -> Outcome {
+    let buffer_id = ctx.buffer;
+    let window_id = ctx.window;
+    let (start_row, end_row, max_row, text_to_insert, insert_offset) = {
+        let buffer = match editor.buffer(buffer_id) {
+            Some(b) => b,
+            None => return Outcome::default(),
+        };
+        let text_buffer = buffer.as_text_buffer();
+        let row_count = text_buffer.row_count();
+        if row_count == 0 {
+            return Outcome::default();
+        }
+        let max_row = row_count.saturating_sub(1);
+        let start_row = start_line.saturating_sub(1).min(max_row);
+        let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+
+        let lines: Vec<String> = (start_row..=end_row)
+            .map(|r| text_buffer.row_text(r).to_string())
+            .collect();
+
+        let text_to_insert = if target_line == 0 {
+            lines.join("\n") + "\n"
+        } else {
+            "\n".to_string() + &lines.join("\n")
+        };
+
+        let insert_offset = if target_line == 0 {
+            0
+        } else {
+            let target_row = (target_line - 1).min(max_row);
+            text::Point::new(target_row, text_buffer.line_len(target_row)).to_offset(text_buffer)
+        };
+
+        (start_row, end_row, max_row, text_to_insert, insert_offset)
+    };
+
+    let selections_before = editor.window(window_id).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::insert(ByteOffset(insert_offset), text_to_insert),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("copying range-derived lines is well-formed")
+    };
+
+    let count = end_row - start_row + 1;
+    let target_row = if target_line == 0 {
+        count.saturating_sub(1)
+    } else {
+        (target_line - 1).min(max_row) + count
+    };
+    set_cursor_to_row_first_non_blank(editor, window_id, buffer_id, target_row);
+
+    Outcome::from_mutation(&mutation)
+}
+
+fn execute_move_lines(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    start_line: u32,
+    end_line: u32,
+    target_line: u32,
+) -> Outcome {
+    let buffer_id = ctx.buffer;
+    let window_id = ctx.window;
+    let (_start_row, _end_row, _max_row, new_span_text, start_offset, end_offset, final_target_row) = {
+        let buffer = match editor.buffer(buffer_id) {
+            Some(b) => b,
+            None => return Outcome::default(),
+        };
+        let text_buffer = buffer.as_text_buffer();
+        let row_count = text_buffer.row_count();
+        if row_count == 0 {
+            return Outcome::default();
+        }
+        let max_row = row_count.saturating_sub(1);
+        let start_row = start_line.saturating_sub(1).min(max_row);
+        let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+
+        let target_row = if target_line == 0 {
+            0
+        } else {
+            (target_line - 1).min(max_row)
+        };
+
+        if target_line >= start_line && target_line <= end_line {
+            return Outcome {
+                effects: vec![Effect::OptionMessage {
+                    message: "E134: Move lines into themselves".to_string(),
+                }],
+                ..Outcome::default()
+            };
+        }
+
+        let start_span = if target_line == 0 {
+            0
+        } else {
+            start_row.min(target_row)
+        };
+        let end_span = end_row.max(target_row);
+
+        let mut lines: Vec<String> = (start_span..=end_span)
+            .map(|r| text_buffer.row_text(r).to_string())
+            .collect();
+
+        let rel_start = (start_row - start_span) as usize;
+        let rel_end = (end_row - start_span) as usize;
+        let moved: Vec<String> = lines.drain(rel_start..=rel_end).collect();
+
+        let count = moved.len();
+        let insert_idx = if target_line == 0 {
+            0
+        } else if target_line < start_line {
+            (target_row - start_span + 1) as usize
+        } else {
+            (target_row - start_span + 1) as usize - count
+        };
+
+        for (i, line) in moved.into_iter().enumerate() {
+            lines.insert(insert_idx + i, line);
+        }
+
+        let new_span_text = lines.join("\n") + if end_span + 1 < row_count { "\n" } else { "" };
+
+        let start_offset = text::Point::new(start_span, 0).to_offset(text_buffer);
+        let end_offset = if end_span + 1 < row_count {
+            text::Point::new(end_span + 1, 0).to_offset(text_buffer)
+        } else {
+            text::Point::new(end_span, text_buffer.line_len(end_span)).to_offset(text_buffer)
+        };
+
+        let final_target_row = if target_line == 0 {
+            count.saturating_sub(1) as u32
+        } else if target_line < start_line {
+            target_row + count as u32
+        } else {
+            target_row
+        };
+
+        (
+            start_row,
+            end_row,
+            max_row,
+            new_span_text,
+            start_offset,
+            end_offset,
+            final_target_row,
+        )
+    };
+
+    let selections_before = editor.window(window_id).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::replace(
+                        TextRange {
+                            start: ByteOffset(start_offset),
+                            end: ByteOffset(end_offset),
+                        },
+                        new_span_text,
+                    ),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("moving lines is well-formed")
+    };
+
+    set_cursor_to_row_first_non_blank(editor, window_id, buffer_id, final_target_row);
+    Outcome::from_mutation(&mutation)
+}
+
+fn execute_yank_lines(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    start_line: u32,
+    end_line: u32,
+) -> Outcome {
+    let buffer = match editor.buffer(ctx.buffer) {
+        Some(b) => b,
+        None => return Outcome::default(),
+    };
+    let text_buffer = buffer.as_text_buffer();
+    let row_count = text_buffer.row_count();
+    if row_count == 0 {
+        return Outcome::default();
+    }
+    let max_row = row_count.saturating_sub(1);
+    let start_row = start_line.saturating_sub(1).min(max_row);
+    let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+
+    let yanked_text = (start_row..=end_row)
+        .map(|r| text_buffer.row_text(r))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+
+    let effect = super::normal::registers_ops::write_register(
+        editor,
+        false,
+        yanked_text,
+        crate::kernel::buffer::registers::RegisterKind::Line,
+    );
+
+    let count = end_row - start_row + 1;
+    let msg = format!("{} line{} yanked", count, if count == 1 { "" } else { "s" });
+    let mut outcome = Outcome::default();
+    if let Some(eff) = effect {
+        outcome.effects.push(eff);
+    }
+    outcome.effects.push(Effect::OptionMessage { message: msg });
+    outcome
+}
+
+fn execute_join_lines(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    start_line: u32,
+    end_line: u32,
+    keep_space: bool,
+) -> Outcome {
+    let buffer_id = ctx.buffer;
+    let window_id = ctx.window;
+    let buffer = match editor.buffer(buffer_id) {
+        Some(b) => b,
+        None => return Outcome::default(),
+    };
+    let text_buffer = buffer.as_text_buffer();
+    let row_count = text_buffer.row_count();
+    if row_count <= 1 {
+        return Outcome::default();
+    }
+    let max_row = row_count.saturating_sub(1);
+    let start_row = start_line.saturating_sub(1).min(max_row);
+    let end_row = end_line.saturating_sub(1).min(max_row).max(start_row);
+    if start_row == end_row {
+        return Outcome::default();
+    }
+
+    let mut result = String::new();
+    for r in start_row..=end_row {
+        let line = text_buffer.row_text(r);
+        if r == start_row {
+            result.push_str(&line);
+        } else if !keep_space {
+            result.push_str(&line);
+        } else {
+            let trimmed = line.trim_start();
+            if !result.is_empty() && !trimmed.is_empty() {
+                if result.ends_with(' ') || result.ends_with('\t') {
+                    result.push_str(trimmed);
+                } else {
+                    let last_char = result.chars().last().unwrap();
+                    if last_char == '.' || last_char == '!' || last_char == '?' {
+                        result.push_str("  ");
+                    } else {
+                        result.push(' ');
+                    }
+                    result.push_str(trimmed);
+                }
+            } else {
+                if !result.ends_with(' ') && !result.ends_with('\t') && !trimmed.is_empty() {
+                    result.push(' ');
+                }
+                result.push_str(trimmed);
+            }
+        }
+    }
+
+    if end_row + 1 < row_count {
+        result.push('\n');
+    }
+
+    let start_offset = text::Point::new(start_row, 0).to_offset(text_buffer);
+    let end_offset = if end_row + 1 < row_count {
+        text::Point::new(end_row + 1, 0).to_offset(text_buffer)
+    } else {
+        text::Point::new(end_row, text_buffer.line_len(end_row)).to_offset(text_buffer)
+    };
+
+    let selections_before = editor.window(window_id).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::replace(
+                        TextRange {
+                            start: ByteOffset(start_offset),
+                            end: ByteOffset(end_offset),
+                        },
+                        result,
+                    ),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("joining range-derived lines is well-formed")
+    };
+
+    set_cursor_to_row_first_non_blank(editor, window_id, buffer_id, start_row);
+    Outcome::from_mutation(&mutation)
+}
+
+fn execute_insert_text_at_line(
+    editor: &mut Editor,
+    ctx: CommandContext,
+    target_line: u32,
+    text_to_insert: &str,
+) -> Outcome {
+    let buffer_id = ctx.buffer;
+    let window_id = ctx.window;
+    let (max_row, text_with_nl, insert_offset) = {
+        let buffer = match editor.buffer(buffer_id) {
+            Some(b) => b,
+            None => return Outcome::default(),
+        };
+        let text_buffer = buffer.as_text_buffer();
+        let row_count = text_buffer.row_count();
+        let max_row = row_count.saturating_sub(1);
+
+        let formatted = if text_to_insert.ends_with('\n') {
+            text_to_insert.to_string()
+        } else {
+            text_to_insert.to_string() + "\n"
+        };
+
+        let (text_with_nl, insert_offset) = if target_line == 0 {
+            (formatted, 0)
+        } else {
+            let target_row = (target_line - 1).min(max_row);
+            let offset =
+                text::Point::new(target_row, text_buffer.line_len(target_row)).to_offset(text_buffer);
+            (
+                "\n".to_string() + formatted.trim_end_matches('\n'),
+                offset,
+            )
+        };
+
+        (max_row, text_with_nl, insert_offset)
+    };
+
+    let selections_before = editor.window(window_id).unwrap().selections().clone();
+    let mutation = {
+        let buffer = editor
+            .buffers_mut()
+            .get_mut(buffer_id)
+            .expect("live buffer");
+        transaction::apply(
+            buffer,
+            transaction::EditDescription {
+                origin: EditOrigin::User,
+                edits: vec![PlannedEdit {
+                    selection: None,
+                    edit: Edit::insert(ByteOffset(insert_offset), text_with_nl),
+                }],
+                selections: Some(selections_before),
+                join_previous: false,
+            },
+        )
+        .expect("inserting text at target line is well-formed")
+    };
+
+    let new_row = if target_line == 0 {
+        0
+    } else {
+        (target_line - 1).min(max_row) + 1
+    };
+    set_cursor_to_row_first_non_blank(editor, window_id, buffer_id, new_row);
+
+    Outcome::from_mutation(&mutation)
+}
+
 enum SetAction {
     Query,
     SetBool(bool),
@@ -1963,5 +2932,175 @@ pub fn jump_to_quickfix_item(
     Outcome {
         invalidation: RedrawInvalidation::All,
         ..Outcome::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buf_text(editor: &Editor, buf_id: vim_buffer::BufferId) -> String {
+        let buf = editor.buffer(buf_id).unwrap();
+        let tb = buf.as_text_buffer();
+        (0..tb.row_count())
+            .map(|r| tb.row_text(r))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_ex_copy_and_move() {
+        let mut editor = Editor::new("line1\nline2\nline3\nline4");
+        let ctx = editor.current_context();
+
+        // :1,2copy 4 -> copies line 1..2 to after line 4
+        admit(&mut editor, ctx, "1,2copy 4");
+        assert_eq!(
+            buf_text(&editor, ctx.buffer),
+            "line1\nline2\nline3\nline4\nline1\nline2"
+        );
+
+        // :1,2move 6 -> moves line 1..2 to after line 6
+        admit(&mut editor, ctx, "1,2move 6");
+        assert_eq!(
+            buf_text(&editor, ctx.buffer),
+            "line3\nline4\nline1\nline2\nline1\nline2"
+        );
+    }
+
+    #[test]
+    fn test_ex_yank_and_put() {
+        let mut editor = Editor::new("apple\nbanana\ncherry");
+        let ctx = editor.current_context();
+
+        // :2yank a -> yank "banana\n" into register a
+        admit(&mut editor, ctx, "2yank a");
+        let (reg_text, _) = editor
+            .registers()
+            .get(crate::kernel::buffer::registers::RegisterName::Named('a'))
+            .map(|r| (r.text.clone(), r.kind))
+            .unwrap();
+        assert_eq!(reg_text, "banana\n");
+
+        // :1put a -> put register a after line 1
+        admit(&mut editor, ctx, "1put a");
+        assert_eq!(
+            buf_text(&editor, ctx.buffer),
+            "apple\nbanana\nbanana\ncherry"
+        );
+    }
+
+    #[test]
+    fn test_ex_join() {
+        let mut editor = Editor::new("hello\nworld\nfoo");
+        let ctx = editor.current_context();
+
+        // :1,2join -> joins line 1 and 2 with space
+        admit(&mut editor, ctx, "1,2join");
+        assert_eq!(buf_text(&editor, ctx.buffer), "hello world\nfoo");
+    }
+
+    #[test]
+    fn test_ex_file_and_pwd() {
+        let mut editor = Editor::new("sample content");
+        let ctx = editor.current_context();
+
+        // :file new_name.txt
+        let outcome = admit(&mut editor, ctx, "file new_name.txt");
+        assert!(!outcome.effects.is_empty());
+        let buf = editor.buffer(ctx.buffer).unwrap();
+        assert_eq!(buf.path().unwrap().to_str().unwrap(), "new_name.txt");
+
+        // :pwd
+        let outcome = admit(&mut editor, ctx, "pwd");
+        assert!(!outcome.effects.is_empty());
+    }
+
+    #[test]
+    fn test_ex_tab_commands() {
+        let mut editor = Editor::new("tab1 content");
+        let ctx = editor.current_context();
+
+        assert_eq!(editor.tabs().len(), 1);
+
+        // :tabnew
+        admit(&mut editor, ctx, "tabnew");
+        assert_eq!(editor.tabs().len(), 2);
+
+        // :tabprevious
+        let ctx2 = editor.current_context();
+        admit(&mut editor, ctx2, "tabprevious");
+
+        // :tabclose
+        let ctx3 = editor.current_context();
+        admit(&mut editor, ctx3, "tabclose");
+        assert_eq!(editor.tabs().len(), 1);
+    }
+
+    #[test]
+    fn test_ex_nohlsearch() {
+        let mut editor = Editor::new("search test");
+        let ctx = editor.current_context();
+        let outcome = admit(&mut editor, ctx, "nohlsearch");
+        assert_eq!(outcome.invalidation, RedrawInvalidation::All);
+    }
+
+    #[test]
+    fn test_ex_quit_behavior() {
+        let mut editor = Editor::new("line1\nline2");
+        let ctx = editor.current_context();
+
+        // Mutate buffer to make it modified
+        editor.execute(Action::DeleteChar { count: 1 });
+        assert!(editor.buffer(ctx.buffer).unwrap().is_modified());
+
+        // :q without ! when modified should fail with E37
+        let outcome = admit(&mut editor, ctx, "quit");
+        assert_ne!(outcome.effects, vec![Effect::Quit]);
+        assert!(!outcome.effects.is_empty());
+        if let Effect::OptionMessage { message } = &outcome.effects[0] {
+            assert!(message.contains("E37"));
+        } else {
+            panic!("Expected E37 option message effect");
+        }
+
+        // :q! with modified buffer should quit (when 1 window, 1 tab, 1 buf)
+        let outcome = admit(&mut editor, ctx, "quit!");
+        assert_eq!(outcome.effects, vec![Effect::Quit]);
+
+        // Test :q with multiple windows (splits)
+        let mut editor = Editor::new("split test");
+        let ctx = editor.current_context();
+        super::super::normal::windows::split_horizontal(&mut editor, ctx);
+        assert_eq!(editor.tabs().active().layout().window_ids().len(), 2);
+
+        let ctx_split = editor.current_context();
+        let outcome = admit(&mut editor, ctx_split, "quit");
+        assert_ne!(outcome.effects, vec![Effect::Quit]);
+        assert_eq!(editor.tabs().active().layout().window_ids().len(), 1);
+
+        // Test :q with multiple buffers
+        let mut editor = Editor::new("buf1");
+        let buf2 = editor.buffers_mut().insert("buf2");
+        let ctx = editor.current_context();
+        let _ = editor.buffers_mut().set_current(buf2);
+        editor.set_window_buffer(ctx.window, buf2);
+        editor.set_current_window(ctx.window);
+        let ctx_buf2 = editor.current_context();
+
+        let outcome = admit(&mut editor, ctx_buf2, "quit");
+        assert_ne!(outcome.effects, vec![Effect::Quit]);
+        let active_count = editor
+            .buffers_mut()
+            .list()
+            .into_iter()
+            .filter(|&id| {
+                editor
+                    .buffer(id)
+                    .map(|b| b.lifecycle() != vim_buffer::BufferLifecycle::Deleted)
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(active_count, 1);
     }
 }

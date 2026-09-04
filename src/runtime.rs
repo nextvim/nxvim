@@ -145,6 +145,7 @@ pub fn run(
             }
         } else {
             input.sync_mode(app.editor().mode());
+            input.sync_recording(app.editor().macro_recorder.is_recording());
             let buf_id = app.editor().current_context().buffer.get();
             if let Some(resolved) = input.translate_with_buffer(ev, Some(buf_id), app.digraphs()) {
                 let outcome = app.handle_action(resolved.action, resolved.register);
@@ -152,6 +153,7 @@ pub fn run(
                     pending_invalidations.push(outcome.invalidation);
                 }
                 input.sync_mode(app.editor().mode());
+                input.sync_recording(app.editor().macro_recorder.is_recording());
             }
         }
 

@@ -67,6 +67,12 @@ impl InputTranslator {
         }
     }
 
+    pub fn sync_recording(&mut self, is_recording: bool) {
+        if self.resolver.in_recording() != is_recording {
+            self.resolver.set_in_recording(is_recording);
+        }
+    }
+
     /// Translates one terminal event into a resolved action.
     ///
     /// Returns `None` for events that don't produce a complete action

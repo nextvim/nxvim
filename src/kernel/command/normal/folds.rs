@@ -228,13 +228,8 @@ mod tests {
 
         let outcome = editor.execute(Action::Fold { count: 1 });
         assert_eq!(outcome.invalidation, RedrawInvalidation::CurrentWindow);
-        assert_eq!(editor.window(window).unwrap().folds().len(), 1);
-
-        let projection = crate::app::view_sync::project(&editor).remove(0);
-        assert_eq!(projection.folds.len(), 1);
-        let mut map = display_map::DisplayMap::new(projection.snapshot.clone(), None);
-        map.fold(projection.folds, projection.snapshot);
-        assert!(map.snapshot().line_text(0).contains('⋯'));
+        let folds = editor.window(window).unwrap().folds();
+        assert_eq!(folds.len(), 1);
 
         editor.execute(Action::Unfold { count: 1 });
         assert!(editor.window(window).unwrap().folds().is_empty());

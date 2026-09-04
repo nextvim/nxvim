@@ -55,6 +55,9 @@ pub fn dispatch(editor: &mut Editor, ctx: CommandContext, action: Action) -> Out
         Action::SetToVisualBlock => super::visual::enter(editor, ctx.window, VisualKind::Block),
         Action::ReselectLastVisual => super::visual::reselect_last_visual(editor, ctx.window),
         Action::SetToCommand => super::ex::enter(editor),
+        Action::BeginMacro { register } => begin_macro(editor, &register),
+        Action::EndMacro => end_macro(editor),
+        Action::ReplayMacro { count, register } => replay_macro(editor, ctx, count, &register),
         Action::DeleteMotion { count, motion } => {
             operators::delete_motion(editor, ctx.window, count, &motion)
         }
@@ -599,3 +602,87 @@ fn select_similar(editor: &mut Editor, ctx: CommandContext) -> Outcome {
         Outcome::default()
     }
 }
+
+fn begin_macro(editor: &mut Editor, register: &str) -> Outcome {
+    if editor.macro_recorder.is_recording() {
+        Outcome {
+            effects: vec![crate::kernel::outcome::Effect::OptionMessage {
+                message: "E754: Macro recording is already active".to_string(),
+            }],
+            ..Outcome::default()
+        }
+    } else {
+        editor.macro_recorder.begin(register);
+        Outcome {
+            invalidation: RedrawInvalidation::CurrentWindow,
+            effects: vec![crate::kernel::outcome::Effect::OptionMessage {
+                message: format!("recording @{}", register),
+            }],
+            ..Outcome::default()
+        }
+    }
+}
+
+fn end_macro(editor: &mut Editor) -> Outcome {
+    if let Some(reg) = editor.macro_recorder.current_register().map(String::from) {
+        editor.macro_recorder.end();
+        Outcome {
+            invalidation: RedrawInvalidation::CurrentWindow,
+            effects: vec![crate::kernel::outcome::Effect::OptionMessage {
+                message: format!("macro @{} recorded", reg),
+            }],
+            ..Outcome::default()
+        }
+    } else {
+        Outcome {
+            effects: vec![crate::kernel::outcome::Effect::OptionMessage {
+                message: "macro recording is not active".to_string(),
+            }],
+            ..Outcome::default()
+        }
+    }
+}
+
+fn replay_macro(
+    editor: &mut Editor,
+    _ctx: CommandContext,
+    count: u32,
+    register: &str,
+) -> Outcome {
+    let reg_to_replay = if register == "@" || register.is_empty() {
+        editor.last_replayed_macro.clone()
+    } else {
+        Some(register.to_string())
+    };
+    let Some(target_reg) = reg_to_replay else {
+        return Outcome {
+            effects: vec![crate::kernel::outcome::Effect::OptionMessage {
+                message: "E348: No string in register".to_string(),
+            }],
+            ..Outcome::default()
+        };
+    };
+    let replayed = editor.macro_recorder.replay(&target_reg, count);
+    if replayed.is_empty() {
+        return Outcome {
+            effects: vec![crate::kernel::outcome::Effect::OptionMessage {
+                message: format!("E348: No string in register {}", target_reg),
+            }],
+            ..Outcome::default()
+        };
+    }
+    editor.last_replayed_macro = Some(target_reg);
+    let mut outcome = Outcome::default();
+    for recorded in replayed {
+        let sub = editor.execute_with_register(recorded.action, recorded.register);
+        outcome.mutated |= sub.mutated;
+        outcome.mode_changed |= sub.mode_changed;
+        if sub.invalidation != RedrawInvalidation::None {
+            outcome.invalidation = sub.invalidation;
+        }
+        outcome.effects.extend(sub.effects);
+        outcome.events.extend(sub.events);
+    }
+    outcome
+}
+
