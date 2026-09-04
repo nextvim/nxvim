@@ -825,6 +825,9 @@ impl<'a> Parser<'a> {
             ) {
                 return true;
             }
+            if name == "let" {
+                return false;
+            }
         }
         let Some(next) = self.tokens.get(self.cursor + 1) else {
             return true;

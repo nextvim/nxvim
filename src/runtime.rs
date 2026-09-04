@@ -174,6 +174,12 @@ pub fn run(
                         pending_invalidations.push(outcome.invalidation);
                     }
                 }
+                crate::app::request::AppRequest::ExecuteExString(cmd_str) => {
+                    let outcome = app.execute_script(&cmd_str);
+                    if outcome.invalidation != RedrawInvalidation::None {
+                        pending_invalidations.push(outcome.invalidation);
+                    }
+                }
                 crate::app::request::AppRequest::Source(path) => {
                     let outcome = app.execute_source(&path);
                     if outcome.invalidation != RedrawInvalidation::None {
@@ -220,6 +226,9 @@ pub fn run_headless(app: &mut App) -> io::Result<i32> {
                 }
                 crate::app::request::AppRequest::ExecuteEx(cmd) => {
                     app.execute_ex_command(cmd);
+                }
+                crate::app::request::AppRequest::ExecuteExString(cmd_str) => {
+                    app.execute_script(&cmd_str);
                 }
                 crate::app::request::AppRequest::Source(path) => {
                     app.execute_source(&path);

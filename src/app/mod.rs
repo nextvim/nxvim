@@ -179,6 +179,10 @@ impl App {
         }
     }
 
+    pub fn script_mut(&mut self) -> &mut crate::script::ScriptHost {
+        &mut self.script
+    }
+
     pub fn execute_source(&mut self, path: &std::path::Path) -> Outcome {
         const MAX_SOURCE_DEPTH: usize = 100;
 
@@ -217,7 +221,9 @@ impl App {
         if let Err(e) = self.script.execute_with_context(content, Some(ctx)) {
             self.pending_request = Some(AppRequest::ShowMessage(format!("Error: {e}")));
         }
-        self.dispatch_script_requests()
+        let outcome = self.dispatch_script_requests();
+        let _ = self.script.update_state(&self.editor);
+        outcome
     }
 
     /// Drains commands emitted by the scripting host. Kernel mutations stay on
@@ -236,6 +242,7 @@ impl App {
                     Outcome::default()
                 }
                 AppRequest::ExecuteEx(command) => self.execute_ex_command(command),
+                AppRequest::ExecuteExString(cmd_str) => self.execute_script(&cmd_str),
                 AppRequest::Source(path) => self.execute_source(&path),
                 AppRequest::FeedKeys { keys, mode } => self.execute_feedkeys(&keys, &mode),
             };
@@ -1390,6 +1397,25 @@ mod tests {
 
         let text: String = app.editor().current_buffer().snapshot().chunks().collect();
         assert_eq!(text, "line1");
+    }
+
+    #[test]
+    fn mode_eval_execute_builtins_test() {
+        use vim_script::runtime::Value;
+
+        let mut app = App::new("hello world");
+
+        // Test eval() & mode() in VimScript
+        app.execute_script("call assert_equal('n', mode())");
+        app.execute_script("call assert_equal(10, eval('5 + 5'))");
+
+        let errs = app.script_mut().globals.get("v:errors").cloned();
+        assert_eq!(errs, Some(Value::List(vec![])));
+
+        // Test execute() in VimScript
+        app.execute_script("call execute('echo \"test execute\"')");
+        let errs = app.script_mut().globals.get("v:errors").cloned();
+        assert_eq!(errs, Some(Value::List(vec![])));
     }
 
     #[test]

@@ -70,6 +70,9 @@ impl BuiltinRegistry {
         registry.register("assert_report", BuiltinArity::Exact(1), dummy_assert);
         registry.register("assert_fails", BuiltinArity::Range { min: 1, max: 3 }, dummy_assert);
         registry.register("feedkeys", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
+        registry.register("mode", BuiltinArity::Range { min: 0, max: 1 }, dummy_assert);
+        registry.register("eval", BuiltinArity::Exact(1), dummy_assert);
+        registry.register("execute", BuiltinArity::Range { min: 1, max: 2 }, dummy_assert);
 
         registry
     }

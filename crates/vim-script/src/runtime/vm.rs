@@ -548,13 +548,14 @@ impl Vm {
             Instruction::CallNamed { name, argc } => {
                 let name = self.constant_string(&module, function_id, name)?;
                 let arguments = self.pop_many(argc as usize)?;
-                if (self.builtins.contains(&name) && name != "feedkeys")
+                if (self.builtins.contains(&name) && name != "feedkeys" && name != "execute")
                     || name == "exists"
+                    || name == "eval"
                     || name.starts_with("assert_")
                 {
                     let result = if name == "exists" {
                         self.builtin_exists(&arguments)
-                    } else if name.starts_with("assert_") {
+                    } else if name == "eval" || name.starts_with("assert_") {
                         self.builtin_assert(&name, &arguments)
                     } else {
                         self.builtins.call(&name, &arguments)
@@ -765,17 +766,17 @@ impl Vm {
         let arguments = self.pop_many(argc as usize)?;
         let callee = self.pop()?;
         if let Value::Builtin(name) = &callee {
-            if name.as_ref() == "feedkeys" {
+            if name.as_ref() == "feedkeys" || name.as_ref() == "execute" {
                 return Ok(Some(HostRequest {
                     target: HostTarget::Global,
-                    function: "feedkeys".to_string(),
+                    function: name.to_string(),
                     arguments,
                     context: self.host_context.clone(),
                 }));
             }
             let result = if name.as_ref() == "exists" {
                 self.builtin_exists(&arguments)
-            } else if name.starts_with("assert_") {
+            } else if name.as_ref() == "eval" || name.starts_with("assert_") {
                 self.builtin_assert(name, &arguments)
             } else {
                 self.builtins.call(name, &arguments)
@@ -1054,9 +1055,22 @@ impl Vm {
                         "assert_fails expects at least 1 argument",
                     ));
                 }
-                let cmd_str = args[0].to_string();
-                let expected_err = if args.len() > 1 && !matches!(args[1], Value::Null) {
-                    Some(args[1].to_string())
+                let cmd_str = match &args[0] {
+                    Value::String(s) => s.to_string(),
+                    other => other.to_string(),
+                };
+                let expected_err = if args.len() > 1 {
+                    match &args[1] {
+                        Value::String(s) => Some(s.to_string()),
+                        Value::List(l) => {
+                            if l.is_empty() {
+                                None
+                            } else {
+                                Some(l[0].to_string())
+                            }
+                        }
+                        other => Some(other.to_string()),
+                    }
                 } else {
                     None
                 };
@@ -1086,11 +1100,52 @@ impl Vm {
                     }
                 }
             }
+            "eval" => self.builtin_eval(args),
+            "execute" => self.builtin_execute(args),
             _ => Err(self.error(
                 RuntimeErrorKind::NameError,
                 format!("unknown assert function: {name}"),
             )),
         }
+    }
+
+    fn builtin_execute(&mut self, args: &[Value]) -> RuntimeResult<Value> {
+        if args.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::ArityError,
+                "execute expects at least 1 argument",
+            ));
+        }
+        let cmd_str = match &args[0] {
+            Value::String(s) => s.to_string(),
+            Value::List(l) => {
+                let mut lines = Vec::new();
+                for item in l.iter() {
+                    lines.push(item.to_string());
+                }
+                lines.join("\n")
+            }
+            other => other.to_string(),
+        };
+        let _ = self.execute_sub_script(&cmd_str);
+        Ok(Value::String(Arc::from("")))
+    }
+
+    fn builtin_eval(&mut self, args: &[Value]) -> RuntimeResult<Value> {
+        if args.is_empty() {
+            return Err(self.error(
+                RuntimeErrorKind::ArityError,
+                "eval expects 1 argument",
+            ));
+        }
+        let expr_str = args[0].to_string();
+        let eval_code = format!("let g:__eval_result = ({expr_str})");
+        self.execute_sub_script(&eval_code)?;
+        Ok(self
+            .globals
+            .get("g:__eval_result")
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     fn execute_sub_script(&mut self, code: &str) -> RuntimeResult<Value> {
@@ -1107,14 +1162,16 @@ impl Vm {
                 format!("lexer error parsing '{code}'"),
             ));
         }
-        let parsed = Parser::new(&lexed.tokens).parse();
+        let parsed = Parser::new_with_source(&lexed.tokens, code).parse();
         if !parsed.diagnostics.is_empty() || parsed.program.is_none() {
             return Err(self.error(
                 RuntimeErrorKind::InvalidCommand,
                 format!("syntax error parsing '{code}'"),
             ));
         }
-        let resolved = Resolver::new(ResolverConfig::default()).resolve(parsed.program.unwrap());
+        let mut config = ResolverConfig::default();
+        config.unqualified_is_global = true;
+        let resolved = Resolver::new(config).resolve(parsed.program.unwrap());
         if !resolved.diagnostics.is_empty() || resolved.program.is_none() {
             return Err(self.error(
                 RuntimeErrorKind::InvalidCommand,
@@ -1129,6 +1186,7 @@ impl Vm {
             ));
         }
         let mut sub_vm = Vm::with_globals(compiled.module.unwrap(), self.globals.clone())?;
+        sub_vm.builtins = self.builtins.clone();
         sub_vm.host_context = self.host_context.clone();
         let res = sub_vm.run();
         self.globals = sub_vm.globals;

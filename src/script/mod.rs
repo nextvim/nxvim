@@ -14,11 +14,23 @@ use vim_script::source::SourceMap;
 pub mod commands;
 mod ex;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EditorState {
     pub buffers: HashMap<text::BufferId, (text::BufferSnapshot, u64)>,
     pub names: HashMap<PathBuf, text::BufferId>,
     pub current_buffer_id: Option<text::BufferId>,
+    pub current_mode: String,
+}
+
+impl Default for EditorState {
+    fn default() -> Self {
+        Self {
+            buffers: HashMap::new(),
+            names: HashMap::new(),
+            current_buffer_id: None,
+            current_mode: "n".to_string(),
+        }
+    }
 }
 
 impl std::fmt::Debug for EditorState {
@@ -110,7 +122,7 @@ pub struct ScriptHost {
     abbreviations: Vec<Abbreviation>,
     digraphs: DigraphStore,
     state: Arc<Mutex<EditorState>>,
-    globals: HashMap<String, Value>,
+    pub(crate) globals: HashMap<String, Value>,
     builtins: BuiltinRegistry,
     sources: SourceMap,
 }
@@ -162,6 +174,17 @@ impl ScriptHost {
         for spec in commands::COMMAND_SPECS {
             runtime.register_command(CommandDefinition::from(spec));
         }
+
+        runtime.register_function(
+            "mode",
+            Arity::Range { min: 0, max: 1 },
+            vec![Capability::Editor],
+        );
+        runtime.register_function(
+            "execute",
+            Arity::Range { min: 1, max: 2 },
+            vec![Capability::Editor],
+        );
 
         let mut scheduler = Scheduler::default();
         scheduler.set_host(runtime);
@@ -289,6 +312,16 @@ impl ScriptHost {
             .state
             .lock()
             .map_err(|_| "Editor state lock is poisoned".to_owned())?;
+        lock.current_mode = match editor.mode() {
+            crate::kernel::mode::Mode::Normal => "n",
+            crate::kernel::mode::Mode::Insert => "i",
+            crate::kernel::mode::Mode::Replace | crate::kernel::mode::Mode::VirtualReplace => "R",
+            crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Char) => "v",
+            crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Line) => "V",
+            crate::kernel::mode::Mode::Visual(crate::kernel::mode::VisualKind::Block) => "\x16",
+            crate::kernel::mode::Mode::Command(_) => "c",
+        }
+        .to_string();
         lock.current_buffer_id = Some(current_buffer_id);
         // Remove buffers that are no longer listed/active
         lock.buffers.retain(|id, _| {

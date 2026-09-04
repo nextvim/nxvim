@@ -81,9 +81,9 @@ nxvim -u NONE -S runtest.vim test_assert.vim
 **Objective:** Provide all builtin functions, commands, and options that `runtest.vim` relies upon.
 
 - [ ] **Essential Builtin Functions:**
-  - `execute({command})`: Run an Ex command and return its output as a string.
-  - `eval({string})`: Evaluate an expression string.
-  - `mode([expr])`: Return active editor mode string (`"n"`, `"i"`, `"v"`, `"V"`, `"\<C-V>"`, `"c"`).
+  - [x] `execute({command})`: Run an Ex command and return its output as a string.
+  - [x] `eval({string})`: Evaluate an expression string.
+  - [x] `mode([expr])`: Return active editor mode string (`"n"`, `"i"`, `"v"`, `"V"`, `"\<C-V>"`, `"c"`).
   - `getbufline()`, `setbufline()`, `deletebufline()`, `append()`.
   - `bufnr()`, `bufname()`, `bufexists()`, `getbufinfo()`.
   - `filereadable()`, `filewritable()`, `delete()`, `writefile()`, `readfile()`.

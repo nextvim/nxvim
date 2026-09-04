@@ -142,6 +142,8 @@ impl<'a> Compiler<'a> {
             StmtKind::Execute(values) => {
                 for value in values {
                     self.compile_expr(value);
+                    let name = self.constant(Constant::String("execute".to_owned()));
+                    self.emit(Instruction::CallNamed { name, argc: 1 }, value.span);
                     self.emit(Instruction::Pop, value.span);
                 }
             }

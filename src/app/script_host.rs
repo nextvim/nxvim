@@ -286,6 +286,36 @@ impl Host for ActiveHost {
                     })?;
                     Ok(Value::Null)
                 }
+                "execute" => {
+                    if request.arguments.is_empty() {
+                        return Err(RuntimeError::coded(
+                            "E119",
+                            RuntimeErrorKind::ArityError,
+                            "execute expects at least 1 argument",
+                        ));
+                    }
+                    let cmd_str = match &request.arguments[0] {
+                        Value::String(s) => s.to_string(),
+                        Value::List(l) => {
+                            let mut lines = Vec::new();
+                            for item in l.iter() {
+                                lines.push(item.to_string());
+                            }
+                            lines.join("\n")
+                        }
+                        other => other.to_string(),
+                    };
+                    sender
+                        .send(AppRequest::ExecuteExString(cmd_str))
+                        .map_err(|_| {
+                            RuntimeError::coded(
+                                "E_HOST",
+                                RuntimeErrorKind::HostError,
+                                "editor command queue is closed",
+                            )
+                        })?;
+                    Ok(Value::String(Arc::from("")))
+                }
                 "feedkeys" => {
                     if request.arguments.is_empty() {
                         return Err(RuntimeError::coded(
@@ -333,6 +363,7 @@ impl Host for ActiveHost {
         };
 
         match request.function.as_str() {
+            "mode" => Some(Ok(Value::String(Arc::from(state.current_mode.as_str())))),
             "bufnr" => Some(bufnr(&state, &request.arguments)),
             "bufexists" => Some(bufexists(&state, &request.arguments)),
             "getline" => Some(getline(&state, &request.arguments)),
